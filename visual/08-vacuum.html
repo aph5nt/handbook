@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vacuum and dead versions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Vacuum and dead row versions: why a table grows with no new rows</h1>
+  <p class="lede">One account in the PostgreSQL <b>balances</b> table, updated on every block. Each box is one stored version of its row. Watch the dead versions and the table size bar.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Update and vacuum</button>
+    <button role="tab" aria-selected="false" data-mode="ltx">Long transaction fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 330" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Eight row version slots, an autovacuum box, an analytics session box and a table size bar</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text x="30" y="46" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">pages of the balances table: row versions of one account</text>
+<rect id="s0" class="box" data-f="var(--line)" x="30" y="56" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s0-t" data-t="" x="100" y="77" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s0-u" data-t="" x="100" y="97" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s1" class="box" data-f="var(--line)" x="180" y="56" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s1-t" data-t="" x="250" y="77" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s1-u" data-t="" x="250" y="97" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s2" class="box" data-f="var(--line)" x="330" y="56" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s2-t" data-t="" x="400" y="77" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s2-u" data-t="" x="400" y="97" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s3" class="box" data-f="var(--line)" x="480" y="56" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s3-t" data-t="" x="550" y="77" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s3-u" data-t="" x="550" y="97" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s4" class="box" data-f="var(--line)" x="30" y="122" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s4-t" data-t="" x="100" y="143" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s4-u" data-t="" x="100" y="163" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s5" class="box" data-f="var(--line)" x="180" y="122" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s5-t" data-t="" x="250" y="143" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s5-u" data-t="" x="250" y="163" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s6" class="box" data-f="var(--line)" x="330" y="122" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s6-t" data-t="" x="400" y="143" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s6-u" data-t="" x="400" y="163" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="s7" class="box" data-f="var(--line)" x="480" y="122" width="140" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s7-t" data-t="" x="550" y="143" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<text id="s7-u" data-t="" x="550" y="163" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="vac" class="box" data-f="var(--line)" x="660" y="56" width="210" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="vac-t" data-t="autovacuum" x="765" y="77" text-anchor="middle" font-size="13" fill="var(--fg)">autovacuum</text>
+<text id="vac-u" data-t="waiting" x="765" y="97" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">waiting</text>
+<rect id="ltx" class="box" data-f="var(--line)" x="660" y="122" width="210" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="ltx-t" data-t="analytics session" x="765" y="143" text-anchor="middle" font-size="13" fill="var(--fg)">analytics session</text>
+<text id="ltx-u" data-t="idle" x="765" y="163" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">idle</text>
+<text x="30" y="220" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">table size on disk</text>
+<rect x="30" y="228" width="600" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="sz" class="box" data-f="var(--coord)" data-a='{"width":"75"}' x="30" y="228" width="75" height="24" rx="4" fill="var(--coord)"/>
+<text id="note" data-t="" x="660" y="246" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<rect x="20" y="280" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="306" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="305" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-vacuum/main.go</code> (<code>go run .</code>). The program models row versions in memory, with xmin and xmax, and applies the same rule.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">live version</span>
+    <span style="--c:var(--wait)">dead version</span>
+    <span style="--c:var(--fail)">blocking or bloated</span>
+    <span style="--c:var(--coord)">table size</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Hot update tables in PostgreSQL: balances, counters, a job queue kept in a table. StarRocks and LSM stores have no vacuum: compaction drops replaced and deleted rows. The interview probe: why did the table grow when the row count stayed the same?</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Set <code>idle_in_transaction_session_timeout</code>, alert on the oldest open transaction and on forgotten replication slots, and tune autovacuum per hot table. Use <code>VACUUM FULL</code> only in a maintenance window.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>VACUUM</th><th>VACUUM FULL</th></tr>
+      <tr><td>Frees space for</td><td>new rows in the same table</td><td>the disk</td></tr>
+      <tr><td>Locks</td><td>none that block reads or writes</td><td>exclusive, for the whole rewrite</td></tr>
+      <tr><td>Runs</td><td>by itself, as autovacuum</td><td>by hand</td></tr>
+      <tr><td>Blocked by</td><td>a long open transaction</td><td>the same</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"In PostgreSQL every update leaves a dead version, vacuum reclaims it, and one long open transaction stops vacuum and bloats the table."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+ok:[
+ {"t": "One live row", "b": "An account's balance row lives in a page of the balances table.", "w": "PostgreSQL uses MVCC (multi-version concurrency control): readers see a version, writers add new ones.", "x": {"s0-t": "balance 10", "s0-u": "live", "big": "1 live version"}, "f": {"s0": "ok"}, "a": {"sz": {"width": "75"}}, "pc": [1]},
+ {"t": "UPDATE writes a new version", "b": "The balance changes to 12. Transaction 101 writes a new version with xmin 101. It stamps the old version with xmax 101, meaning replaced by 101.", "w": "The old version stays, because an open transaction might still need to see it.", "x": {"s0-t": "balance 10", "s0-u": "dead", "s1-t": "balance 12", "s1-u": "live", "big": "1 live, 1 dead", "sql": "UPDATE balances SET balance = 12"}, "f": {"s0": "w", "s1": "ok"}, "a": {"sz": {"width": "150"}}, "pc": [2, 3, 4]},
+ {"t": "More updates, more dead versions", "b": "Transaction 102 updates the balance to 15. The same two stamps again: new version xmin 102, old version xmax 102. Each update leaves one more old version.", "w": "Dead versions take space and are read by every scan.", "x": {"s0-t": "balance 10", "s0-u": "dead", "s1-t": "balance 12", "s1-u": "dead", "s2-t": "balance 15", "s2-u": "live", "big": "1 live, 2 dead"}, "f": {"s0": "w", "s1": "w", "s2": "ok"}, "a": {"sz": {"width": "225"}}, "pc": [2, 3, 4]},
+ {"t": "Autovacuum frees the dead versions", "b": "Autovacuum finds the oldest open snapshot: the horizon, 103 here. The rule per version: is xmax below the horizon? 101 and 102 both are, so nobody can still see them. Their space is marked free, and the visibility map is updated.", "w": "The visibility map is also what makes index-only scans possible.", "x": {"s0-t": "", "s0-u": "free space", "s1-t": "", "s1-u": "free space", "s2-t": "balance 15", "s2-u": "live", "vac-u": "freed 2 dead versions", "big": "space reusable"}, "f": {"s0": "n", "s1": "n", "s2": "ok", "vac": "ok"}, "a": {"sz": {"width": "225"}}, "pc": [5, 6, 7, 8]},
+ {"t": "New versions reuse the space", "b": "The next update looks for free space in the table first, finds a freed slot and writes balance 18 there. Balance 15 becomes the new dead version. The table stays at 3 slots.", "w": "With vacuum keeping up, the table size stays flat while the row count stays the same.", "x": {"s0-t": "balance 18", "s0-u": "live", "s1-t": "", "s1-u": "free space", "s2-t": "balance 15", "s2-u": "dead", "vac-u": "keeping up", "big": "size flat"}, "f": {"s0": "ok", "s1": "n", "s2": "w", "vac": "ok"}, "a": {"sz": {"width": "225"}}, "pc": [3, 9]}
+],
+ltx:[
+ {"t": "A transaction left open", "b": "An analytics session starts a transaction, and its snapshot is 101. It runs one query and is left idle for hours.", "w": "PostgreSQL must keep every version that transaction might still see.", "x": {"s0-t": "balance 10", "s0-u": "live", "ltx-u": "transaction open for hours", "big": "an old snapshot is held"}, "f": {"s0": "ok", "ltx": "f"}, "a": {"sz": {"width": "75"}}, "pc": [6], "rl": [1, 2, 3, 4]},
+ {"t": "Updates keep coming", "b": "The balance is updated on every block, by transactions 101, 102, 103 and 104. Each one stamps xmax on the version it replaces.", "w": "The dead versions are newer than the open transaction's snapshot.", "x": {"s0-t": "balance 10", "s0-u": "dead", "s1-t": "balance 12", "s1-u": "dead", "s2-t": "balance 15", "s2-u": "dead", "s3-t": "balance 18", "s3-u": "dead", "s4-t": "balance 21", "s4-u": "live", "ltx-u": "transaction open for hours", "big": "1 live, 4 dead"}, "f": {"s0": "w", "s1": "w", "s2": "w", "s3": "w", "s4": "ok", "ltx": "f"}, "a": {"sz": {"width": "375"}}, "pc": [2, 3, 4], "rl": [21, 22]},
+ {"t": "Vacuum runs and frees nothing", "b": "Autovacuum runs the same rule. The horizon is now 101, the idle snapshot. Is xmax below 101? 101 is not, and neither is any later one. It frees 0 versions.", "w": "One idle session holds back cleanup for the whole database.", "x": {"s0-t": "balance 10", "s0-u": "dead", "s1-t": "balance 12", "s1-u": "dead", "s2-t": "balance 15", "s2-u": "dead", "s3-t": "balance 18", "s3-u": "dead", "s4-t": "balance 21", "s4-u": "live", "ltx-u": "transaction open for hours", "vac-u": "cannot remove: still visible", "big": "vacuum blocked"}, "f": {"s0": "w", "s1": "w", "s2": "w", "s3": "w", "s4": "ok", "ltx": "f", "vac": "w"}, "a": {"sz": {"width": "375"}}, "pc": [5, 6, 7]},
+ {"t": "Bloat", "b": "After seven updates the program shows 8 slots: 1 live, 7 dead, 0 free. The vacuum still frees 0. Scans read all the dead space.", "w": "This is bloat: the size grows while the row count stays flat.", "x": {"s0-t": "balance 10", "s0-u": "dead", "s1-t": "balance 13", "s1-u": "dead", "s2-t": "balance 16", "s2-u": "dead", "s3-t": "balance 19", "s3-u": "dead", "s4-t": "balance 22", "s4-u": "dead", "s5-t": "balance 25", "s5-u": "dead", "s6-t": "balance 28", "s6-u": "dead", "s7-t": "balance 31", "s7-u": "live", "ltx-u": "transaction open for hours", "vac-u": "cannot remove: still visible", "big": "1 live row, table full"}, "f": {"s0": "w", "s1": "w", "s2": "w", "s3": "w", "s4": "w", "s5": "w", "s6": "w", "s7": "ok", "ltx": "f", "vac": "w", "sz": "f"}, "a": {"sz": {"width": "600"}}, "pc": [2, 3, 4, 7], "rl": [12, 13]},
+ {"t": "Fix: end the idle transaction", "b": "idle_in_transaction_session_timeout ends the forgotten session. The horizon jumps to 108, the next transaction. Every xmax is now below it, so vacuum frees all 7 versions.", "w": "Alert on the oldest open transaction, and tune autovacuum per hot table.", "x": {"s0-t": "", "s0-u": "free space", "s1-t": "", "s1-u": "free space", "s2-t": "", "s2-u": "free space", "s3-t": "", "s3-u": "free space", "s4-t": "", "s4-u": "free space", "s5-t": "", "s5-u": "free space", "s6-t": "", "s6-u": "free space", "s7-t": "balance 31", "s7-u": "live", "ltx-u": "ended by timeout", "vac-u": "freed 7 versions", "note": "space reusable, file still big", "big": "space reusable inside the table"}, "f": {"s0": "n", "s1": "n", "s2": "n", "s3": "n", "s4": "n", "s5": "n", "s6": "n", "s7": "ok", "ltx": "ok", "vac": "ok"}, "a": {"sz": {"width": "600"}}, "pc": [10, 5, 6, 7, 8], "rl": [15, 16, 12]},
+ {"t": "VACUUM FULL shrinks the file", "b": "Plain vacuum makes space reusable but keeps the file size. VACUUM FULL rewrites the table to give space back to the disk.", "w": "It holds an exclusive lock for the whole rewrite, so the table is blocked meanwhile.", "x": {"s7-t": "balance 31", "s7-u": "live", "vac-t": "VACUUM FULL", "vac-u": "exclusive lock while it runs", "big": "file shrunk, table locked meanwhile", "sql": "VACUUM FULL balances"}, "f": {"s7": "ok", "vac": "w"}, "a": {"sz": {"width": "75"}}, "pc": [11], "rl": [18, 19]}
+]
+};
+const base={};
+const code={
+"ok":{
+ label:"SQL",
+ pc:["version: balance, xmin (created by), xmax (replaced by)", "update(row, new value), by transaction tx:", "  write the new version where there is free space, else at the end", "  old.xmax = tx; new.xmin = tx", "vacuum(table):", "  horizon = the oldest snapshot still open", "  for each version: if xmax is set and xmax < horizon:", "    mark its space free; update the visibility map", "free space is reused by the next update", "fix a stuck horizon: end the idle transaction", "VACUUM FULL: rewrite the table under an exclusive lock"],
+ real:["-- xmin and xmax are real columns of every row in PostgreSQL", "SELECT xmin, xmax, balance FROM balances WHERE address = :a;", "", "UPDATE balances SET balance = 12 WHERE address = :a;", "", "-- dead versions waiting", "SELECT n_live_tup, n_dead_tup, last_autovacuum", "FROM   pg_stat_user_tables WHERE relname = 'balances';", "", "-- what autovacuum runs", "VACUUM (VERBOSE) balances;", "-- removed 2 dead row versions", "", "-- start sooner on a hot table", "ALTER TABLE balances SET (autovacuum_vacuum_scale_factor = 0.01);"],
+ map:{"1": [2], "2": [4], "3": [4], "4": [2, 4], "5": [11], "6": [11, 12], "7": [7, 8], "8": [12], "9": [4]}},
+"ltx":{
+ label:"SQL",
+ pc:["version: balance, xmin (created by), xmax (replaced by)", "update(row, new value), by transaction tx:", "  write the new version where there is free space, else at the end", "  old.xmax = tx; new.xmin = tx", "vacuum(table):", "  horizon = the oldest snapshot still open", "  for each version: if xmax is set and xmax < horizon:", "    mark its space free; update the visibility map", "free space is reused by the next update", "fix a stuck horizon: end the idle transaction", "VACUUM FULL: rewrite the table under an exclusive lock"],
+ real:["-- the session that holds the horizon back", "BEGIN ISOLATION LEVEL REPEATABLE READ;", "SELECT count(*) FROM balances;", "-- ... and nothing more, for hours", "", "-- the oldest open transaction", "SELECT pid, state, age(backend_xmin), now() - xact_start", "FROM   pg_stat_activity", "WHERE  backend_xmin IS NOT NULL", "ORDER  BY age(backend_xmin) DESC LIMIT 1;", "", "VACUUM (VERBOSE) balances;", "-- 7 dead row versions cannot be removed yet", "", "-- the fix", "SET idle_in_transaction_session_timeout = '5min';", "", "-- gives the file back to the disk, under an exclusive lock", "VACUUM FULL balances;", "", "-- meanwhile the writer updates the balance on every block", "UPDATE balances SET balance = balance + 1 WHERE address = :a;"],
+ map:{"2": [12], "3": [12], "4": [12], "5": [12], "6": [7, 8, 9, 10], "7": [13], "8": [13], "10": [16], "11": [19]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

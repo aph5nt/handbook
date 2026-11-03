@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repairing replicas</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Repairing replicas: read repair, hinted handoff and anti-entropy</h1>
+  <p class="lede">Node 3 of a Cassandra cluster is down for ten minutes while a token price changes. Press <b>Next</b> to watch three repair paths bring it back in line, and the row that none of the quick paths touch.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="hint" id="tab-hint">Hints and read repair</button>
+    <button role="tab" aria-selected="false" data-mode="merkle" id="tab-merkle">Anti-entropy with Merkle trees</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 410" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Cassandra nodes, a stand-in node with a hint, a reader, and two Merkle trees being compared</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-replica-repair/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">up to date</span>
+    <span style="--c:var(--wait)">stale, or a hint waiting</span>
+    <span style="--c:var(--fail)">node down, or hashes differ</span>
+    <span style="--c:var(--ok)">repaired, or hashes match</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cassandra keeps hints by default and runs <code>nodetool repair</code> with Merkle trees on a schedule. The original Dynamo paper used sloppy quorum and hinted handoff for an always-writable cart.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Run anti-entropy repair more often than the hint lifetime and the delete grace period. To compare two copies of a large table, compare hashes per range first, then copy only the ranges that differ.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Path</th><th>Fixes</th><th>Misses</th></tr>
+      <tr><td>Hinted handoff</td><td>Writes made during a short outage</td><td>Outages longer than the hint lifetime</td></tr>
+      <tr><td>Read repair</td><td>Rows that a quorum read touches</td><td>Rows nobody reads</td></tr>
+      <tr><td>Anti-entropy (Merkle trees)</td><td>Everything, in the background</td><td>Nothing, but it costs disk and network reads</td></tr>
+      <tr><td>Sloppy quorum</td><td>Keeps writes available in an outage</td><td>Breaks the read and write overlap</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Hints fix short outages, read repair fixes what readers touch, and anti-entropy with Merkle trees fixes everything else in the background."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const NY=[30,115,200,285];
+const AR={w1:[150,180,320,64],w2:[150,186,320,148],w4:[150,198,320,318],h43:[420,285,420,266],r2:[520,150,720,182],r3:[520,228,720,196],fix3:[720,216,520,256]};
+function tree(ox,side,st){let o="";const nd=(x,y,h,k)=>R(x-40,y-17,80,34,KC[st[k]]||"var(--line)",{rx:6})+T(x,y+5,h,{s:13,c:st[k]?"#fff":"var(--fg)"});
+  const L=[[ox+60,290],[ox+160,290],[ox+260,290],[ox+360,290]],M=[[ox+110,190],[ox+310,190]],Rt=[ox+210,90];
+  const ln=(a,c)=>`<line x1="${a[0]}" y1="${a[1]+17}" x2="${c[0]}" y2="${c[1]-17}" stroke="var(--line)" stroke-width="2"/>`;
+  o+=ln(Rt,M[0])+ln(Rt,M[1])+ln(M[0],L[0])+ln(M[0],L[1])+ln(M[1],L[2])+ln(M[1],L[3]);
+  o+=nd(Rt[0],Rt[1],side.r,"r")+nd(M[0][0],M[0][1],side.m[0],"m0")+nd(M[1][0],M[1][1],side.m[1],"m1");
+  L.forEach((p,k)=>{o+=nd(p[0],p[1],side.l[k],"l"+k)+T(p[0],p[1]+36,"range "+(k+1),{s:12,w:400,c:"var(--muted)"})});return o}
+function scene(s){
+  let b="";const msgs=[];
+  if(mode==="hint"){
+    b+=BOX(20,155,130,60,"var(--svc)","Writer","price update");
+    ["Node 1","Node 2","Node 3","Node 4"].forEach((n,k)=>{const v=s.n[k];b+=BOX(320,NY[k],200,64,v[1]==="line"?"var(--line)":KC[v[1]]||"var(--coord)",n,v[0])});
+    if(s.hint)b+=CHIP(640,300,200,"hint for node 3: v2","var(--wait)");
+    b+=BOX(720,160,150,60,"var(--svc)","Reader",s.read||"quorum read");
+  }else{
+    b+=T(230,40,"Node 1",{s:15})+T(680,40,"Node 3",{s:15});
+    b+=tree(20,s.a,s.st)+tree(470,s.c,s.st);
+  }
+  (s.m||[]).forEach(([k,l,kd,lx,ly])=>{const a=AR[k];msgs.push(ARROW(a[0],a[1],a[2],a[3],l,KC[kd||"n"],lx?{lx,ly,a:"start"}:{dash:kd==="wait"}))});
+  if(s.ban)msgs.push(BANNER(392,s.ban));
+  return{base:b,msgs};
+}
+const up=["price v1"],up2=["price v2"];
+const A={r:"8b7",m:["592","b75"],l:["bc3","d5f","0a3","520"]},C1={r:"6aa",m:["592","d76"],l:["bc3","d5f","0a3","d9e"]};
+const steps={
+hint:[
+ {t:"Four nodes, one price",b:"Nodes 1, 2 and 3 are the N = 3 replicas of the pear price key, all at version v1. Node 4 is another node in the cluster that holds other keys.",w:"Line 2 loops over exactly these three replicas for every write of this key.",n:[up,up,up,["other keys","line"]],pc:[1,2]},
+ {t:"Node 3 goes down, the price changes",b:"The writer stores pear v2. Line 3 runs for nodes 1 and 2, which are up. Node 3 is down, so line 4 adds a hint for node 3: 1 hint, kept on node 4.",w:"Counting that hint toward W is a sloppy quorum: the write stays available, but a read of nodes 1 and 3 would not overlap it.",n:[up2,up2,["down","fail"],["holds a hint","wait"]],hint:true,m:[["w1","write v2"],["w2",""],["w4","hint for node 3","wait",170,262]],pc:[2,3,4]},
+ {t:"Node 3 returns: hinted handoff",b:"Node 3 comes back. Line 6 walks its hints. The pear hint has not expired, so line 7 stores v2 on node 3. Line 8 deletes the hints.",w:"Hints fix short outages without anyone reading the row.",n:[up2,up2,["price v2","ok"],["other keys","line"]],m:[["h43","hand over v2","ok",430,280]],pc:[5,6,7,8]},
+ {t:"Other rows: the hints expired",b:"Later, node 3 is down for longer than the hint lifetime. The kiwi and yam rows get v2 on nodes 1 and 2, and hints for node 3. When node 3 returns, both hints are expired: line 7 skips them and line 8 deletes them. Node 3 keeps v1 for both.",w:"Nothing announces this. Node 3 is simply wrong for those rows.",n:[up2,up2,["kiwi v1, stale","wait"],["other keys","line"]],pc:[7,8]},
+ {t:"Read repair",b:"A reader asks nodes 2 and 3 for kiwi. Line 10: max(v2, v1) = v2. Line 11 finds node 3 older, so line 12 writes v2 back to node 3. Line 13 returns v2.",w:"Read repair fixes the rows that readers touch, as a side effect of reading.",n:[up2,up2,["kiwi v2","ok"],["other keys","line"]],read:"returns v2",m:[["r2","v2","ok"],["r3","v1","wait"],["fix3","repair: write v2","ok",560,276]],pc:[9,10,11,12,13]},
+ {t:"The failure: the row nobody reads",b:"The yam row lost its hint in the same outage, and nobody reads it. Line 7 skipped its expired hint, and line 12 never runs because no read comes. Node 3 keeps yam v1, silently.",w:"Hints and read repair both miss it. Only a job that compares all rows will find it. That is anti-entropy, the second tab.",n:[up2,up2,["yam v1, stale","fail"],["other keys","line"]],ban:"No hint and no reader: node 3 keeps stale data with no error.",pc:[7]}
+],
+merkle:[
+ {t:"Hash every range",b:"Line 2: node 1 and node 3 each split their rows into 4 ranges and hash each range. Range 4 holds the stale yam row on node 3, so its leaf hash is d9e instead of 520.",w:"Comparing millions of rows one by one would cost a full read and copy. Hashes are tiny.",a:A,c:C1,st:{},pc:[1,2]},
+ {t:"Hash the hashes, up to one root",b:"Line 3: each middle is the hash of its two leaves. Line 4: the root is the hash of the two middles. Node 1's root is 8b7, node 3's is 6aa.",w:"This tree of hashes is a Merkle tree. One root hash now stands for all the data on the node.",a:A,c:C1,st:{},pc:[3,4]},
+ {t:"Compare the roots",b:"Line 6: the nodes swap one value, their root. 8b7 and 6aa differ, so the repair goes on.",w:"Equal roots would mean equal data, and the job would stop here after 1 comparison.",a:A,c:C1,st:{r:"fail"},pc:[5,6]},
+ {t:"Walk down only where it differs",b:"Line 8: the left middles are both 592, so ranges 1 and 2 are skipped. The right middles are b75 and d76, so the job goes down that side only.",w:"Each level halves the search. A few comparisons find one bad range among thousands.",a:A,c:C1,st:{r:"fail",m0:"ok",m1:"fail"},pc:[7,8]},
+ {t:"Only range 4 differs",b:"Line 10 compares the two leaves under the right middle. Range 3 is 0a3 on both. Range 4 is 520 against d9e. Line 11 copies range 4 from node 1 to node 3, and nothing else: 5 comparisons in all.",w:"The network carries one range, not the whole table.",a:A,c:C1,st:{r:"fail",m0:"ok",m1:"fail",l0:"ok",l1:"ok",l2:"ok",l3:"fail"},pc:[9,10,11]},
+ {t:"Repaired: the roots match",b:"Line 12 rebuilds node 3's tree. Range 4 now hashes to 520, the right middle to b75, and the root to 8b7, the same as node 1. yam is v2.",w:"Run this repair more often than the hint lifetime and the delete grace period, so a long outage can never leave a row stale for good.",a:A,c:A,st:{r:"ok",m0:"ok",m1:"ok",l0:"ok",l1:"ok",l2:"ok",l3:"ok"},pc:[12]}
+]};
+const code={"hint": {"label": "Go", "pc": ["write(key, v):", "  for each replica r of key:          # N = 3: nodes 1, 2, 3", "    if r is up: r.store(key, v)", "    else: hints[r].add(key, v)        # node 4 keeps it for r", "on r back:", "  for each hint for r:", "    if not expired: r.store(hint)     # hinted handoff", "  delete hints[r]                     # expired ones are just lost", "read(key) from nodes a and b:", "  newest = max(a.version, b.version)", "  for each node with an older version:", "    node.store(key, newest)           # read repair", "  return newest"], "real": ["// Write stores the version on every replica that is up, and a hint for the rest.", "func (c *Cluster) Write(key string, version int) {", "\tfor _, r := range c.replicas {", "\t\tif r.up {", "\t\t\tr.data[key] = version", "\t\t} else {", "\t\t\tc.hints[r.name] = append(c.hints[r.name], hint{key, version, false})", "\t\t}", "\t}", "}", "", "// Return brings a node back and hands over every hint that has not expired.", "func (c *Cluster) Return(r *Node) {", "\tr.up = true", "\tfor _, h := range c.hints[r.name] {", "\t\tif !h.expired {", "\t\t\tr.data[h.key] = h.version // hinted handoff", "\t\t}", "\t}", "\tdelete(c.hints, r.name) // expired hints are simply lost", "}", "", "// Read asks two nodes, returns the newest version and repairs the older one.", "func Read(key string, a, b *Node) int {", "\tnewest := a.data[key]", "\tif b.data[key] > newest {", "\t\tnewest = b.data[key]", "\t}", "\tfor _, n := range []*Node{a, b} {", "\t\tif n.data[key] < newest {", "\t\t\tn.data[key] = newest // read repair", "\t\t}", "\t}", "\treturn newest", "}"], "map": {"1": [2], "2": [3], "3": [4, 5], "4": [7], "5": [13], "6": [15], "7": [16, 17], "8": [20], "9": [24], "10": [25, 26], "11": [30], "12": [31], "13": [34]}}, "merkle": {"label": "Go", "pc": ["build(node):", "  leaf[k] = hash(rows of range k)     # 4 ranges", "  mid = hash(leaf1 + leaf2), hash(leaf3 + leaf4)", "  root = hash(mid1 + mid2)            # one hash for all the data", "repair(src, dst):", "  if src.root == dst.root: done       # 1 comparison: equal data", "  for each mid m:", "    if src.mid[m] == dst.mid[m]: skip # both ranges below are equal", "    for each leaf l under m:", "      if src.leaf[l] != dst.leaf[l]:", "        copy range l from src to dst  # only what differs", "rebuild dst: the roots match again"], "real": ["func Build(n *Node) Tree {", "\tvar t Tree", "\tfor i, r := range ranges(n) {", "\t\tt.leaf[i] = h(r) // leaf = hash of the rows of the range", "\t}", "\tt.mid[0], t.mid[1] = h(t.leaf[0]+t.leaf[1]), h(t.leaf[2]+t.leaf[3])", "\tt.root = h(t.mid[0] + t.mid[1]) // parent = hash of its children", "\treturn t", "}", "", "// Repair walks down only where the hashes differ, and copies those ranges.", "func Repair(src, dst *Node) (compared int, copied []int) {", "\ta, b := Build(src), Build(dst)", "\tcompared++", "\tif a.root == b.root {", "\t\treturn compared, nil // one comparison: equal data", "\t}", "\tfor m := 0; m < 2; m++ {", "\t\tcompared++", "\t\tif a.mid[m] == b.mid[m] {", "\t\t\tcontinue // equal below: skip both ranges", "\t\t}", "\t\tfor l := 2 * m; l < 2*m+2; l++ {", "\t\t\tcompared++", "\t\t\tif a.leaf[l] != b.leaf[l] {", "\t\t\t\tcopied = append(copied, l+1)", "\t\t\t\tcopyRange(src, dst, l)", "\t\t\t}", "\t\t}", "\t}", "\treturn compared, copied", "}"], "map": {"1": [1], "2": [4], "3": [6], "4": [7], "5": [12], "6": [15, 16], "7": [18], "8": [20, 21], "9": [23], "10": [25], "11": [26, 27], "12": [1]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Index skip scan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Index skip scan: one seek per value of the missing column</h1>
+  <p class="lede">An index on <code>(chain, block_height)</code> drawn as its twelve sorted entries. The query asks for heights above 21,400,000 and names no chain. Watch the seeks.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="skip">Skip scan on three chains</button>
+    <button role="tab" aria-selected="false" data-mode="many">Many values fail</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Twelve index entries grouped by chain, with one seek arrow per chain</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text id="hdr" data-t="index (chain, block_height)" x="40" y="38" text-anchor="start" font-size="13" font-weight="400" fill="var(--muted)">index (chain, block_height)</text>
+<rect id="e0" class="box" data-f="var(--line)" x="40" y="50" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e0-t" data-t="base       21,100,500" x="180" y="65" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">base       21,100,500</text>
+<rect id="e1" class="box" data-f="var(--line)" x="40" y="74" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e1-t" data-t="base       21,300,000" x="180" y="89" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">base       21,300,000</text>
+<rect id="e2" class="box" data-f="var(--line)" x="40" y="98" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e2-t" data-t="base       21,450,000" x="180" y="113" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">base       21,450,000</text>
+<rect id="e3" class="box" data-f="var(--line)" x="40" y="122" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e3-t" data-t="base       21,600,000" x="180" y="137" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">base       21,600,000</text>
+<rect id="e4" class="box" data-f="var(--line)" x="40" y="146" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e4-t" data-t="ethereum   21,200,000" x="180" y="161" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">ethereum   21,200,000</text>
+<rect id="e5" class="box" data-f="var(--line)" x="40" y="170" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e5-t" data-t="ethereum   21,390,000" x="180" y="185" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">ethereum   21,390,000</text>
+<rect id="e6" class="box" data-f="var(--line)" x="40" y="194" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e6-t" data-t="ethereum   21,410,000" x="180" y="209" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">ethereum   21,410,000</text>
+<rect id="e7" class="box" data-f="var(--line)" x="40" y="218" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e7-t" data-t="ethereum   21,700,000" x="180" y="233" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">ethereum   21,700,000</text>
+<rect id="e8" class="box" data-f="var(--line)" x="40" y="242" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e8-t" data-t="robinhood  21,000,000" x="180" y="257" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">robinhood  21,000,000</text>
+<rect id="e9" class="box" data-f="var(--line)" x="40" y="266" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e9-t" data-t="robinhood  21,350,000" x="180" y="281" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">robinhood  21,350,000</text>
+<rect id="e10" class="box" data-f="var(--line)" x="40" y="290" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e10-t" data-t="robinhood  21,500,000" x="180" y="305" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">robinhood  21,500,000</text>
+<rect id="e11" class="box" data-f="var(--line)" x="40" y="314" width="280" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e11-t" data-t="robinhood  21,800,000" x="180" y="329" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">robinhood  21,800,000</text>
+<path id="k0" class="msg" d="M560 60 L326 60" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="k1" class="msg" d="M560 156 L326 156" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="k2" class="msg" d="M560 252 L326 252" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="kl0" data-t="" x="570" y="65" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<text id="kl1" data-t="" x="570" y="161" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<text id="kl2" data-t="" x="570" y="257" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect x="20" y="352" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="378" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="WHERE block_height &gt; 21,400,000" x="862" y="377" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)">WHERE block_height &gt; 21,400,000</text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-index-skip-scan/main.go</code> (<code>go run .</code>). The program models the planner choice with a page-cost formula and runs a real skip scan over the twelve entries.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">distinct first value</span>
+    <span style="--c:var(--ok)">entry kept</span>
+    <span style="--c:var(--wait)">costly choice</span>
+    <span style="--c:var(--fail)">a seek for one entry</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A leading column with few values: chain, region, a handful of tenants, a status. MySQL 8 reports "Using index for skip scan". PostgreSQL 18 added skip scan to B-trees. Oracle has had it for years.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Let skip scan save you a second index for a rare report. For a hot query, build an index whose leading column the query filters on.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Few first values</th><th>Many first values</th></tr>
+      <tr><td>Seeks</td><td>one per value: a handful</td><td>thousands</td></tr>
+      <tr><td>Against a full scan</td><td>cheaper</td><td>more expensive</td></tr>
+      <tr><td>Use it for</td><td>a rare report</td><td>nothing: add the right index</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"Skip scan runs one seek per distinct value of the missing first column, so it only pays off when that column has few values."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+skip:[
+ {"t": "A query without the first column", "b": "The index is on (chain, block_height). The query filters on height alone. By the leftmost-prefix rule the index cannot seek.", "w": "Without skip scan this is a full scan of the index or the table.", "x": {"big": "no chain in the query"}, "pc": [1, 2], "rl": [1, 3, 4, 5]},
+ {"t": "The first column has few values", "b": "The planner reads the distinct count from statistics: chain has 3 values. It compares costs for one million entries in 10,000 leaf pages, with 1 percent matching. Skip scan: 3 seeks × 3 pages + 100 leaf pages = 109 pages. Full sweep: 10,000 pages.", "w": "109 is below 10,000, so skip scan wins.", "f": {"e0": "c", "e1": "c", "e2": "c", "e3": "c", "e4": "c", "e5": "c", "e6": "c", "e7": "c", "e8": "c", "e9": "c", "e10": "c", "e11": "c"}, "x": {"big": "chain: 3 distinct values"}, "pc": [2, 3, 4, 5], "rl": [7, 8, 20, 21]},
+ {"t": "Seek inside base", "b": "The search key is (base, 21,400,000). Binary search lands on 21,450,000. It walks until the chain changes. Two entries match.", "w": "Inside one chain, heights are sorted, so this is a normal seek and walk.", "f": {"e2": "ok", "e3": "ok"}, "on": ["k0"], "x": {"kl0": "seek (base, 21,400,000)", "big": "seek 1 of 3"}, "pc": [6, 7, 8], "rl": [11, 12]},
+ {"t": "Jump to ethereum, seek again", "b": "The walk ended on the first ethereum entry, so that is the next distinct value. The search key becomes (ethereum, 21,400,000), which lands on 21,410,000.", "w": "The jump skips every ethereum entry below the height.", "f": {"e2": "ok", "e3": "ok", "e6": "ok", "e7": "ok"}, "on": ["k0", "k1"], "x": {"kl0": "seek (base, 21,400,000)", "kl1": "seek (ethereum, 21,400,000)", "big": "seek 2 of 3"}, "pc": [9, 6, 7, 8], "rl": [13, 14, 15]},
+ {"t": "Then robinhood", "b": "Same rule again: the walk ends at robinhood, so the key becomes (robinhood, 21,400,000). After its walk the index ends, so the loop stops.", "w": "One seek per distinct value of the missing column.", "f": {"e2": "ok", "e3": "ok", "e6": "ok", "e7": "ok", "e10": "ok", "e11": "ok"}, "on": ["k0", "k1", "k2"], "x": {"kl0": "seek (base, 21,400,000)", "kl1": "seek (ethereum, 21,400,000)", "kl2": "seek (robinhood, 21,400,000)", "big": "seek 3 of 3"}, "pc": [9, 6, 7, 8], "rl": [16, 17, 18]},
+ {"t": "Combine the walks", "b": "The three short walks together are the answer. Entries below the height in each chain were never read.", "w": "MySQL 8 shows \"Using index for skip scan\". PostgreSQL 18 added it to B-trees. Oracle has had it for years.", "f": {"e2": "ok", "e3": "ok", "e6": "ok", "e7": "ok", "e10": "ok", "e11": "ok"}, "on": ["k0", "k1", "k2"], "x": {"kl0": "seek (base, 21,400,000)", "kl1": "seek (ethereum, 21,400,000)", "kl2": "seek (robinhood, 21,400,000)", "big": "3 seeks, 6 entries kept"}, "pc": [10], "rl": [10, 11, 13, 14, 16, 17]}
+],
+many:[
+ {"t": "Now the first column is a tenant", "b": "The same shape of index on (tenant, block_height), with 10,000 distinct tenants. Twelve are drawn. The planner reads that count from statistics.", "w": "Skip scan cost grows with the distinct values of the first column.", "x": {"e0-t": "t001       21,100,500", "e1-t": "t002       21,300,000", "e2-t": "t003       21,450,000", "e3-t": "t004       21,600,000", "e4-t": "t005       21,200,000", "e5-t": "t006       21,390,000", "e6-t": "t007       21,410,000", "e7-t": "t008       21,700,000", "e8-t": "t009       21,000,000", "e9-t": "t010       21,350,000", "e10-t": "t011       21,500,000", "e11-t": "t012       21,800,000", "hdr": "index (tenant, block_height)", "big": "tenants: thousands of distinct values"}, "pc": [2], "rl": [1, 3]},
+ {"t": "One seek per tenant", "b": "The same cost formula: 10,000 seeks × 3 pages + 100 leaf pages = 30,100 pages. A full sweep is 10,000 pages.", "w": "Each seek walks root to leaf. Here the sweep is cheaper by three times.", "f": {"e0": "f", "e1": "f", "e2": "f", "e3": "f", "e4": "f", "e5": "f", "e6": "f", "e7": "f", "e8": "f", "e9": "f", "e10": "f", "e11": "f"}, "x": {"e0-t": "t001       21,100,500", "e1-t": "t002       21,300,000", "e2-t": "t003       21,450,000", "e3-t": "t004       21,600,000", "e4-t": "t005       21,200,000", "e5-t": "t006       21,390,000", "e6-t": "t007       21,410,000", "e7-t": "t008       21,700,000", "e8-t": "t009       21,000,000", "e9-t": "t010       21,350,000", "e10-t": "t011       21,500,000", "e11-t": "t012       21,800,000", "hdr": "index (tenant, block_height)", "big": "one seek per entry: worse than a scan"}, "pc": [3, 4, 5], "rl": [5, 6, 7]},
+ {"t": "The planner refuses, or guesses wrong", "b": "With good statistics the planner sees 30,100 above 10,000 and picks the sweep. If statistics say 10 tenants instead, the formula gives 130 pages. It then picks skip scan, and the query really runs 10,000 seeks.", "w": "Skip scan only pays off when the first column has few values.", "f": {"e0": "w", "e1": "w", "e2": "w", "e3": "w", "e4": "w", "e5": "w", "e6": "w", "e7": "w", "e8": "w", "e9": "w", "e10": "w", "e11": "w"}, "x": {"e0-t": "t001       21,100,500", "e1-t": "t002       21,300,000", "e2-t": "t003       21,450,000", "e3-t": "t004       21,600,000", "e4-t": "t005       21,200,000", "e5-t": "t006       21,390,000", "e6-t": "t007       21,410,000", "e7-t": "t008       21,700,000", "e8-t": "t009       21,000,000", "e9-t": "t010       21,350,000", "e10-t": "t011       21,500,000", "e11-t": "t012       21,800,000", "hdr": "index (tenant, block_height)", "big": "full scan, or thousands of seeks"}, "pc": [5, 12, 13], "rl": [3, 7]},
+ {"t": "It hides a missing index", "b": "A query that runs every second and filters on height alone deserves an index that starts with height.", "w": "Skip scan is for a rare report, not for a hot path.", "f": {"e0": "w", "e1": "w", "e2": "w", "e3": "w", "e4": "w", "e5": "w", "e6": "w", "e7": "w", "e8": "w", "e9": "w", "e10": "w", "e11": "w"}, "x": {"e0-t": "t001       21,100,500", "e1-t": "t002       21,300,000", "e2-t": "t003       21,450,000", "e3-t": "t004       21,600,000", "e4-t": "t005       21,200,000", "e5-t": "t006       21,390,000", "e6-t": "t007       21,410,000", "e7-t": "t008       21,700,000", "e8-t": "t009       21,000,000", "e9-t": "t010       21,350,000", "e10-t": "t011       21,500,000", "e11-t": "t012       21,800,000", "hdr": "index (tenant, block_height)", "big": "hot query, missing index"}, "pc": [5], "rl": [5, 6]},
+ {"t": "Fix: an index that leads with the filter", "b": "Add an index on block_height. The search key is 21,400,000, and the walk runs to the end. The cost is 1 seek × 3 pages + 100 leaf pages = 103 pages.", "w": "Match the leading column to how the hot query filters.", "f": {"e6": "ok", "e7": "ok", "e8": "ok", "e9": "ok", "e10": "ok", "e11": "ok"}, "x": {"e0-t": "21,000,000  t009", "e1-t": "21,100,500  t001", "e2-t": "21,200,000  t005", "e3-t": "21,300,000  t002", "e4-t": "21,350,000  t010", "e5-t": "21,390,000  t006", "e6-t": "21,410,000  t007", "e7-t": "21,450,000  t003", "e8-t": "21,500,000  t011", "e9-t": "21,600,000  t004", "e10-t": "21,700,000  t008", "e11-t": "21,800,000  t012", "hdr": "index (block_height)", "big": "one seek, one walk: 103 pages"}, "pc": [14], "rl": [9, 10, 11]}
+]
+};
+const base={};
+const code={
+"skip":{
+ label:"SQL",
+ pc:["query(b > :h) on index (a, b):", "  d = stats.distinct(a)                       # 3 chains, or 10,000 tenants", "  skip_cost  = d * depth + matching leaves", "  sweep_cost = all leaves", "  if skip_cost < sweep_cost:", "    v = first value of a", "    loop:", "      seek (v, :h), walk while a = v, keep matches", "      v = the value the walk stopped on; end the loop at the end of the index", "    return the walks combined", "  else: sweep every leaf", "the wrong guess:", "  stats says d = 10, truth is 10,000: skip scan runs 10,000 seeks", "the fix for a hot query: an index that starts with b"],
+ real:["CREATE INDEX t_chain_height ON transfers (chain, block_height);", "", "-- no chain in the query", "SELECT chain, block_height FROM transfers", "WHERE  block_height > 21400000;", "", "-- MySQL 8: EXPLAIN Extra column", "-- Using where; Using index for skip scan", "", "-- what it means, written by hand:", "SELECT chain, block_height FROM transfers", "WHERE  chain = 'base'      AND block_height > 21400000", "UNION ALL", "SELECT chain, block_height FROM transfers", "WHERE  chain = 'ethereum'  AND block_height > 21400000", "UNION ALL", "SELECT chain, block_height FROM transfers", "WHERE  chain = 'robinhood' AND block_height > 21400000;", "", "-- the number the planner uses", "SELECT count(DISTINCT chain) FROM transfers;  -- 3"],
+ map:{"1": [4, 5], "2": [20, 21], "3": [8], "4": [8], "5": [8], "6": [12], "7": [11, 12], "8": [12, 15, 18], "9": [15, 18], "10": [13, 16]}},
+"many":{
+ label:"SQL",
+ pc:["query(b > :h) on index (a, b):", "  d = stats.distinct(a)                       # 3 chains, or 10,000 tenants", "  skip_cost  = d * depth + matching leaves", "  sweep_cost = all leaves", "  if skip_cost < sweep_cost:", "    v = first value of a", "    loop:", "      seek (v, :h), walk while a = v, keep matches", "      v = the value the walk stopped on; end the loop at the end of the index", "    return the walks combined", "  else: sweep every leaf", "the wrong guess:", "  stats says d = 10, truth is 10,000: skip scan runs 10,000 seeks", "the fix for a hot query: an index that starts with b"],
+ real:["CREATE INDEX t_tenant_height ON transfers (tenant, block_height);", "", "SELECT count(DISTINCT tenant) FROM transfers;  -- 10000", "", "SELECT tenant, block_height FROM transfers", "WHERE  block_height > 21400000;", "-- with good statistics: Using where; Using index   a full index sweep", "", "-- fix for a hot query: an index that starts with the filter", "CREATE INDEX t_height ON transfers (block_height);", "-- key: t_height   type: range   rows: about 1 percent"],
+ map:{"2": [3], "3": [7], "4": [7], "5": [7], "12": [3], "13": [3, 7], "14": [9, 10, 11]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

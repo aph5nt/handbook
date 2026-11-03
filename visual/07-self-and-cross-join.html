@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Self and cross join</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Self join and cross join, worked</h1>
+  <p class="lede">An investigator wants money that moved on within an hour, so <code>transfers</code> is joined to itself. A dashboard wants a zero for days a pool had no swaps, so days and pools are crossed into a full grid first. Press <b>Next</b> on each tab and watch for the row count that explodes.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="self">Self join: a two-hop path</button>
+    <button role="tab" aria-selected="false" data-mode="cross">Cross join: a calendar grid</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Self and cross join: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">row being matched</span>
+    <span style="--c:var(--wait)">candidate pair</span>
+    <span style="--c:var(--ok)">kept in the result</span>
+    <span style="--c:var(--line)">plain row</span>
+    <span style="--c:var(--fail)">rows multiplied by mistake</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Self joins: two-hop money paths, an employee and their manager in one table, rows that must agree with each other. Cross joins: calendar grids that show zeros, every combination of two settings in a test. Older code compared a row with the previous one by a self join. Today <code>LAG</code> does it.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Always write <code>JOIN ... ON</code>, never the comma form <code>FROM a, b</code>. Bound every self join on transfers by time. Run a <code>COUNT(*)</code> before the full query when a join could fan out.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Self join</th><th>Cross join</th></tr>
+      <tr><td>What it pairs</td><td>Rows of one table, under two names</td><td>Every row of one table with every row of another</td></tr>
+      <tr><td>Condition</td><td>An <code>ON</code> that links the two copies</td><td>None, on purpose</td></tr>
+      <tr><td>Rows out</td><td>Up to n times n, kept small by the condition</td><td>Exactly n times m</td></tr>
+      <tr><td>Trap</td><td>A busy row fans out: 10,000 in times 10,000 out</td><td>A forgotten condition makes one by accident</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A self join compares rows of one table under two names, a cross join builds every pair on purpose, and either one by accident multiplies rows."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const TR=[["S to M","50","10:00"],["M to X","48","10:20"],["M to Y","2","13:00"],["K to S","30","08:00"]];
+const side=(x,lab,ks)=>[F(x,50,360,220,lab),T(x+10,86,"from, to"),T(x+170,86,"amount"),T(x+270,86,"time"),...TR.flatMap((r,j)=>{const k=ks[j]||"n",y=94+42*j;return[B(x+10,y,150,r[0],k),B(x+170,y,90,r[1],k),B(x+270,y,80,r[2],k)];})];
+const both=(ka,kb,ex)=>side(20,"transfers a",ka).concat(side(520,"transfers b",kb),ex||[]);
+const cond=T(20,310,"ON b.from = a.to","f","start",15),tb=T(20,335,"AND b.time within 1 hour after a.time","f","start",15);
+const DAYS=["1 Oct","2 Oct"],POOLS=["p1","p2"];
+const inputs=[F(20,50,180,120,"days"),B(30,90,160,"1 Oct","n",30),B(30,128,160,"2 Oct","n",30),F(20,190,180,120,"pools"),B(30,230,160,"p1","n",30),B(30,268,160,"p2","n",30)];
+const grid=(n,ks,lab)=>[F(240,50,640,250,lab||"result"),T(250,86,"day"),T(400,86,"pool"),T(530,86,"swaps"),...[["1 Oct","p1"],["1 Oct","p2"],["2 Oct","p1"],["2 Oct","p2"]].flatMap((r,j)=>{const y=94+48*j,k=(ks||[])[j]||"n";return[B(250,y,140,r[0],"r",36),B(400,y,120,r[1],"r",36),...(n?[B(530,y,140,n[j],k,36)]:[])];})];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The SQL is the real code: <code>handbook/code/07-self-and-cross-join/main.py</code> loads these rows into SQLite, runs each statement and prints the rows and counts quoted here (<code>python3 main.py</code>).";
+const CODE={
+self:{pc:["transfers: S to M 50 10:00, M to X 48 10:20, M to Y 2 13:00, K to S 30 08:00",
+"for a in transfers:                  # first hop",
+"  for b in transfers:                # second hop, same table",
+"    if b.from == a.to:              # the hops link",
+"      if a.time <= b.time <= a.time + 60 minutes:",
+"        emit (a.from, a.to, b.to)    # one two-hop path",
+"busy M, no time bound: every in pairs with every out"],
+ views:[{v:"real",label:"SQL",lines:[].concat(["INSERT INTO transfers VALUES ('S', 'M', 50, 600), ('M', 'X', 48, 620), ('M', 'Y', 2, 780), ('K', 'S', 30, 480);"],[""],["-- name the table twice and link the hops", "SELECT a.from_address, a.to_address, b.to_address, b.ts - a.ts, a.ts", "FROM transfers a JOIN transfers b", "  ON b.from_address = a.to_address", "ORDER BY a.ts;"],[""],["-- money that moved on within one hour", "SELECT a.from_address, a.to_address AS middle, b.to_address, a.amount, b.amount", "FROM transfers a JOIN transfers b", "  ON b.from_address = a.to_address", " AND b.ts BETWEEN a.ts AND a.ts + 60;"],[""],["-- a busy address, no time bound: every in pairs with every out", "SELECT COUNT(*)", "FROM busy a JOIN busy b", "  ON b.from_address = a.to_address;"]),
+  map:[["transfers: S to M","INSERT INTO transfers"],["for a in","=FROM transfers a JOIN transfers b#1"],["for b in","=FROM transfers a JOIN transfers b#1"],
+   ["if b.from","=ON b.from_address = a.to_address#1"],["if a.time","=AND b.ts BETWEEN a.ts AND a.ts + 60;"],["emit","money that moved on within one hour..;"],
+   ["busy M","a busy address, no time bound..;"]]}]},
+cross:{pc:["days: 1 Oct, 2 Oct      pools: p1, p2",
+"daily_swaps: (1 Oct, p1, 12), (2 Oct, p2, 5)",
+"group(daily_swaps): only the rows that exist",
+"for d in days: for p in pools: grid += (d, p)    # 2 x 2 = 4",
+"for cell in grid: n = daily_swaps[cell] or NULL  # left join",
+"  swaps = n if n is not NULL else 0             # COALESCE",
+"comma join, no condition: every row with every row"],
+ views:[{v:"real",label:"SQL",lines:[].concat(["INSERT INTO days VALUES ('1 Oct'), ('2 Oct');", "INSERT INTO pools VALUES ('p1'), ('p2');", "INSERT INTO daily_swaps VALUES ('1 Oct', 'p1', 12), ('2 Oct', 'p2', 5);"],[""],["-- GROUP BY sees only the rows that exist", "SELECT day, pool, SUM(n) FROM daily_swaps", "GROUP BY day, pool;"],[""],["-- every day with every pool", "SELECT d.day, p.pool", "FROM days d CROSS JOIN pools p", "ORDER BY d.day, p.pool;"],[""],["-- left join the counts onto the grid", "SELECT d.day, p.pool, s.n", "FROM days d CROSS JOIN pools p", "LEFT JOIN daily_swaps s ON s.day = d.day AND s.pool = p.pool", "ORDER BY d.day, p.pool;"],[""],["-- no row means no swaps, so 0 is the true answer", "SELECT d.day, p.pool, COALESCE(s.n, 0) AS swaps", "FROM days d CROSS JOIN pools p", "LEFT JOIN daily_swaps s ON s.day = d.day AND s.pool = p.pool", "ORDER BY d.day, p.pool;"],[""],["-- the comma form with the WHERE forgotten: every row with every row", "SELECT COUNT(*)", "FROM busy, many_pools;"]),
+  map:[["days: 1 Oct","INSERT INTO days","INSERT INTO pools"],["daily_swaps:","INSERT INTO daily_swaps"],["group(","GROUP BY sees only..;"],
+   ["for d in days","every day with every pool..;"],["for cell","left join the counts..;"],["swaps = n","no row means no swaps..;"],["comma join","the comma form..;"]]}]}};
+// CODE PANEL END
+const S={
+self:{name:"one table, two names",st:[
+ {t:"Start: one table of transfers",pc:["transfers: S to M"],b:"Four transfers. The question: which address received money and sent it on within one hour?",w:"Both facts, the receive and the send, live in the same table.",d:side(20,"transfers",[])},
+ {t:"Name the table twice",pc:["for a in", "for b in"],b:"transfers a JOIN transfers b. The same rows appear under two names. a is the first hop, b is the second.",w:"A self join is an ordinary join. The table just plays both parts.",d:both([],[])},
+ {t:"Link the hops: b.from = a.to",pc:["if b.from"],b:"For each row a, the engine looks for rows b with b.from = a.to. S to M has receiver M, and two rows start at M: M to X and M to Y. The program prints both as candidates, 20 and 180 minutes later. K to S also links to S to M, 120 minutes later.",w:"The condition turns two copies of one table into a chain of hops.",d:both(["r"],["n","w","w"],[A(382,111,528,153,"","w"),A(382,111,528,195,"","w"),cond])},
+ {t:"Bound it by time",pc:["if a.time"],b:"The check is b.time between a.time and a.time plus 60 minutes. M to X is 20 minutes after S to M and passes. M to Y is 180 minutes later and fails. K to S then S to M is 120 minutes and fails too.",w:"The time bound keeps money that moved on fast, and keeps the result small.",d:both(["r"],["n","c","g"],[A(382,111,528,153,"","c"),cond,tb])},
+ {t:"The result: one two-hop path",pc:["emit"],b:"The program prints one result row: S sent 50 to M at 10:00, and M sent 48 to X at 10:20.",w:"Each result row of a self join is one pair of rows. Here, one path.",d:[B(60,120,180,"S","r",44),A(242,142,358,142,"50, 10:00","c"),B(360,120,180,"M","w",44),A(542,142,658,142,"48, 10:20","c"),B(660,120,180,"X","c",44),T(450,240,"S to M to X: money moved on in 20 minutes","c","middle",16)]},
+ {t:"The failure: a busy address fans out",pc:["busy M"],b:"Now M is an exchange with 10,000 transfers in and 10,000 out. Without a time bound every in pairs with every out. The program builds M with 100 in and 100 out and counts 10,000 pairs.",w:"10,000 times 10,000 is 100 million rows from one address. Bound by time and run COUNT(*) first.",d:[...[0,1,2,3,4].map(j=>B(40,60+56*j,140,"in "+(j+1),"n",36)),B(380,170,140,"M: exchange","x",50),...[0,1,2,3,4].map(j=>B(720,60+56*j,140,"out "+(j+1),"n",36)),...[0,1,2,3,4].map(j=>A(182,78+56*j,376,195,"","x")),...[0,1,2,3,4].map(j=>A(522,195,716,78+56*j,"","x")),T(450,350,"10,000 x 10,000 = 100,000,000 pairs","x","middle",16)]}
+]},
+cross:{name:"swaps per pool per day",st:[
+ {t:"Start: some days have no swaps",pc:["days: 1 Oct", "daily_swaps:"],b:"Two days and two pools. daily_swaps holds only two rows: p1 had 12 swaps on 1 October, p2 had 5 on 2 October.",w:"The dashboard must show four cells, with a zero where nothing happened.",d:inputs.concat([F(240,50,640,160,"daily_swaps"),B(250,94,140,"1 Oct","n",36),B(400,94,120,"p1","n",36),B(530,94,140,"12","n",36),B(250,142,140,"2 Oct","n",36),B(400,142,120,"p2","n",36),B(530,142,140,"5","n",36)])},
+ {t:"GROUP BY cannot invent rows",pc:["group("],b:"Group daily_swaps by day and pool and the program prints two rows. The two empty cells are not zero, they are missing.",w:"A missing row cannot be counted. Something must create it first.",d:inputs.concat([F(240,50,640,250,"result from daily_swaps alone"),B(250,94,140,"1 Oct","n",36),B(400,94,120,"p1","n",36),B(530,94,140,"12","n",36),B(250,142,140,"1 Oct","g",36),B(400,142,120,"p2","g",36),B(530,142,140,"missing","w",36),B(250,190,140,"2 Oct","g",36),B(400,190,120,"p1","g",36),B(530,190,140,"missing","w",36),B(250,238,140,"2 Oct","n",36),B(400,238,120,"p2","n",36),B(530,238,140,"5","n",36)])},
+ {t:"CROSS JOIN builds the grid",pc:["for d in days"],b:"days CROSS JOIN pools pairs every day with every pool. Two times two: the program prints four rows, one for each cell.",w:"A cross join has no condition. Here that is exactly what we want.",d:inputs.concat(grid(null,null,"days CROSS JOIN pools: 4 rows"),[A(202,110,246,110,"","r"),A(202,250,246,160,"","r")])},
+ {t:"LEFT JOIN the counts onto the grid",pc:["for cell"],b:"Left join daily_swaps on day and pool. Cells with swaps get their count. The other two get NULL. The program prints 12, NULL, NULL, 5.",w:"The grid keeps every row, because it is the left side.",d:inputs.concat(grid(["12","NULL","NULL","5"],["c","u","u","c"],"grid LEFT JOIN daily_swaps"))},
+ {t:"COALESCE turns NULL into 0",pc:["swaps = n"],b:"COALESCE(n, 0) gives 0 where no swaps were found. The dashboard shows four cells: 12, 0, 0, 5.",w:"Here 0 is the true answer: no row means no swaps. That makes COALESCE right in this place.",d:inputs.concat(grid(["12","0","0","5"],["c","c","c","c"],"the dashboard grid"))},
+ {t:"The failure: a cross join by accident",pc:["comma join"],b:"Someone writes FROM transfers, pools and forgets the WHERE condition. The engine pairs every transfer with every pool. The program counts 200 rows times 1,000 pools: 200,000 rows.",w:"A million times a million is a trillion rows, and no error. Write JOIN ... ON so a missing condition is visible.",d:[B(40,80,300,"transfers: 1,000,000 rows","n",44),B(40,200,300,"pools: 1,000,000 rows","n",44),A(342,102,536,152,"","x"),A(342,222,536,160,"","x"),B(540,130,330,"1,000,000,000,000 rows","x",50),T(40,320,"FROM transfers, pools  (no WHERE)","x","start",16)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

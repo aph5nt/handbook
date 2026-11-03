@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACID versus BASE</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>ACID versus BASE</h1>
+  <p class="lede">Kim sends Lee 50. Inside one database it is one transaction. Split into two services it is a debit, an event, and a credit a moment later. Press <b>Next</b> and watch what a report sees in between.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="acid" id="tab-acid">ACID: one database</button>
+    <button role="tab" aria-selected="false" data-mode="base" id="tab-base">BASE: two services</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Kim's and Lee's balances in one database, or in two services joined by an event</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-acid-vs-base/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">committed and visible</span>
+    <span style="--c:var(--wait)">not yet visible, or pending</span>
+    <span style="--c:var(--ok)">total correct</span>
+    <span style="--c:var(--fail)">total wrong</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet ACID</h2>
+      <p>A bank ledger inside one database, always. Postgres or MySQL give Atomic, Consistent, Isolated, Durable transactions. An analytics warehouse such as StarRocks makes each batch load atomic.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet BASE</h2>
+      <p>An order flow across payment, stock and shipping: a saga plus an outbox. Reports on such data are eventually consistent with the source. Mark in-between states as pending so nobody mistakes them for final.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>ACID</th><th>BASE</th></tr>
+      <tr><td>Stands for</td><td>Atomic, Consistent, Isolated, Durable</td><td>Basically Available, Soft state, Eventually consistent</td></tr>
+      <tr><td>Scope</td><td>One database</td><td>Many services</td></tr>
+      <tr><td>In-between state</td><td>Never visible</td><td>Visible for a moment</td></tr>
+      <tr><td>On failure</td><td>Rollback</td><td>Compensation, such as a refund</td></tr>
+      <tr><td>Fits</td><td>Money inside one system</td><td>Flows across service boundaries</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"ACID gives me one instant of truth inside one database. BASE gives me availability across services, and I pay with a visible in-between state that I must design."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+function scene(s){
+  let b="";const msgs=[];
+  const acc=(x,y,w,name,v,st)=>BOX(x,y,w,80,st==="wait"?"var(--wait)":st==="fail"?"var(--fail)":"var(--coord)",name,v);
+  if(mode==="acid"){
+    b+=R(150,24,600,210,"var(--panel)",{st:"var(--line)"})+T(450,50,"Postgres: one database",{s:14,c:"var(--muted)"});
+    b+=acc(190,74,240,"Kim",s.k[0],s.k[1]);b+=acc(470,74,240,"Lee",s.l[0],s.l[1]);
+    b+=CHIP(450,190,260,s.tx,s.txc?KC[s.txc]:"var(--line)");
+  }else{
+    b+=R(30,24,280,200,"var(--panel)",{st:"var(--line)"})+T(170,48,"Wallet service",{s:14,c:"var(--muted)"});
+    b+=R(590,24,280,200,"var(--panel)",{st:"var(--line)"})+T(730,48,"Ledger service",{s:14,c:"var(--muted)"});
+    b+=acc(50,70,240,"Kim",s.k[0],s.k[1]);b+=acc(610,70,240,"Lee",s.l[0],s.l[1]);
+    b+=`<line x1="310" y1="110" x2="590" y2="110" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`+T(450,100,"broker",{s:12,w:400,c:"var(--muted)"});
+    if(s.ev){const x={out:170,mid:450,in:730}[s.ev];msgs.push(CHIP(x,180,180,"event: TransferSent",s.ev==="in"?"var(--ok)":"var(--wait)"));}
+  }
+  b+=BOX(330,262,240,60,"var(--svc)","Report","sum of balances");
+  msgs.push(CHIP(450,334,260,s.total,KC[s.tc]||"var(--line)"));
+  (s.m||[]).forEach(h=>msgs.push(h));
+  if(s.ban)msgs.push(BANNER(382,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+acid:[
+ {t:"Kim 100, Lee 50",b:"Both balances live in one Postgres database. Line 10: a read returns only committed values. The report reads 100 + 50 = 150.",w:"One database can give the four ACID promises: Atomic, Consistent, Isolated, Durable.",k:["balance 100"],l:["balance 50"],tx:"no transaction",total:"total 150",tc:"ok",pc:[10]},
+ {t:"BEGIN, debit Kim 50",b:"Line 2 opens a transaction. Line 3 writes Kim = 100 - 50 = 50 into the transaction's own writes, not into the committed values.",w:"Isolated: nobody else can see Kim at 50 yet. Line 10 still returns 100 to every other reader.",k:["50 (not visible yet)","wait"],l:["balance 50"],tx:"BEGIN",txc:"wait",total:"total 150",tc:"ok",pc:[2,3]},
+ {t:"Credit Lee 50, a report runs",b:"Line 4 writes Lee = 50 + 50 = 100, again only inside the transaction. Line 5: a report runs right now. It reads committed values: Kim 100, Lee 50, total 150.",w:"The report sees the state before the transaction, never a mix of before and after.",k:["50 (not visible yet)","wait"],l:["100 (not visible yet)","wait"],tx:"BEGIN, two changes",txc:"wait",total:"report reads 150",tc:"ok",pc:[4,5,10]},
+ {t:"COMMIT: both at one instant",b:"Line 8 commits. Line 9 copies both writes into the committed values in one step: Kim 50, Lee 100. The next read returns 50 + 100 = 150.",w:"Atomic: all or nothing. Durable: once committed, it survives a crash.",k:["balance 50"],l:["balance 100"],tx:"COMMIT",txc:"ok",total:"total 150",tc:"ok",pc:[8,9]},
+ {t:"The failure ACID absorbs: a crash mid-way",b:"Replay it with a power cut after line 4 and before line 8. Line 6 is true, so line 7 throws the transaction's writes away. Committed values are still Kim 100, Lee 50.",w:"Half a transfer never survives, because nothing reached the committed values. 'Money is neither made nor lost' holds before and after: the C in ACID.",k:["balance 100"],l:["balance 50"],tx:"crash, rolled back",txc:"fail",total:"total 150",tc:"ok",pc:[6,7]}
+],
+base:[
+ {t:"Two services, two databases",b:"Kim's balance lives in the wallet service. Lee's lives in the ledger service. Line 8: the report adds wallet.kim + ledger.lee = 100 + 50 = 150.",w:"No single transaction can cover two databases owned by two services.",k:["balance 100"],l:["balance 50"],total:"total 150",tc:"ok",pc:[7,8]},
+ {t:"The wallet debits Kim and commits",b:"Line 2 sets Kim = 100 - 50 = 50. Line 3 adds a TransferSent 50 row to the outbox. Both are one local commit in the wallet's database.",w:"Basically Available: the wallet did not wait for the ledger. The outbox row means the event can never be lost.",k:["balance 50"],l:["balance 50"],ev:"out",total:"total 150",tc:"ok",pc:[1,2,3]},
+ {t:"The failure: the report sees the gap",b:"The event is still in the outbox, so line 5 has not run. The report runs line 8: 50 + 50 = 100.",w:"Soft state: the copies disagree for a moment, and the moment is visible. Line 8 does not know about money in flight.",k:["balance 50"],l:["balance 50"],ev:"mid",total:"report reads 100",tc:"fail",ban:"For a moment the money is in neither account. The report is 50 short.",pc:[8]},
+ {t:"The ledger credits Lee",b:"The relay delivers the event. Line 5 adds 50 to Lee: 100. Line 6 clears the outbox. The report on line 8 now gives 50 + 100 = 150.",w:"Eventually consistent: correct once the event lands.",k:["balance 50"],l:["balance 100"],ev:"in",total:"total 150",tc:"ok",pc:[4,5,6]},
+ {t:"The fix: count the in-between as pending",b:"Replay the gap with the fixed report. Line 10 sums the outbox: 50 pending. Line 11 returns 50 + 50 + 50 = 150, of which 50 pending.",w:"BASE is not 'no rules'. The in-between state is real, so name it, show it, and let a saga finish or undo it.",k:["50, plus 50 pending","wait"],l:["balance 50"],ev:"mid",total:"150, of which 50 pending",tc:"ok",pc:[9,10,11]}
+]};
+const code={"acid": {"label": "Go", "pc": ["transfer(kim -> lee, 50), one database:", "  tx = db.begin()", "  tx.set(kim, kim - 50)            # written, not visible to others", "  tx.set(lee, lee + 50)", "  report: read committed kim + lee # sees 100 + 50 = 150", "  if the power fails here:", "    discard tx.writes              # rollback: 100 and 50 stay", "  tx.commit():", "    for each write: make it visible  # both at one instant", "read(key): return committed[key]   # never a half-done write"], "real": ["func (db *DB) Read(key string) int { return db.committed[key] }", "", "func (tx *Tx) Set(key string, v int) { tx.writes[key] = v } // not visible yet", "", "", "// Commit makes every write visible at one instant.", "func (tx *Tx) Commit() {", "\tfor k, v := range tx.writes {", "\t\ttx.db.committed[k] = v", "\t}", "}", "", "// Crash before commit: the writes are thrown away (rollback).", "func (tx *Tx) Crash() { tx.writes = nil }", "", "// TransferACID moves 50 inside one transaction. crash stops it before commit.", "// report runs in the middle, while the transaction is open.", "func TransferACID(db *DB, crash bool, report func()) {", "\ttx := db.Begin()", "\ttx.Set(\"kim\", db.Read(\"kim\")-50) // written, not visible", "\ttx.Set(\"lee\", db.Read(\"lee\")+50)", "\treport() // a reader in the middle sees the old committed values", "\tif crash {", "\t\ttx.Crash() // rollback: 100 and 50 stay", "\t\treturn", "\t}", "\ttx.Commit() // both visible at one instant", "}"], "map": {"1": [18], "2": [19], "3": [20], "4": [21], "5": [22], "6": [23], "7": [14, 24], "8": [27], "9": [8, 9], "10": [1]}}, "base": {"label": "Go", "pc": ["wallet, one local transaction:", "  kim = kim - 50", "  outbox.add(TransferSent 50)      # same commit as the debit", "relay and ledger, a moment later:", "  for each outbox event: lee = lee + amount", "  clear the outbox                 # confirmed", "report:", "  return wallet.kim + ledger.lee   # in the gap: 50 + 50 = 100", "fix, report with pending:", "  pending = sum of outbox events   # money in flight: 50", "  return kim + lee + pending       # 50 + 50 + 50 = 150"], "real": ["// Debit is one local transaction: the balance and the outbox row together.", "func (w *Wallet) Debit(amount int) {", "\tw.kim -= amount", "\tw.outbox = append(w.outbox, amount) // same commit as the debit", "}", "", "// Deliver is the relay plus the ledger: the event lands, Lee is credited.", "func Deliver(w *Wallet, l *Ledger) {", "\tfor _, amount := range w.outbox {", "\t\tl.lee += amount", "\t}", "\tw.outbox = nil // confirmed", "}", "", "// ReportNaive adds the two balances. In the gap it is short.", "func ReportNaive(w *Wallet, l *Ledger) int { return w.kim + l.lee }", "", "// ReportPending also counts transfers still in flight.", "func ReportPending(w *Wallet, l *Ledger) (total, pending int) {", "\tfor _, a := range w.outbox {", "\t\tpending += a", "\t}", "\treturn w.kim + l.lee + pending, pending", "}"], "map": {"1": [2], "2": [3], "3": [4], "4": [8], "5": [9, 10], "6": [12], "7": [16], "8": [16], "9": [19], "10": [20, 21], "11": [23]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

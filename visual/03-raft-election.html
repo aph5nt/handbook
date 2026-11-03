@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raft leader election</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Raft: how five nodes pick one leader</h1>
+  <p class="lede">Five nodes keep one copy of the same log, like the three or five members of etcd under a Kubernetes control plane. Only the leader takes writes. Watch what happens when the leader dies, and why the maths of a majority keeps the cluster safe.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="normal" id="tab-normal">Leader dies, new leader</button>
+    <button role="tab" aria-selected="false" data-mode="fail" id="tab-fail">Split vote and partition</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title">
+      <title id="stage-title">Five Raft nodes with their terms, roles, election timers and messages</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" stroke-width="2.5" fill="none"></g>
+      <g id="nodes" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="part" class="msg"><line x1="360" y1="40" x2="360" y2="300" stroke="var(--fail)" stroke-width="4" stroke-dasharray="10 8"/><text x="360" y="320" text-anchor="middle" fill="var(--fail)" font-size="14" font-weight="700">network partition</text></g>
+      <text id="banner" x="450" y="325" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fail)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-raft-election/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">leader</span>
+    <span style="--c:var(--svc)">follower</span>
+    <span style="--c:var(--wait)">candidate, asking for votes</span>
+    <span style="--c:var(--fail)">dead or cut off</span>
+    <span style="--c:var(--line)">election timer (bar fills until it fires)</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>etcd under Kubernetes, Consul, CockroachDB, TiKV, and the causal cluster of a Neo4j-family graph database. Three nodes survive one loss. Five survive two. Four survive only one, same as three, so never run an even count.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Spread the nodes across failure zones so a partition cuts off a minority, never half. Keep the election timeout well above the network round trip, or followers start elections while the leader is alive. etcd's default is 1000 ms with a 100 ms heartbeat.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Majority side</th><th>Minority side</th></tr>
+      <tr><td>Can elect</td><td>Yes, 3 of 5 can agree</td><td>No, 2 of 5 can never reach 3</td></tr>
+      <tr><td>Can commit writes</td><td>Yes</td><td>No, writes are refused</td></tr>
+      <tr><td>Can serve reads</td><td>Yes, fresh</td><td>Only stale, and Raft by default says no</td></tr>
+      <tr><td>Old leader on this side</td><td>Keeps leading</td><td>Steps down: no heartbeat replies from a majority</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A Raft term is a fencing token and a majority is the only truth. The side with three of five keeps working. The side with two stops, by design, so there is never a split brain."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NX={n1:90,n2:270,n3:450,n4:630,n5:810},NY=130;
+// role: L leader, F follower, C candidate, X dead. timer: 0..1 how full the election timer is.
+const base=(t)=>({n1:{r:"F",t,tm:.3},n2:{r:"L",t,tm:0},n3:{r:"F",t,tm:.4},n4:{r:"F",t,tm:.2},n5:{r:"F",t,tm:.5}});
+const set=(o,p)=>{const c=JSON.parse(JSON.stringify(o));for(const k in p)Object.assign(c[k],p[k]);return c};
+const hb=(l)=>Object.keys(NX).filter(n=>n!==l).map(n=>[l,n,"heartbeat","hb"]);
+const steps={
+normal:[
+ {t:"Steady state, term 3",b:"n2 is the leader of term 3. Line 12 sends a heartbeat about every 100 ms. Line 2 runs on each follower: term 3 is at least its own term 3, so it resets its timer to zero.",w:"A follower only acts when its timer fires. While heartbeats arrive, nobody moves.",n:base(3),m:hb("n2"),pc:[1, 2, 12]},
+ {t:"Timers never reach the end",b:"The timers tick up between heartbeats and drop back on each one. Line 3 asks on every tick: has my timer reached my own random timeout? Each node drew one between 150 and 300 ms in the Raft paper's defaults. While heartbeats arrive, the answer is no.",w:"The randomness matters later. It is what stops two followers from waking at the same moment.",n:set(base(3),{n1:{tm:.5},n3:{tm:.6},n4:{tm:.35},n5:{tm:.7}}),m:[],pc:[3]},
+ {t:"The leader dies",b:"n2 crashes. Line 12 stops, so line 2 never resets a timer again. The four timers keep ticking, and line 3 keeps asking.",w:"Nobody is told the leader died. Silence is the only signal, and the timers measure it.",n:set(base(3),{n2:{r:"X"},n1:{tm:.7},n3:{tm:.8},n4:{tm:.6},n5:{tm:.85}}),m:[],banner:"no heartbeats",pc:[3]},
+ {t:"n5's timer fires first",b:"n5 drew the shortest timeout, so line 3 is true for it first. Line 4 raises its term from 3 to 4, makes it a candidate, and counts its own vote. Line 5 asks n1, n3 and n4.",w:"The higher term is a fencing token. Any message stamped term 3 is now ignored by anyone who has seen term 4.",n:set(base(3),{n2:{r:"X"},n5:{r:"C",t:4,tm:1},n1:{tm:.8},n3:{tm:.9},n4:{tm:.7}}),m:[["n5","n1","vote for me? term 4","rv"],["n5","n3","vote for me?","rv"],["n5","n4","vote for me?","rv"]],pc:[3, 4, 5]},
+ {t:"Votes come back",b:"Each voter runs line 7: term 4 is above its term 3, so it moves to term 4 and forgets its old vote. Line 8: it has not voted, and n5's log is at least as long as its own, so it grants. n5 holds 4 of 5.",w:"A node gives one vote per term. That single rule is why two leaders cannot exist in one term.",n:set(base(3),{n2:{r:"X"},n5:{r:"C",t:4,tm:1},n1:{t:4,tm:0},n3:{t:4,tm:0},n4:{t:4,tm:0}}),m:[["n1","n5","yes","yes"],["n3","n5","yes","yes"],["n4","n5","yes","yes"]],pc:[6, 7, 8]},
+ {t:"Majority: n5 is leader of term 4",b:"Line 9 checks: are 4 votes more than 5 / 2? Yes. It would be enough with 3. n2 is dead but still counts in N, so a minority can never win. n5 becomes leader of term 4, and line 12 starts its heartbeats.",w:"The cluster lost its leader and was back in well under a second, with no human and no shared disk.",n:set(base(4),{n2:{r:"X",t:3},n5:{r:"L",tm:0},n1:{tm:.1},n3:{tm:.1},n4:{tm:.1}}),m:hb("n5").filter(x=>x[1]!=="n2"),pc:[9, 12]},
+ {t:"n2 comes back",b:"n2 restarts, still believing it leads term 3. A heartbeat arrives with term 4. Line 2 checks: 4 is at least 3, so n2 takes term 4 and becomes a follower.",w:"An old leader can never overwrite the new one. Its term is lower, so every node rejects it.",n:set(base(4),{n5:{r:"L",tm:0},n2:{r:"F",t:4,tm:.1},n1:{tm:.2},n3:{tm:.2},n4:{tm:.2}}),m:[["n5","n2","heartbeat, term 4","hb"],["n2","n5","ok, I follow","yes"]],pc:[1, 2, 13]}
+],
+fail:[
+ {t:"Leader dies again",b:"Same cluster, term 3. n2 crashes. n1 and n5 happen to have drawn nearly the same timeout, so line 3 is about to be true for both.",w:"Random timeouts make this rare, not impossible. Raft must still cope with it.",n:set(base(3),{n2:{r:"X"},n1:{tm:.9},n3:{tm:.5},n4:{tm:.5},n5:{tm:.9}}),m:[],banner:"no heartbeats",pc:[3]},
+ {t:"Split vote",b:"Line 4 runs on n1 and n5 at once: both move to term 4 and vote for themselves. n3 hears n1 first, so line 8 grants n1. n4 hears n5 first and grants n5. When n1 asks n4, line 8 refuses: n4 already voted. Line 9 on each: is 2 more than 2.5? No.",w:"Two of five is not a majority. The term ends with no leader. Writes are refused while this lasts.",n:set(base(3),{n2:{r:"X"},n1:{r:"C",t:4,tm:1},n5:{r:"C",t:4,tm:1},n3:{t:4,tm:0},n4:{t:4,tm:0}}),m:[["n1","n3","vote?","rv"],["n3","n1","yes","yes"],["n5","n4","vote?","rv"],["n4","n5","yes","yes"],["n1","n4","vote?","rv"],["n4","n1","no, already voted","no"]],banner:"2 votes each, no majority",pc:[4, 5, 8, 9]},
+ {t:"New random timeouts resolve it",b:"Line 10: the timers fire again with no majority. Line 11 draws fresh random timeouts, and n5 draws the shorter one. Line 4 moves it to term 5. Line 7 clears everyone's vote, so line 8 grants n1, n3 and n4. Line 9: 4 is more than 2.5, so n5 leads term 5.",w:"Randomness is the whole fix. With different timeouts the second round almost never ties again.",n:set(base(5),{n2:{r:"X",t:3},n5:{r:"L",tm:0},n1:{tm:0},n3:{tm:0},n4:{tm:0}}),m:[["n5","n1","vote? term 5","rv"],["n1","n5","yes","yes"],["n5","n3","vote?","rv"],["n3","n5","yes","yes"],["n5","n4","vote?","rv"],["n4","n5","yes","yes"]],pc:[10, 11, 4, 7, 8, 9]},
+ {t:"The failure that matters: a partition",b:"n2 has restarted and followed n5. Now the network splits: n1 and n2 on one side, n3, n4 and the leader n5 on the other. Line 12 still reaches n3 and n4, so line 2 keeps their timers low. n1 and n2 hear nothing.",w:"This is the case every interviewer probes. Two halves, each thinking the other is dead.",n:set(base(5),{n5:{r:"L",tm:0},n2:{r:"F",tm:.6},n1:{tm:.7},n3:{tm:.1},n4:{tm:.1}}),m:hb("n5").filter(x=>["n3","n4"].includes(x[1])),part:true,pc:[2, 12]},
+ {t:"The minority side tries and fails",b:"Line 3 fires on n1. Line 4 moves it to term 6, and line 5 asks the only node it can reach, n2, which grants on line 8. Line 9: is 2 more than 2.5? No. Lines 10 and 11 repeat this at term 7, with the same 2 votes.",w:"Two nodes can never prove the other three are dead. So they never elect, and never accept a write. This is the quorum rule: a majority is the only proof.",n:set(base(5),{n5:{r:"L",tm:0},n1:{r:"C",t:7,tm:1},n2:{r:"F",t:7,tm:0},n3:{tm:.1},n4:{tm:.1}}),m:[["n1","n2","vote? term 7","rv"],["n2","n1","yes (2 of 5)","yes"],["n5","n3","heartbeat","hb"],["n5","n4","heartbeat","hb"]],part:true,banner:"left side: 2 votes, needs 3. Right side: still committing writes",pc:[3, 4, 5, 8, 9, 10, 11]},
+ {t:"The partition heals",b:"n1 asks again at term 8. n5 runs line 13: 8 is above its 5, so it steps down. Lines 7 and 8 on n3, n4 and n5 refuse n1, because its log is shorter. Then n3's timer fires: term 9, the longest log, 5 votes of 5. No write from the right side is lost, because each one reached three nodes.",w:"Say this out loud: the minority never elected, so there was never a second leader, so no two writes ever conflicted. That is what Raft buys.",n:set(base(9),{n1:{r:"F",tm:.2},n2:{r:"F",tm:.2},n3:{r:"L",tm:0},n4:{tm:.2},n5:{r:"F",tm:.2}}),m:hb("n3"),pc:[13, 7, 8, 4, 9]}
+]};
+const RC={L:"var(--coord)",F:"var(--svc)",C:"var(--wait)",X:"var(--fail)"};
+const RN={L:"leader",F:"follower",C:"candidate",X:"dead"};
+const MC={hb:"var(--coord)",rv:"var(--wait)",yes:"var(--ok)",no:"var(--fail)"};
+let mode="normal",i=0,timer=null;
+const $=id=>document.getElementById(id);
+function arc(a,b,label,kind,k){
+  const x1=NX[a],x2=NX[b],up=x1<x2;const dist=Math.abs(x2-x1);
+  const y=up?NY-50:NY+50;const cy=up?y-dist*.18-10:y+dist*.18+10;
+  const col=MC[kind];
+  return`<path d="M${x1} ${y} Q${(x1+x2)/2} ${cy} ${x2} ${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${(y+cy)/2+(up?-4:12)}" text-anchor="middle" fill="${col}" stroke="none">${label}</text>`;
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("banner").textContent=s.banner||"";
+  $("part").classList.toggle("on",!!s.part);
+  const g=$("nodes");g.innerHTML="";
+  for(const [id,n] of Object.entries(s.n)){
+    const x=NX[id];
+    g.innerHTML+=`<g class="box">
+      <circle cx="${x}" cy="${NY}" r="36" fill="${RC[n.r]}" class="box"/>
+      <text x="${x}" y="${NY-4}" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">${id}</text>
+      <text x="${x}" y="${NY+16}" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">${RN[n.r]}</text>
+      <rect x="${x-34}" y="${NY-72}" width="68" height="22" rx="11" fill="var(--line)"/>
+      <text x="${x}" y="${NY-56}" text-anchor="middle" fill="var(--fg)" font-size="13" font-weight="700">term ${n.t}</text>
+      <rect x="${x-40}" y="${NY+48}" width="80" height="10" rx="5" fill="var(--line)"/>
+      <rect x="${x-40}" y="${NY+48}" width="${n.r==="X"?0:80*n.tm}" height="10" rx="5" fill="${n.tm>=1?"var(--fail)":"var(--muted)"}" class="box"/>
+      <text x="${x}" y="${NY+74}" text-anchor="middle" fill="var(--muted)" font-size="12">${n.r==="X"?"offline":n.r==="L"?"sends heartbeats":n.tm>=1?"timer fired":"timer"}</text>
+    </g>`;
+  }
+  const m=$("msgs");m.innerHTML="";
+  s.m.forEach((x,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    el.innerHTML=arc(x[0],x[1],x[2],x[3],k);m.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+const code={"*": {"label": "Go", "pc": ["follower, on a heartbeat with term t:", "  if t >= term: term = t; role = follower; timer = 0", "every tick, not leader, timer >= my random timeout:", "  term = term + 1; role = candidate; vote for myself", "  ask every reachable node for its vote", "on a vote request with term t and log length L:", "  if t > term: term = t; role = follower; votedFor = none", "  if votedFor is none and L >= my log length: grant, else refuse", "candidate: if votes > N / 2: role = leader   # N counts dead nodes too", "candidate, timer fires again with no majority:", "  draw a new random timeout; go to line 4", "leader, about every 100 ms: send a heartbeat to all", "any node, on a higher term: step down (lines 2 and 7)"], "real": ["// Heartbeat: a follower accepts a term at least as high as its own. A leader", "// that sees a higher term steps down.", "func (c *Cluster) Heartbeat(leader, to string) {", "\tl, n := c.nodes[leader], c.nodes[to]", "\tif !c.reach(leader, to) || l.term < n.term {", "\t\treturn", "\t}", "\tn.term, n.role = l.term, \"follower\"", "}", "", "// StartElection runs when a node's random timer fires.", "func (c *Cluster) StartElection(id string) {", "\tn := c.nodes[id]", "\tn.term++", "\tn.role, n.votedFor, n.votes = \"candidate\", id, 1", "}", "", "// RequestVote: a node gives one vote per term, to a log at least as long.", "func (c *Cluster) RequestVote(cand, voter string) bool {", "\tk, v := c.nodes[cand], c.nodes[voter]", "\tif !c.reach(cand, voter) || k.term < v.term {", "\t\treturn false", "\t}", "\tif k.term > v.term { // a higher term: step down and forget the old vote", "\t\tv.term, v.role, v.votedFor = k.term, \"follower\", \"\"", "\t}", "\tif v.votedFor != \"\" || k.logLen < v.logLen {", "\t\treturn false // one vote per term, and never for a shorter log", "\t}", "\tv.votedFor = cand", "\tk.votes++", "\treturn true", "}", "", "// Tally: more than half of ALL nodes, dead or not, makes a leader.", "func (c *Cluster) Tally(cand string) bool {", "\tk := c.nodes[cand]", "\tif k.votes > len(c.nodes)/2 {", "\t\tk.role = \"leader\"", "\t\treturn true", "\t}", "\treturn false", "}"], "map": {"1": [3], "2": [5, 8], "3": [11], "4": [14, 15], "5": [19], "6": [21], "7": [24, 25], "8": [27, 30, 31], "9": [38, 39], "10": [35], "11": [14], "12": [3], "13": [8, 25]}}};
+let view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

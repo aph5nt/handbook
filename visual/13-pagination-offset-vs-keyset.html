@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Offset versus Keyset</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:0 0 12px}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);border-width:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Offset versus keyset pagination</h1>
+  <p class="lede">A client reads the swaps of one busy exchange pool, newest first, four at a time. Each box is one swap, named by its block number. Press <b>Next</b> and watch how many rows the database reads for each page, and what happens when a new swap lands between pages.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="offset">Offset paging</button>
+    <button role="tab" aria-selected="false" data-mode="keyset">Keyset (cursor) paging</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 300" aria-labelledby="stage-title">
+      <title id="stage-title">A row of swaps with the rows read, thrown away and returned for each page</title>
+      <rect x="20" y="16" width="860" height="44" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+      <text id="sql" x="40" y="45" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="16" font-weight="700" fill="var(--coord)"></text>
+      <text x="30" y="96" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)">newest</text>
+      <text x="870" y="96" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)">older</text>
+      <g id="cells" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="marks" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect x="120" y="236" width="300" height="44" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="c-read" x="270" y="264" text-anchor="middle" fill="var(--fg)"></text>
+        <rect x="480" y="236" width="300" height="44" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="c-ret" x="630" y="264" text-anchor="middle" fill="var(--fg)"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. The rows live in a Go slice, and rows read counts what a database would touch. Full program: <code>handbook/code/13-pagination-offset-vs-keyset/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">returned on this page</span>
+    <span style="--c:var(--wait)">read, then thrown away</span>
+    <span style="--c:var(--fail)">shown twice</span>
+    <span style="--c:var(--undo)">new swap, landed between pages</span>
+    <span style="--c:var(--line)">not touched</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet offset</h2>
+      <p>Admin screens and search results with "jump to page 7". The list is small, people rarely go past page 10, and a row shown twice does no harm. <code>OFFSET</code> is simple and fine there.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet keyset</h2>
+      <p>Feeds, event logs, swaps of a pool in a warehouse, the GitHub and Stripe list APIs. The cursor encodes the last sort key, such as block height plus log index, so the key is unique. Every page costs the same and never repeats a row.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Offset</th><th>Keyset</th></tr>
+      <tr><td>Query</td><td><code>ORDER BY block DESC LIMIT 50 OFFSET 50000</code></td><td><code>WHERE block &lt; last_block ORDER BY block DESC LIMIT 50</code></td></tr>
+      <tr><td>Rows read for page 1,000 of 50</td><td>50,050, then 50,000 thrown away</td><td>50, after one index seek</td></tr>
+      <tr><td>A row added between pages</td><td>Everything shifts: one row shown twice</td><td>No shift: the next page starts after the last key</td></tr>
+      <tr><td>A row deleted between pages</td><td>Everything shifts back: one row skipped</td><td>No skip</td></tr>
+      <tr><td>Jump to page 7</td><td>Yes</td><td>No, only next and back</td></tr>
+      <tr><td>Needs</td><td>Nothing</td><td>A unique sort key with an index, and an opaque cursor</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Offset re-reads everything before the page and shifts when rows change. Keyset seeks straight to the last key, so every page costs the same and never repeats a row."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const base=[960,955,950,945,940,935,930,925,920,915,910,905,900,895,890,885];
+const withNew=[965,...base];
+const steps={
+"offset":[
+ {pc:[1],t:"Start",b:"Sixteen swaps of one pool, newest first. In real life there are millions and a page holds 50. Here a page holds four, so line 2 adds 4 each time.",w:"Watch the two counters. Rows read is the work the database does. Rows returned is what the client gets.",sql:"ORDER BY block DESC LIMIT 4",rows:base,c:{},read:0,ret:0},
+ {pc:[1,2,3,4,5],t:"Page 1: OFFSET 0",b:"Line 1 gets offset 0. Line 2 sets end to 4. Line 3 reads four rows and line 5 returns all four: the program prints rows read 4, returned 4.",w:"The first page is always cheap. That is why offset looks fine in a demo.",sql:"ORDER BY block DESC LIMIT 4 OFFSET 0",rows:base,c:{ok:[0,4]},read:4,ret:4},
+ {pc:[2,3,4,5,6],t:"Page 2: OFFSET 4",b:"Line 2 sets end to 8. Line 3 still reads from the front, and line 5 throws the first four away: the program prints rows read 8, returned 4.",w:"OFFSET does not jump. It counts. The skipped rows are real work.",sql:"ORDER BY block DESC LIMIT 4 OFFSET 4",rows:base,c:{wait:[0,4],ok:[4,8]},read:8,ret:4},
+ {pc:[3,4,6],t:"Page 3: OFFSET 8",b:"Line 3 now reads twelve rows to return four: rows read 12. Line 6 will ask for more next time, so the waste grows with every page.",w:"At 50 rows a page, page 1,000 reads about 50,000 rows to return 50. Late pages get slower and slower.",sql:"ORDER BY block DESC LIMIT 4 OFFSET 8",rows:base,c:{wait:[0,8],ok:[8,12]},read:12,ret:4},
+ {pc:[7],t:"A new swap lands",b:"While the client reads page 3, block 965 lands at the front. Line 7: every older swap moves one place to the right.",w:"Offset counts positions, and every position just changed by one.",sql:"new row inserted at the front",rows:withNew,c:{undo:[0,1]},read:12,ret:12},
+ {pc:[2,5,8],t:"Page 4: OFFSET 12, the failure",b:"The client asks for OFFSET 12. Line 5 returns position 12, which now holds block 905. Line 8: the client got it on page 3. The program prints block 905 already seen on page 3: true.",w:"A delete does the opposite: everything shifts left and one row is skipped. A client that sums the rows now has the wrong total.",sql:"ORDER BY block DESC LIMIT 4 OFFSET 12",rows:withNew,c:{undo:[0,1],wait:[1,12],fail:[12,13],ok:[13,16]},read:16,ret:4,dup:true}
+],
+"keyset":[
+ {pc:[1],t:"Start",b:"The same sixteen swaps, newest first, four to a page. Line 1: with no cursor the query starts at the front.",w:"The client never sends a position. It sends a cursor: an opaque token holding the last key.",sql:"ORDER BY block DESC LIMIT 4",rows:base,c:{},read:0,ret:0},
+ {pc:[1,5,6],t:"Page 1",b:"Line 5 reads the four newest swaps: rows read 4. Line 6 encodes the last block, 945, into next_cursor.",w:"Encode the key, do not show it raw. Then you can change the key later without breaking clients.",sql:"ORDER BY block DESC LIMIT 4",rows:base,c:{ok:[0,4]},read:4,ret:4,cur:3},
+ {pc:[2,4,5],t:"Page 2: after 945",b:"Line 2 decodes 945. Line 4 seeks the index straight to the first block below it. Line 5 reads the next four: rows read 4.",w:"No rows are stepped over. The index jumps, the way you open a dictionary at the right letter.",sql:"WHERE block < 945 ORDER BY block DESC LIMIT 4",rows:base,c:{ok:[4,8]},read:4,ret:4,cur:7},
+ {pc:[2,4,5],t:"Page 3: after 925",b:"Same again: decode 925, seek, read four. The program prints rows read 4. Page 3 costs exactly what page 1 cost.",w:"Page 1,000 costs the same as page 1. That is the reason keyset wins on big tables.",sql:"WHERE block < 925 ORDER BY block DESC LIMIT 4",rows:base,c:{ok:[8,12]},read:4,ret:4,cur:11},
+ {pc:[8],t:"A new swap lands",b:"Block 965 lands at the front, as before. Line 8: every row moves one place, but no key changes. Block 905 is still block 905.",w:"Positions changed. Keys did not. Block 905 is still block 905.",sql:"new row inserted at the front",rows:withNew,c:{undo:[0,1]},read:4,ret:12,cur:12},
+ {pc:[2,4,5,8],t:"Page 4: after 905",b:"Line 2 decodes 905, line 4 seeks to it, and line 5 returns the next four older swaps. The program prints repeated: false, rows read 4.",w:"The new swap will show on the client's next fresh first page. Rows that land or vanish elsewhere never shift this walk.",sql:"WHERE block < 905 ORDER BY block DESC LIMIT 4",rows:withNew,c:{undo:[0,1],ok:[13,17]},read:4,ret:4,cur:16,last:true},
+ {pc:[9,10],t:"The trap: a key that is not unique",b:"Line 9: two swaps can sit in one block. If the cursor holds only the block, the next page skips the rest of it: the program skips 905 log 1. Line 10 compares block, then log, and keeps it.",w:"Add a tie-breaker so the key is unique: block height plus log index. For an oldest-first list the same idea reads WHERE id > last_id.",sql:"WHERE (block, log_index) < (905, 3) ORDER BY block DESC, log_index DESC",rows:withNew,c:{undo:[0,1],ok:[13,17]},read:4,ret:4,cur:16,last:true}
+]};
+const fillFor={ok:"var(--ok)",wait:"var(--wait)",fail:"var(--fail)",undo:"var(--undo)"};
+let mode="offset",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+const W=48,GAP=2,X0=26;
+function cls(s,k){for(const c in s.c){const [a,b]=s.c[c];if(k>=a&&k<b)return c;}return null;}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("sql").textContent=s.sql;
+  const inserted=s.sql.startsWith("new row");
+  $("c-read").textContent=inserted?"rows read: waiting":`rows read: ${s.read}`;
+  $("c-ret").textContent=inserted?"rows returned: waiting":`rows returned: ${s.ret}`;
+  $("c-read").setAttribute("fill",s.read>s.ret&&!inserted?"var(--wait)":"var(--fg)");
+  const g=$("cells");g.innerHTML="";
+  s.rows.forEach((b,k)=>{
+    const c=cls(s,k);const x=X0+k*(W+GAP);
+    const fill=c?fillFor[c]:"var(--line)";const txt=c?"#fff":"var(--fg)";
+    g.insertAdjacentHTML("beforeend",`<rect class="box" x="${x}" y="110" width="${W}" height="64" rx="6" fill="${fill}"/><text x="${x+W/2}" y="140" fill="${txt}">${b}</text><text x="${x+W/2}" y="160" font-size="11" font-weight="400" fill="${txt}">#${k}</text>`);
+  });
+  const m=$("marks");m.innerHTML="";
+  const add=(html,k)=>{const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");el.innerHTML=html;m.appendChild(el);
+    const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,160*k+40);};
+  if(s.cur!==undefined&&!s.last){const x=X0+s.cur*(W+GAP)+W/2;
+    add(`<line x1="${x}" y1="214" x2="${x}" y2="182" stroke="var(--coord)" marker-end="url(#arr)"/><text x="${x}" y="228" text-anchor="middle" fill="var(--coord)">cursor</text>`,0);}
+  if(s.last){const x=X0+12*(W+GAP)+W/2;
+    add(`<line x1="${x}" y1="214" x2="${x}" y2="182" stroke="var(--coord)" marker-end="url(#arr)"/><text x="${x}" y="228" text-anchor="middle" fill="var(--coord)">cursor 905</text>`,0);}
+  if(s.dup){const x=X0+12*(W+GAP)+W/2;
+    add(`<text x="${x}" y="204" text-anchor="middle" fill="var(--fail)">905 again</text>`,0);}
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+const CODE={"offset":{"label":"Go","pc":["GET /offset?offset=n","end = n + 4","read every row from the front up to end","count them as rows read","answer only the last four","next page: n + 4","a new row lands at the front: every position moves by one","OFFSET 12 now holds a row already seen"],"real":["func (a *API) byOffset(w http.ResponseWriter, r *http.Request) {","\toffset, _ := strconv.Atoi(r.URL.Query().Get(\"offset\"))","\tend := min(offset+pageSize, len(a.blocks))","\ta.rowsRead += end // every row up to the end of the page is read","\tjson.NewEncoder(w).Encode(map[string]any{\"rows\": a.blocks[min(offset, end):end]})","}","","\ta.blocks = append([]int{965}, a.blocks...) // a new swap lands at the front","\tp := a.get(srv.URL, \"/offset?offset=12\")","\tfmt.Println(\"block\", p.Rows[0], \"already seen on page 3:\", contains(seen, p.Rows[0]))"],"map":{"1":[1,2],"2":[3],"3":[4],"4":[4],"5":[5],"6":[2],"7":[8],"8":[9,10]}},"keyset":{"label":"Go","pc":["GET /keyset, no cursor: start at the front","cursor given: decode the last block","  bad cursor: answer 400","seek the index to the first block below it","read only the next four","rows left: next_cursor = encode the last block","none left: next_cursor stays null","a new row at the front changes no key","the trap: block alone is not unique","the fix: compare block, then log"],"real":["func (a *API) byKeyset(w http.ResponseWriter, r *http.Request) {","\tstart := 0","\tif c := r.URL.Query().Get(\"cursor\"); c != \"\" {","\t\traw, err := base64.URLEncoding.DecodeString(c)","\t\tlast, err2 := strconv.Atoi(string(raw))","\t\tif err != nil || err2 != nil {","\t\t\thttp.Error(w, \"bad cursor\", http.StatusBadRequest)","\t\t\treturn","\t\t}","\t\tstart = sort.Search(len(a.blocks), func(i int) bool { return a.blocks[i] < last })","\t}","\tend := min(start+pageSize, len(a.blocks))","\tpage := a.blocks[start:end]","\ta.rowsRead += len(page) // the index jumps: only the page is read","\tvar next *string","\tif end < len(a.blocks) {","\t\tc := base64.URLEncoding.EncodeToString([]byte(strconv.Itoa(page[len(page)-1])))","\t\tnext = &c","\t}","\tjson.NewEncoder(w).Encode(map[string]any{\"rows\": page, \"next_cursor\": next})","}","","func afterKey(rows []swap, last swap, n int) []swap {","\tvar out []swap","\tfor _, s := range rows {","\t\tif (s.block < last.block || (s.block == last.block && s.log < last.log)) && len(out) < n {","\t\t\tout = append(out, s)","\t\t}","\t}","\treturn out","}"],"map":{"1":[2],"2":[3,4,5],"3":[6,7,8],"4":[10],"5":[12,13,14],"6":[16,17,18],"7":[15],"8":[10],"9":[23],"10":[26,27]}}};
+let view="pc";
+const escCode=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function drawCode(){
+  const c=CODE[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=escCode(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Temperature and top-p</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Sampling: temperature shapes the draw, top-p cuts the tail</h1>
+  <p class="lede">A classifier labels an address as exchange, mixer or unknown. A naming tool invents a product name. Both pick each next token by drawing from a list of probabilities. Press <b>Next</b> and watch two knobs reshape that list, and see why temperature 0 still changes between runs.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="temp">Temperature: the classifier</button>
+    <button role="tab" aria-selected="false" data-mode="topp">Top-p and the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Next-token probabilities reshaped by temperature and cut by top-p, with the tokens each run draws</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-sampling-temperature-top-p/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">probability the model gives a token</span>
+    <span style="--c:var(--undo)">a token a run drew</span>
+    <span style="--c:var(--fail)">cut by top-p, or a run that changed</span>
+    <span style="--c:var(--line)">the raw list, before the knob</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every LLM (large language model) API call takes temperature and top-p. An address classifier runs at temperature 0 with a schema for the output. A naming or copy tool runs near 0.8 with top-p to cut nonsense. An eval harness runs every case several times, because each run is a draw.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Tune one knob, not both at once. Extraction and classification: temperature 0, plus structured output so the label must be one of the allowed words. Creative text: a higher temperature, with top-p near 0.9. Never trust one run to prove the setting works.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Temperature</th><th>Top-p</th></tr>
+      <tr><td>What it does</td><td>Sharpens or flattens the whole list</td><td>Keeps the smallest set of top tokens that covers p of the mass</td></tr>
+      <tr><td>At its low end</td><td>0 picks the most likely token</td><td>A small p keeps only the top few</td></tr>
+      <tr><td>Risk when high</td><td>Rare, odd tokens get picked</td><td>Little: the tail is still cut</td></tr>
+      <tr><td>Use for</td><td>Strict labels at 0, creative text higher</td><td>Cutting nonsense from a creative draw</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Temperature shapes the draw and top-p cuts the tail, and even at zero the answer can change between runs."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={all:{
+ pc:["probs = model(context)                  # one probability per token",
+"if T == 0:",
+"  return argmax(probs)                   # always the top token",
+"probs = [p ** (1/T) for p in probs]      # T > 1 flattens, T < 1 sharpens",
+"probs = probs / sum(probs)",
+"if top_p < 1:",
+"  sort probs, largest first",
+"  keep tokens while running sum < top_p  # 40, 65, 80, 90: stop",
+"  probs = kept / sum(kept)               # the kept share the weight",
+"u = random number in [0, 1)",
+"return the token whose slice holds u",
+"# near a tie, T = 0 still flips:",
+"batch order moves the float sums        # 46.0 vs 45.0 -> 45.5 vs 45.6",
+"# the fix:",
+"run each case n times, score agreement  # 8 of 10 agree"],
+ real:["def shape(probs, temperature):",
+"    \"\"\"Temperature: 0 keeps only the top token, higher values flatten.\"\"\"",
+"    if temperature == 0:",
+"        top = max(probs)",
+"        return [1.0 if p == top else 0.0 for p in probs]",
+"    q = [p ** (1 / temperature) for p in probs]",
+"    total = sum(q)",
+"    return [v / total for v in q]",
+"",
+"def top_p(probs, p):",
+"    kept, total = [], 0.0",
+"    for v in probs:                      # probs are sorted, largest first",
+"        if total >= p - 1e-9:",
+"            kept.append(0.0)             # cut: outside the nucleus",
+"        else:",
+"            kept.append(v)",
+"            total += v",
+"    return [v / total for v in kept]     # the kept tokens share the weight",
+"",
+"def draw(probs, u):",
+"    edge = 0.0",
+"    for i, v in enumerate(probs):",
+"        edge += v",
+"        if u < edge:                     # u falls inside this slice",
+"            return i",
+"    return len(probs) - 1",
+"",
+"run1 = {\"exchange\": 0.460, \"mixer\": 0.450, \"unknown\": 0.090}",
+"run2 = {\"exchange\": 0.455, \"mixer\": 0.456, \"unknown\": 0.089}  # another batch",
+"print(\"near tie, run 1:\", pick_t0(run1), \" run 2:\", pick_t0(run2))  # exchange, then mixer",
+"",
+"labels = []",
+"for noise in eval_noise:                 # the fix: 10 runs of one case",
+"    scores = dict(run1)",
+"    scores[\"exchange\"] += noise",
+"    labels.append(pick_t0(scores))",
+"agree = labels.count(\"exchange\")         # 8 of 10: a flipping case"],
+ map:{1:[1,10],2:[3],3:[4,5],4:[6],5:[7,8],6:[10],7:[12],8:[13,14,15,16,17],9:[18],10:[20],11:[21,22,23,24,25],12:[29],13:[29,30],14:[32],15:[33,34,35,36,37]}}};
+const CL=[["exchange",.70],["mixer",.20],["unknown",.10]];
+const NM=[["Tracer",.40],["Scout",.25],["Lens",.15],["Trail",.10],["Xq#",.06],["zzz",.04]];
+function shape(c,T){if(T===0){const m=Math.max(...c.map(x=>x[1]));return c.map(x=>x[1]===m?1:0)}const q=c.map(x=>Math.pow(x[1],1/T));const s=q.reduce((a,b)=>a+b);return q.map(v=>v/s);}
+const steps={
+"temp":[
+ {t:"The model gives a list",b:"For the next token, the model gives every possible token a probability. For the label: exchange 70%, mixer 20%, unknown 10%.",w:"The model does not pick. A sampler picks from this list.",c:CL,T:1,raw:true,pc:[1]},
+ {t:"Temperature 0: always the top",b:"The check: is T equal to 0? Yes, so the sampler skips the draw and returns the top token. 70% is the largest, so all the weight goes to exchange, run after run.",w:"This is what a classifier wants: the same label for the same input, as far as possible.",c:CL,T:0,d:[0,0,0,0,0,0,0,0,0,0],pc:[2, 3]},
+ {t:"Temperature 1: sample as is",b:"At temperature 1 the list is used as it is. Each run draws a random number u. The slices are exchange 0 to 0.70, mixer 0.70 to 0.90, unknown 0.90 to 1. Run 2 draws u = 0.81, inside mixer. Run 5 draws 0.95, inside unknown. Ten runs: seven exchange, two mixer, one unknown.",w:"Each run is a draw. A label that changes from run to run is useless for a classifier.",c:CL,T:1,d:[0,1,0,0,2,0,0,1,0,0],pc:[4, 5, 10, 11]},
+ {t:"Temperature 2: flatter",b:"Each probability is raised to the power 1/T = 1/2, then divided by the sum: 0.70 becomes 0.84, 0.20 becomes 0.45, 0.10 becomes 0.32, sum 1.60. So exchange 52%, mixer 28%, unknown 20%. Ten runs give five exchange, three mixer, two unknown.",w:"High temperature explores. Good for ideas, bad for labels.",c:CL,T:2,d:[0,1,2,0,1,0,2,0,1,0],pc:[4, 5, 10, 11]},
+ {t:"The choice for the classifier",b:"The classifier runs at temperature 0, with a schema that allows only exchange, mixer or unknown.",w:"Low temperature for strict tasks. The schema stops any made-up label.",c:CL,T:0,d:[0,0,0,0,0,0,0,0,0,0],ok:true,pc:[2, 3]}
+],
+"topp":[
+ {t:"The naming tool's list",b:"The naming tool asks for a product name. Six candidates. The last two, Xq# and zzz, are nonsense with a little probability.",w:"At temperature 1 that tail still gets picked now and then.",c:NM,T:1,raw:true,pc:[1]},
+ {t:"Top-p 0.9: add up from the top",b:"Top-p sorts the tokens and adds them up from the top: 40%, 65%, 80%, 90%. The rule: keep adding while the running sum is under 0.9. After Trail the sum is exactly 90%, so Xq# and zzz are cut.",w:"Top-p is also called nucleus sampling. The nucleus is the top set that covers p.",c:NM,T:1,cum:true,pc:[6, 7, 8]},
+ {t:"Cut the tail, then draw",b:"Xq# and zzz are cut. The four kept names are divided by their sum, 0.90: Tracer 44%, Scout 28%, Lens 17%, Trail 11%. Run 6 draws u = 0.95, past 0.89, so Trail. No u can land on a cut name.",w:"Temperature changes the shape. Top-p removes the tail. One knob at a time.",c:NM,T:1,cut:4,d:[0,1,0,2,0,3,1,0,0,1],pc:[9, 10, 11]},
+ {t:"Back to the classifier, near a tie",b:"A harder address. The model gives exchange 46% and mixer 45%. Temperature 0 should pick exchange every time.",w:"When two tokens are this close, a tiny change can swap the order.",c:[["exchange",.46],["mixer",.45],["unknown",.09]],T:0,d:[0],note:["Raw list: exchange 46%, mixer 45%.","Temperature 0 takes exchange."],pc:[2, 3]},
+ {t:"The failure: temperature 0 changes",b:"Run 2 lands in a different server batch. The sums run in a different order and the scores move a hair: exchange 45.5%, mixer 45.6%. Temperature 0 still takes the top score, and the top is now mixer.",w:"Temperature 0 is not deterministic. Batching, floating-point order and model updates still change the output.",c:[["exchange",.455],["mixer",.456],["unknown",.089]],T:0,d:[0,1],bad:true,note:["Run 1 raw: exchange 46.0%, mixer 45.0%","Run 2 raw: exchange 45.5%, mixer 45.6%","A tiny floating-point change swapped the top."],pc:[12, 13]},
+ {t:"The fix: test many runs",b:"The eval runs this case ten times at temperature 0. Runs 3 and 7 drift exchange down by about 0.012, below mixer, so they say mixer. 8 of 10 agree. A case that flips is a signal: the address is truly unclear, or the prompt is.",w:"Never trust one run. Tune one knob, then measure over many runs.",c:[["exchange",.46],["mixer",.45],["unknown",.09]],T:0,d:[0,0,1,0,0,0,1,0,0,0],ok:true,pc:[14, 15]}
+]};
+function scene(s){
+  const p=shape(s.c,s.T),raw=s.c.map(x=>x[1]);
+  const n=s.c.length,rh=n>3?40:60,top=50;
+  let h=T(30,28,"Next-token probabilities",null,15,"start",1);
+  h+=T(560,28,`temperature ${s.T}`+(s.cut||s.cum?", top-p 0.9":""),"var(--muted)",14,"end",1);
+  let cum=0;
+  s.c.forEach((c,k)=>{const y=top+k*rh,cut=s.cut!==undefined&&k>=s.cut;
+    let v=p[k];if(s.cut!==undefined){const kept=p.slice(0,s.cut).reduce((a,b)=>a+b);v=cut?0:p[k]/kept;}
+    h+=T(30,y+rh/2+5,c[0],cut?"var(--fail)":"var(--fg)",15,"start",1);
+    h+=`<rect x="130" y="${y+8}" width="${380*raw[k]}" height="${rh-18}" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>`;
+    if(!s.raw)h+=`<rect class="box" x="130" y="${y+8}" width="${380*v}" height="${rh-18}" rx="4" fill="${cut?"var(--fail)":"var(--coord)"}"/>`;
+    else h+=`<rect class="box" x="130" y="${y+8}" width="${380*raw[k]}" height="${rh-18}" rx="4" fill="var(--coord)"/>`;
+    h+=T(560,y+rh/2+5,cut?"cut":Math.round((s.raw?raw[k]:v)*100)+"%",cut?"var(--fail)":"var(--fg)",14,"end",1);
+    if(s.cum){cum+=raw[k];h+=T(130+380*raw[k]+8,y+rh/2+5,`sum ${Math.round(cum*100)}%`,cum<=.9001?"var(--ok)":"var(--fail)",13,"start",1);}
+  });
+  if(s.cum){const y=top+4*rh+2;h+=`<line x1="20" x2="570" y1="${y}" y2="${y}" stroke="var(--fail)" stroke-width="2" stroke-dasharray="6 4"/>`+T(400,y+18,"90% reached: cut below","var(--fail)",13,"middle",1);}
+  h+=T(620,28,"Runs",null,15,"start",1);
+  (s.d||[]).forEach((d,k)=>{const x=620+(k%2)*130,y=40+Math.floor(k/2)*56;const ch=d!==0;
+    const col=s.bad&&k===1?"var(--fail)":ch&&s.ok?"var(--wait)":"var(--undo)";
+    h+=R(x,y,120,44,col,"",null);h+=T(x+10,y+18,"run "+(k+1),"#fff",12);h+=T(x+60,y+36,s.c[d][0],"#fff",15,"middle",1);});
+  (s.note||[]).forEach((l,k)=>h+=T(30,260+k*24,l,s.bad?"var(--fail)":"var(--fg)",14,"start",1));
+  if(!s.d)h+=T(620,70,"No run yet: this is","var(--muted)",14)+T(620,92,"only the list.","var(--muted)",14);
+  if(s.ok&&s.T===0&&s.c.length===3&&s.c[0][1]<.5)h+=T(620,330,"8 of 10 agree: a flipping case","var(--wait)",14,"start",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

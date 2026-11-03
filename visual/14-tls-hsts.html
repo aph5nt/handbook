@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TLS and HSTS</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>TLS and HSTS</h1>
+  <p class="lede">An analyst opens the dashboard on cafe Wi-Fi, with an attacker on the same network. Press <b>Next</b> to watch the handshake, then switch tabs to see how a first plain request gets stripped, and how HSTS stops it.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="tls">The handshake</button>
+    <button role="tab" aria-selected="false" data-mode="hsts">Stripping and HSTS</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A TLS handshake on cafe Wi-Fi, an SSL stripping attack, and HSTS stopping it</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-tls-hsts/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">held, or still being checked</span>
+    <span style="--c:var(--ok)">checked and allowed, or a defence that held</span>
+    <span style="--c:var(--fail)">attacker, refused, or a hole</span>
+    <span style="--c:var(--undo)">rotated, revoked or replaced</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet TLS</h2>
+      <p>Every public endpoint: TLS 1.3, certificates renewed automatically, HSTS on. Inside the cluster, mutual TLS from the mesh.</p>
+    </div>
+    <div class="card">
+      <h2>The client side</h2>
+      <p>Go, Python and Node clients: never set skip verify or its cousins outside a local test. Make it impossible in production builds.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Without HSTS</th><th>With HSTS</th><th>With preload</th></tr>
+      <tr><td>First visit</td><td>Plain request can be stripped</td><td>Plain request can be stripped</td><td>https</td></tr>
+      <tr><td>Later visits</td><td>Plain request can be stripped</td><td>https only</td><td>https only</td></tr>
+      <tr><td>Set by</td><td>Nothing</td><td>A response header</td><td>Browser's built-in list</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"TLS encrypts and proves the server's name, and HSTS makes the browser refuse plain http, so nobody can strip it."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"tls":[["b", "Browser", "coord"], ["w", "Wi-Fi attacker", "fail"], ["s", "api.example.com", "svc"], ["ca", "Trusted root CA", "svc"]],
+"hsts":[["b", "Browser", "coord"], ["w", "Wi-Fi attacker", "fail"], ["s", "api.example.com", "svc"], ["ca", "Preload list", "svc"]]
+};
+const code={
+"tls": {
+"label": "Go",
+"pc": [
+"client: hello, supported versions, key share",
+"server: key share, certificate for its name",
+"client checks:",
+"  chain reaches a root it trusts, or refuse",
+"  certificate name == the name it asked for, or refuse",
+"  now is between NotBefore and NotAfter, or refuse",
+"both derive the same session keys; all bytes now encrypted",
+"# skip verify: all three checks off; an impostor is accepted"
+],
+"real": [
+"func server(cert tls.Certificate) *httptest.Server {",
+"\ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {",
+"\t\tw.Header().Set(\"Strict-Transport-Security\", \"max-age=31536000\")",
+"\t\tfmt.Fprint(w, \"cases\")",
+"\t}))",
+"\ts.Config.ErrorLog = log.New(io.Discard, \"\", 0) // refused handshakes are expected here",
+"\ts.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}",
+"\ts.StartTLS()",
+"\treturn s",
+"}",
+"",
+"// clientGet: tls.Config checks the chain up to RootCAs, the name and the date.",
+"func clientGet(url, name string, roots *x509.CertPool) string {",
+"\tc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: name}}}",
+"\treturn fetch(c, url)",
+"}",
+"",
+"// clientSkipVerify is the failure: a test setting that shipped.",
+"func clientSkipVerify(url string) string {",
+"\tc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}",
+"\treturn fetch(c, url)",
+"}",
+"",
+"func fetch(c *http.Client, url string) string {",
+"\tresp, err := c.Get(url)",
+"\tif err != nil {",
+"\t\tif i := strings.LastIndex(err.Error(), \"tls:\"); i >= 0 {",
+"\t\t\treturn \"refused: \" + err.Error()[i:]",
+"\t\t}",
+"\t\treturn \"refused: \" + err.Error()",
+"\t}",
+"\tdefer resp.Body.Close()",
+"\tb, _ := io.ReadAll(resp.Body)",
+"\treturn string(b) + \", \" + tls.VersionName(resp.TLS.Version)",
+"}"
+],
+"map": {
+"1": [
+13
+],
+"2": [
+1,
+7
+],
+"3": [
+12
+],
+"4": [
+14
+],
+"5": [
+14
+],
+"6": [
+12
+],
+"7": [
+8,
+34
+],
+"8": [
+19,
+20
+]
+}
+},
+"hsts": {
+"label": "Go",
+"pc": [
+"browser firstURL(host, now):",
+"  if host is on the preload list: https",
+"  if a remembered rule has not ended: https  # before anything leaves",
+"  else: http                                  # plain: can be stripped",
+"server, over https: Strict-Transport-Security: max-age=31536000",
+"browser sawHeader: remember until now + max-age",
+"SSL stripping: attacker answers the plain http,",
+"  speaks https to the server, keeps the browser on http"
+],
+"real": [
+"type browser struct {",
+"\thstsUntil map[string]int // host -> time the remembered rule ends",
+"\tpreload   map[string]bool",
+"}",
+"",
+"// firstURL rewrites http to https before anything leaves, when it may.",
+"func (b browser) firstURL(host string, now int) string {",
+"\tif b.preload[host] || now < b.hstsUntil[host] {",
+"\t\treturn \"https://\" + host",
+"\t}",
+"\treturn \"http://\" + host",
+"}",
+"",
+"// sawHeader stores the Strict-Transport-Security rule from a safe visit.",
+"func (b browser) sawHeader(host string, maxAge, now int) { b.hstsUntil[host] = now + maxAge }",
+"",
+"func server(cert tls.Certificate) *httptest.Server {",
+"\ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {",
+"\t\tw.Header().Set(\"Strict-Transport-Security\", \"max-age=31536000\")",
+"\t\tfmt.Fprint(w, \"cases\")",
+"\t}))",
+"\ts.Config.ErrorLog = log.New(io.Discard, \"\", 0) // refused handshakes are expected here",
+"\ts.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}",
+"\ts.StartTLS()",
+"\treturn s",
+"}"
+],
+"map": {
+"1": [
+7
+],
+"2": [
+8
+],
+"3": [
+8,
+9
+],
+"4": [
+11
+],
+"5": [
+19
+],
+"6": [
+15
+],
+"7": [
+11
+],
+"8": [
+11
+]
+}
+}
+};
+const steps={
+"tls":[
+ {"t": "Hello", "b": "The browser says hello: the TLS versions and ciphers it supports, and its half of a key exchange.", "w": "TLS (Transport Layer Security) 1.3 needs one round trip for this.", "m": [["b", "s", 130, "ClientHello + key share"]], "st": {"b": ["hello sent", "wait"], "w": ["watching", "wait"]}, "pc": [1]},
+ {"t": "The certificate", "b": "The server sends its key share and its certificate for api.example.com. The program makes its own toy root and certificate, and listens on 127.0.0.1 only.", "w": "The certificate is the server's proof of its name.", "m": [["s", "b", 130, "certificate + key share"]], "st": {"b": ["checking", "wait"], "s": ["proves its name", "ok"]}, "pc": [2]},
+ {"t": "Three checks", "b": "The Go client checks the chain up to its RootCAs, the name, and the dates. All pass: cases, TLS 1.3. Asking for other.example.com fails on the name. A certificate from another root fails on the chain.", "w": "Skip any check and an attacker's certificate passes.", "m": [["b", "ca", 120, "chain up to a trusted root?"], ["band", 0, 165, "chain ok, name ok, not expired", "ok"]], "st": {"b": ["verified", "ok"], "ca": ["trusted root", "ok"]}, "pc": [3, 4, 5, 6]},
+ {"t": "Encrypted", "b": "Both sides derive the same session keys from their key shares. Every byte after this is encrypted, and the program's connection reports TLS 1.3.", "w": "The attacker on the Wi-Fi sees only noise.", "m": [["b", "s", 120, "GET /cases, encrypted"], ["band", 0, 165, "attacker sees encrypted bytes only", "ok"]], "st": {"b": ["encrypted", "ok"], "w": ["sees noise", "ok"], "s": ["encrypted", "ok"]}, "pc": [7]},
+ {"t": "The failure: checks turned off", "b": "InsecureSkipVerify turns all three checks off. The impostor's certificate, which clientGet refused, is now accepted: cases, TLS 1.3. The connection is encrypted, but to the wrong party.", "w": "Encryption with no identity check means encrypted to the attacker.", "m": [["w", "b", 130, "attacker's certificate", "fail"], ["band", 0, 175, "skip verify: accepted", "fail"]], "st": {"b": ["trusts attacker", "fail"], "w": ["in the middle", "fail"]}, "ac": {"b": "fail"}, "pc": [8]}
+],
+"hsts":[
+ {"t": "A plain first request", "b": "The analyst types api.example.com with no https. The browser has no remembered rule and no preload entry, so firstURL returns http://api.example.com.", "w": "That one plain request is the opening.", "m": [["b", "w", 130, "http://api.example.com", "fail"]], "st": {"b": ["plain http", "fail"]}, "pc": [1, 4]},
+ {"t": "SSL stripping", "b": "The attacker answers the plain request, talks https to the real server, and keeps the browser on plain http.", "w": "The user sees the site working. The attacker reads everything.", "m": [["w", "s", 120, "https, as the attacker"], ["s", "w", 150, "page"], ["w", "b", 185, "page over plain http", "fail"]], "st": {"b": ["stripped", "fail"], "w": ["reads all", "fail"]}, "ac": {"w": "fail"}, "pc": [7, 8]},
+ {"t": "HSTS: the header", "b": "On a safe https visit the server sends Strict-Transport-Security: max-age=31536000, one year. sawHeader stores now + max-age for this host.", "w": "HSTS (HTTP Strict Transport Security): this site is https only.", "m": [["s", "b", 130, "Strict-Transport-Security, 1 year"]], "st": {"b": ["remembers", "ok"], "s": ["sends HSTS", "ok"]}, "pc": [5, 6]},
+ {"t": "Next visit: no plain request", "b": "The analyst types the plain address again. now is before the stored end, so firstURL returns https before anything leaves. A year and a day later it would return http, unless a new visit renewed it.", "w": "There is no plain request for the attacker to answer.", "m": [["band", 0, 130, "browser rewrites to https before sending", "ok"], ["b", "s", 175, "https, direct"]], "st": {"b": ["https only", "ok"], "w": ["nothing to strip", "ok"]}, "pc": [1, 3]},
+ {"t": "Preload closes the first visit", "b": "A brand-new browser has no remembered rule, but the preload list is built in. The first check passes, so even the first visit returns https.", "w": "With preload, even the first request is https.", "m": [["ca", "b", 130, "api.example.com: https only"]], "st": {"b": ["https from day one", "ok"], "ca": ["listed", "ok"]}, "pc": [2]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

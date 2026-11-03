@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contract First</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.note{font-size:13px}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>The contract comes first</h1>
+  <p class="lede">A web dashboard reads <code>fee_bps</code> from the pool service as an integer. Months later a pool developer turns it into a string. Press <b>Next</b> and see whether the change ships and breaks the dashboard, or fails in the build.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="late">Code first, file later</button>
+    <button role="tab" aria-selected="false" data-mode="first">Contract first, consumer tests</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of a pool service changing a field that a dashboard reads</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="actors" font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700"></g>
+      <g id="chips" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program replays this story with <code>net/http</code> handlers and <code>httptest</code>: <code>handbook/code/13-contract-first/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">people and consumers</span>
+    <span style="--c:var(--svc)">contract and build</span>
+    <span style="--c:var(--ok)">agreed, passing</span>
+    <span style="--c:var(--wait)">running</span>
+    <span style="--c:var(--fail)">broken or blocked</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: REST and gRPC</h2>
+      <p>A public REST API keeps its OpenAPI file in the repository, diffed in every pull request. Service to service over gRPC, the <code>.proto</code> file is the contract and the code generator enforces it.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: an agent tool server</h2>
+      <p>The tool descriptions and JSON schemas are the contract. Review them like code, because the model reads nothing else.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Code first, file later</th><th>Contract first</th></tr>
+      <tr><td>Who owns the truth</td><td>The code</td><td>The reviewed file</td></tr>
+      <tr><td>Consumer needs</td><td>Unwritten</td><td>Pact contracts, one per consumer</td></tr>
+      <tr><td>A breaking change</td><td>Ships, found by users</td><td>Fails the provider's build</td></tr>
+      <tr><td>Clients and docs</td><td>Hand-written or lagging</td><td>Generated from the file</td></tr>
+      <tr><td>Main risk</td><td>The file lags the code</td><td>A greedy consumer contract</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I write the contract before the code, and every consumer's test runs in the provider's build."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Each tab: actors (columns), chips (state pills under some actors) and steps.
+// A step message is [from,to,y,text,kind], ["band",y,text], or ["note",actor,y,text,kind].
+// kind: true or "fail" = red, "lost" = cut arrow, "replay" = purple, "ok" = green, "wait" = amber.
+const TABS={
+ "late":{actors:[{"id":"dash","n":"Web dashboard","c":"coord"},{"id":"dev","n":"Pool developer","c":"coord"},{"id":"file","n":"OpenAPI file"},{"id":"ci","n":"Pool build (CI)"}],chips:["dash","file","ci"],steps:[
+  {"t":"Start: the code is the contract","b":"The pool service was written first. A tool generates the OpenAPI file from the code after each change (line 2). The file can never disagree with the code, and it can never stop the code either.","w":"When the file is generated from code, it can never disagree with the code. It also can never stop the code.","m":[["dev","file",140,"generate from code"],["note","file",185,"fee_bps: integer"]],"st":{"dash":["fee 30","ok"],"file":["generated","idle"],"ci":["green","ok"]},"pc":[2]},
+  {"t":"The dashboard reads one field","b":"The dashboard shows each pool's fee. Line 12 decodes fee_bps into an int: 30 means 0.30 percent. The program prints fee 30. Nobody wrote down that the dashboard depends on fee_bps being a number.","w":"Nobody wrote down that the dashboard depends on fee_bps being a number.","m":[["dash","file",140,"reads fee_bps as int"]],"st":{"dash":["fee 30","ok"],"file":["generated","idle"],"ci":["green","ok"]},"pc":[12]},
+  {"t":"A small change in the code","b":"A pool developer changes fee_bps to the string \"30\" in the code, to match another system. Line 2 now serves a string.","w":"The change is made where the contract lives: in code that no consumer reviews.","m":[["note","dev",140,"fee_bps: \"30\"",true]],"st":{"dash":["fee 30","ok"],"file":["generated","idle"],"ci":["green","ok"]},"pc":[2]},
+  {"t":"The file follows quietly","b":"The generator rewrites the file: fee_bps is now a string there too. Lines 5 and 6 would compare the new file with the file on main, but the file on main was generated from the old code a minute ago and is replaced, so there is nothing stable to compare against.","w":"A file that always lags the code is documentation, not a contract.","m":[["dev","file",140,"regenerate"],["note","file",185,"fee_bps: string",true]],"st":{"dash":["fee 30","ok"],"file":["changed","fail"],"ci":["green","ok"]},"pc":[2,5,6]},
+  {"t":"The build is green","b":"The build runs the pool service's own tests (line 4) and they pass: the service agrees with itself. Lines 7 to 9, the consumer pacts, do not exist. Line 11 sees no failure, so it ships.","w":"The provider's tests prove the provider works. They say nothing about its consumers.","m":[["dev","ci",140,"push"],["note","ci",185,"tests pass, ship","ok"]],"st":{"dash":["fee 30","ok"],"file":["changed","fail"],"ci":["shipped","ok"]},"pc":[4,11]},
+  {"t":"The failure that matters","b":"Line 12 in the dashboard decodes \"30\" into an int and fails: the program prints cannot unmarshal string into Go struct field fee_bps of type int. The fee column is blank for every pool. Lines 7 to 9 would have caught it in the build.","w":"Fix: write the file first, review it like code, and run every consumer's contract in the provider's build.","m":[["ci","dash",140,"fee_bps: \"30\"",true],["band",200,"the dashboard breaks in production"]],"st":{"dash":["fee broken","fail"],"file":["changed","fail"],"ci":["shipped","ok"]},"bad":"dash","pc":[7,9,12]}
+ ]},
+ "first":{actors:[{"id":"dash","n":"Web dashboard","c":"coord"},{"id":"dev","n":"Pool developer","c":"coord"},{"id":"file","n":"OpenAPI file"},{"id":"ci","n":"Pool build (CI)"}],chips:["dash","file","ci"],steps:[
+  {"t":"Start from the callers","b":"Before any code, the team lists the top five things callers must do. One is: show the fee of each pool. That need becomes line 1 of the contract.","w":"Start from the callers, not from the tables.","m":[["dash","dev",140,"we need pool fees"]],"st":{"dash":["needs fees","idle"],"file":["empty","idle"],"ci":["none","idle"]},"pc":[1]},
+  {"t":"Write the file","b":"The developer writes the OpenAPI file by hand for those use cases (line 1): fee_bps is an integer. One real consumer and one on-call person review it.","w":"The file is reviewed like code, before code exists.","m":[["dev","file",130,"write by hand"],["dash","file",165,"review"],["note","file",210,"fee_bps: integer","ok"]],"st":{"dash":["reviewed","ok"],"file":["v1 agreed","ok"],"ci":["none","idle"]},"pc":[1]},
+  {"t":"Generate from the file","b":"Client libraries, request validation and the docs page are generated from the file. The server code (line 2) must match the file, not the other way round.","w":"Now the code follows the file, not the other way round.","m":[["file","dash",130,"client library"],["file","ci",165,"validation, docs"]],"st":{"dash":["fee 30","ok"],"file":["v1 agreed","ok"],"ci":["green","ok"]},"pc":[2]},
+  {"t":"The consumer writes down what it reads","b":"The dashboard records its pact (line 3): fee_bps as an integer, and only that field. The program verifies it against v1 and prints an empty list of failures.","w":"A consumer contract names what is read, so harmless new fields never break it.","m":[["dash","ci",140,"Pact: fee_bps is int"]],"st":{"dash":["fee 30","ok"],"file":["v1 agreed","ok"],"ci":["runs 1 pact","ok"]},"pc":[3]},
+  {"t":"The same small change","b":"The pool developer turns fee_bps into a string in the code and edits the file to match. They push.","w":"Same change as before. This time the build knows who depends on the field.","m":[["note","dev",130,"fee_bps: \"30\"",true],["dev","file",170,"edit file"],["dev","ci",205,"push"]],"st":{"dash":["fee 30","ok"],"file":["changed","fail"],"ci":["running","wait"]},"pc":[2]},
+  {"t":"The build fails first","b":"Line 6 compares fee_bps on main (integer) with the new file (string) and reports fee_bps changed integer -> string. Lines 8 and 9 call the real provider, find a string where the pact needs an integer, and report needs fee_bps as integer. Line 11 turns the build red.","w":"The provider learns about the break in its own build, before any user does.","m":[["note","ci",140,"Pact: int expected",true],["note","ci",180,"linter: type changed",true],["ci","dev",220,"build red",true]],"st":{"dash":["fee 30","ok"],"file":["changed","fail"],"ci":["red, blocked","fail"]},"bad":"ci","pc":[5,6,7,8,9,11]},
+  {"t":"Add instead of change","b":"The developer keeps fee_bps an integer and adds fee_text. Line 6 finds no removed or retyped field, line 9 finds fee_bps still an integer. Both lists are empty: green.","w":"Adding a field is free. Changing one is a break.","m":[["dev","file",140,"add fee_text"],["note","ci",185,"Pact passes, ship","ok"]],"st":{"dash":["fee 30","ok"],"file":["v1 + fee_text","ok"],"ci":["green","ok"]},"pc":[5,6,7,8,9]},
+  {"t":"The other failure: a greedy contract","b":"Suppose the dashboard's pact had listed the whole body and line 10 were on: any extra field fails. The harmless fee_text alone turns the build red: the program prints unexpected extra field, though the dashboard never reads it.","w":"A consumer contract that copies everything breaks on every harmless addition. Name only what you read.","m":[["note","dash",140,"Pact: whole body",true],["note","ci",185,"fails on fee_text",true]],"st":{"dash":["fee 30","ok"],"file":["v1 + fee_text","ok"],"ci":["red for nothing","fail"]},"pc":[10]}
+ ]}
+};
+const CODE={
+ "late":{label:"Go",
+  pc:[
+   "contract file: fee_bps is an integer        # written first, reviewed by a consumer",
+   "serve GET /pools/42 from the code",
+   "consumer pact: the dashboard reads fee_bps as an integer, nothing else",
+   "on every provider build:",
+   "  for each field of the contract on main:",
+   "    removed or retyped in the new file: breaking change",
+   "  for each consumer pact:",
+   "    call the real provider, read the field",
+   "    missing or wrong type: fail, name the consumer and the field",
+   "    (greedy pact) any extra field: fail      # do not write pacts like this",
+   "  any failure: the build is red, nothing ships",
+   "dashboard: decode fee_bps into an int       # a string breaks it"],
+  real:[
+   "type Schema map[string]string",
+   "type Pact map[string]string",
+   "",
+   "\tmux.HandleFunc(\"GET /pools/42\", func(w http.ResponseWriter, r *http.Request) {",
+   "\t\tjson.NewEncoder(w).Encode(body)",
+   "",
+   "func lint(old, nw Schema) []string {",
+   "\tvar breaks []string",
+   "\tfor f, t := range old {",
+   "\t\tif nt, ok := nw[f]; !ok {",
+   "\t\t\tbreaks = append(breaks, f+\" removed\")",
+   "\t\t} else if nt != t {",
+   "\t\t\tbreaks = append(breaks, f+\" changed \"+t+\" -> \"+nt)",
+   "\t\t}",
+   "\t}",
+   "\treturn breaks",
+   "}",
+   "",
+   "func verify(p Pact, provider http.Handler, exact bool) []string {",
+   "\tsrv := httptest.NewServer(provider)",
+   "\tdefer srv.Close()",
+   "\tres, err := http.Get(srv.URL + \"/pools/42\")",
+   "\traw, _ := io.ReadAll(res.Body)",
+   "\tvar got map[string]any",
+   "\tjson.Unmarshal(raw, &got)",
+   "\tvar fails []string",
+   "\tfor f, t := range p {",
+   "\t\tif v, ok := got[f]; !ok || jsonType(v) != t {",
+   "\t\t\tfails = append(fails, \"needs \"+f+\" as \"+t)",
+   "\t\t}",
+   "\t}",
+   "\tif exact && len(got) != len(p) { // a greedy pact: the whole body, nothing more",
+   "\t\tfails = append(fails, \"unexpected extra field\")",
+   "\t}",
+   "\treturn fails",
+   "}",
+   "",
+   "\tvar pool struct {",
+   "\t\tFeeBps int `json:\"fee_bps\"`",
+   "\t}",
+   "\tif err := json.NewDecoder(res.Body).Decode(&pool); err != nil {",
+   "\t\treturn \"fee broken: \" + err.Error()",
+   "\t}",
+   "\treturn fmt.Sprintf(\"fee %d\", pool.FeeBps)"],
+  map:{"1":[1],"2":[4,5],"3":[2],"4":[7],"5":[9],"6":[10,11,12,13],"7":[27],"8":[22,23,24,25],"9":[28,29],"10":[32,33],"11":[16,35],"12":[38,39,40,41,42,43,44]}},
+ "first":{label:"Go",
+  pc:[
+   "contract file: fee_bps is an integer        # written first, reviewed by a consumer",
+   "serve GET /pools/42 from the code",
+   "consumer pact: the dashboard reads fee_bps as an integer, nothing else",
+   "on every provider build:",
+   "  for each field of the contract on main:",
+   "    removed or retyped in the new file: breaking change",
+   "  for each consumer pact:",
+   "    call the real provider, read the field",
+   "    missing or wrong type: fail, name the consumer and the field",
+   "    (greedy pact) any extra field: fail      # do not write pacts like this",
+   "  any failure: the build is red, nothing ships",
+   "dashboard: decode fee_bps into an int       # a string breaks it"],
+  real:[
+   "type Schema map[string]string",
+   "type Pact map[string]string",
+   "",
+   "\tmux.HandleFunc(\"GET /pools/42\", func(w http.ResponseWriter, r *http.Request) {",
+   "\t\tjson.NewEncoder(w).Encode(body)",
+   "",
+   "func lint(old, nw Schema) []string {",
+   "\tvar breaks []string",
+   "\tfor f, t := range old {",
+   "\t\tif nt, ok := nw[f]; !ok {",
+   "\t\t\tbreaks = append(breaks, f+\" removed\")",
+   "\t\t} else if nt != t {",
+   "\t\t\tbreaks = append(breaks, f+\" changed \"+t+\" -> \"+nt)",
+   "\t\t}",
+   "\t}",
+   "\treturn breaks",
+   "}",
+   "",
+   "func verify(p Pact, provider http.Handler, exact bool) []string {",
+   "\tsrv := httptest.NewServer(provider)",
+   "\tdefer srv.Close()",
+   "\tres, err := http.Get(srv.URL + \"/pools/42\")",
+   "\traw, _ := io.ReadAll(res.Body)",
+   "\tvar got map[string]any",
+   "\tjson.Unmarshal(raw, &got)",
+   "\tvar fails []string",
+   "\tfor f, t := range p {",
+   "\t\tif v, ok := got[f]; !ok || jsonType(v) != t {",
+   "\t\t\tfails = append(fails, \"needs \"+f+\" as \"+t)",
+   "\t\t}",
+   "\t}",
+   "\tif exact && len(got) != len(p) { // a greedy pact: the whole body, nothing more",
+   "\t\tfails = append(fails, \"unexpected extra field\")",
+   "\t}",
+   "\treturn fails",
+   "}",
+   "",
+   "\tvar pool struct {",
+   "\t\tFeeBps int `json:\"fee_bps\"`",
+   "\t}",
+   "\tif err := json.NewDecoder(res.Body).Decode(&pool); err != nil {",
+   "\t\treturn \"fee broken: \" + err.Error()",
+   "\t}",
+   "\treturn fmt.Sprintf(\"fee %d\", pool.FeeBps)"],
+  map:{"1":[1],"2":[4,5],"3":[2],"4":[7],"5":[9],"6":[10,11,12,13],"7":[27],"8":[22,23,24,25],"9":[28,29],"10":[32,33],"11":[16,35],"12":[38,39,40,41,42,43,44]}}
+};
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)"};
+const colFor={fail:"var(--fail)",lost:"var(--fail)",replay:"var(--undo)",ok:"var(--ok)",wait:"var(--wait)"};
+const NS="http://www.w3.org/2000/svg";
+let mode="late",view="pc",i=0,timer=null,X={},W=160;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function drawActors(){
+  const T=TABS[mode],n=T.actors.length,gap=900/n;W=Math.min(180,gap-24);X={};
+  let a="",c="";
+  T.actors.forEach((ac,k)=>{const x=gap/2+k*gap;X[ac.id]=x;
+    a+=`<rect id="bx-${ac.id}" class="box" x="${x-W/2}" y="20" width="${W}" height="52" rx="8" fill="var(--${ac.c||"svc"})"/><text x="${x}" y="52" text-anchor="middle" fill="#fff">${esc(ac.n)}</text><line x1="${x}" y1="72" x2="${x}" y2="340" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  T.chips.forEach(id=>{const x=X[id];
+    c+=`<rect id="st-${id}" class="box" x="${x-W/2+6}" y="300" width="${W-12}" height="28" rx="14" fill="var(--line)"/><text id="tx-${id}" x="${x}" y="319" fill="var(--fg)"></text>`;});
+  $("actors").innerHTML=a;$("chips").innerHTML=c;
+}
+function msgSvg(m){
+  if(m[0]==="band"){const col=colFor[m[3]||"fail"];
+    return `<rect x="20" y="${m[1]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[1]+3}" text-anchor="middle" fill="${col}" font-weight="700">${esc(m[2])}</text>`;}
+  if(m[0]==="note"){const [,id,y,txt,kind]=m,x=X[id],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+    return `<rect x="${x-W/2}" y="${y-17}" width="${W}" height="26" rx="6" fill="var(--panel)" stroke="${col}" stroke-width="2"/><text class="note" x="${x}" y="${y+1}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  const [a,b,y,txt,kind]=m,x1=X[a],x2=X[b],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+  if(kind==="lost"){const mid=(x1+x2)/2;
+    return `<line x1="${x1}" y1="${y}" x2="${mid}" y2="${y}" stroke="${col}" stroke-dasharray="6 5"/><path d="M${mid-8} ${y-8}L${mid+8} ${y+8}M${mid-8} ${y+8}L${mid+8} ${y-8}" stroke="${col}" stroke-width="3"/><text x="${(x1+mid)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;
+}
+function drawCode(){
+  const c=CODE[mode],s=TABS[mode].steps[i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const T=TABS[mode],s=T.steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${T.steps.length}`;
+  for(const id of T.chips){const [v,c]=(s.st&&s.st[id])||["","idle"];$("tx-"+id).textContent=v;
+    $("st-"+id).setAttribute("fill",fillFor[c]);$("tx-"+id).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");}
+  for(const ac of T.actors)$("bx-"+ac.id).setAttribute("fill",s.bad===ac.id?"var(--fail)":`var(--${ac.c||"svc"})`);
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=msgSvg(m);g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===T.steps.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(TABS[mode].steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=TABS[mode].steps.length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));drawActors();go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawActors();go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

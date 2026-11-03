@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bloom filter</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Bloom filter: surely not here, or maybe here</h1>
+  <p class="lede">One block of <b>swaps</b> keeps a 16-bit bloom filter on <code>tx_hash</code>. Each key sets three bits. Watch a lookup check its three bits.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="add">Add and look up</button>
+    <button role="tab" aria-selected="false" data-mode="full">Saturated filter fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 330" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">A key box, an answer box, a 16-bit array, and eight blocks with their filter answers</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="key" class="box" data-f="var(--line)" x="30" y="26" width="400" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="key-t" data-t="key" x="230" y="47" text-anchor="middle" font-size="13" fill="var(--fg)">key</text>
+<text id="key-u" data-t="" x="230" y="67" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="ans" class="box" data-f="var(--line)" x="470" y="26" width="400" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="ans-t" data-t="answer" x="670" y="47" text-anchor="middle" font-size="13" fill="var(--fg)">answer</text>
+<text id="ans-u" data-t="" x="670" y="67" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<text id="hdr" data-t="bloom filter of block 3: 16 bits" x="30" y="110" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">bloom filter of block 3: 16 bits</text>
+<rect id="b0" class="box" data-f="var(--line)" x="30" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b0-t" data-t="0" x="53.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b1" class="box" data-f="var(--line)" x="83" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b1-t" data-t="0" x="106.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b2" class="box" data-f="var(--line)" x="136" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b2-t" data-t="0" x="159.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b3" class="box" data-f="var(--line)" x="189" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b3-t" data-t="0" x="212.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b4" class="box" data-f="var(--line)" x="242" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b4-t" data-t="0" x="265.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b5" class="box" data-f="var(--line)" x="295" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b5-t" data-t="0" x="318.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b6" class="box" data-f="var(--line)" x="348" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b6-t" data-t="0" x="371.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b7" class="box" data-f="var(--line)" x="401" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b7-t" data-t="0" x="424.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b8" class="box" data-f="var(--line)" x="454" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b8-t" data-t="0" x="477.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b9" class="box" data-f="var(--line)" x="507" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b9-t" data-t="0" x="530.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b10" class="box" data-f="var(--line)" x="560" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b10-t" data-t="0" x="583.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b11" class="box" data-f="var(--line)" x="613" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b11-t" data-t="0" x="636.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b12" class="box" data-f="var(--line)" x="666" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b12-t" data-t="0" x="689.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b13" class="box" data-f="var(--line)" x="719" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b13-t" data-t="0" x="742.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b14" class="box" data-f="var(--line)" x="772" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b14-t" data-t="0" x="795.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<rect id="b15" class="box" data-f="var(--line)" x="825" y="120" width="47" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b15-t" data-t="0" x="848.5" y="147" text-anchor="middle" font-size="15" fill="var(--fg)">0</text>
+<text x="53" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">0</text>
+<text x="106" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">1</text>
+<text x="159" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">2</text>
+<text x="212" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">3</text>
+<text x="265" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">4</text>
+<text x="318" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">5</text>
+<text x="371" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">6</text>
+<text x="424" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">7</text>
+<text x="477" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">8</text>
+<text x="530" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">9</text>
+<text x="583" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">10</text>
+<text x="636" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">11</text>
+<text x="689" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">12</text>
+<text x="742" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">13</text>
+<text x="795" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">14</text>
+<text x="848" y="182" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">15</text>
+<g id="blk" class="msg">
+<text x="30" y="210" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">the same lookup against the filters of 8 blocks</text>
+<rect id="k0" class="box" data-f="var(--line)" x="30" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k0-t" data-t="block 1" x="78.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 1</text>
+<rect id="k1" class="box" data-f="var(--line)" x="137" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k1-t" data-t="block 2" x="185.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 2</text>
+<rect id="k2" class="box" data-f="var(--line)" x="244" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k2-t" data-t="block 3" x="292.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 3</text>
+<rect id="k3" class="box" data-f="var(--line)" x="351" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k3-t" data-t="block 4" x="399.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 4</text>
+<rect id="k4" class="box" data-f="var(--line)" x="458" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k4-t" data-t="block 5" x="506.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 5</text>
+<rect id="k5" class="box" data-f="var(--line)" x="565" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k5-t" data-t="block 6" x="613.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 6</text>
+<rect id="k6" class="box" data-f="var(--line)" x="672" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k6-t" data-t="block 7" x="720.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 7</text>
+<rect id="k7" class="box" data-f="var(--line)" x="779" y="218" width="97" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="k7-t" data-t="block 8" x="827.5" y="243" text-anchor="middle" font-size="13" fill="var(--fg)">block 8</text>
+</g>
+<rect x="20" y="276" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="302" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="301" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-bloom-filter/main.go</code> (<code>go run .</code>). </p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">bit set to 1</span>
+    <span style="--c:var(--ok)">just set, or found</span>
+    <span style="--c:var(--wait)">maybe: must read</span>
+    <span style="--c:var(--fail)">bit 0 means no, or filter useless</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>StarRocks <code>bloom_filter_columns</code> on <code>tx_hash</code> in a table sorted by pool. LSM stores such as RocksDB and Cassandra keep one per file, so a read skips files. Hash joins send a runtime bloom filter of the build keys to the probe-side scan.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use a bloom filter for equality lookups on a column with many values that the sort key does not cover. Size it by keys, about 10 bits per key for about 1 percent false alarms. Never for ranges or for columns with few values.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Bloom filter</th><th>Zone map</th><th>Bitmap index</th></tr>
+      <tr><td>Answers</td><td>surely not, or maybe</td><td>value outside min and max</td><td>exact rows per value</td></tr>
+      <tr><td>Good for</td><td>equality, many values</td><td>ranges on the sort key</td><td>few values</td></tr>
+      <tr><td>Wrong answers</td><td>false maybes, never a false no</td><td>none</td><td>none</td></tr>
+      <tr><td>Interview line</td><td colspan=3>"A bloom filter answers surely not here or maybe here in a few bits per key, so it skips blocks on equality lookups of an unsorted column."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+add:[
+ {"t": "An empty filter", "b": "Block 3 of swaps gets a bloom filter on tx_hash: an array of bits, all 0.", "w": "The table is sorted by pool, so without this a tx_hash lookup reads every block.", "x": {"big": "16 bits, all 0"}, "f": {}, "on": [], "pc": [1]},
+ {"t": "Add 0xaa…: set three bits", "b": "Three hash functions each compute SHA-256 of the key and their number, modulo 16. They give 12, 6 and 1. Those bits become 1.", "w": "A key costs a few bits, not its full size.", "x": {"b1-t": "1", "b6-t": "1", "b12-t": "1", "key-u": "add 0xaa…: bits 1, 6, 12", "big": "1 key added"}, "f": {"b1": "ok", "b6": "ok", "b12": "ok"}, "on": [], "pc": [1, 2, 3, 4]},
+ {"t": "Add 0xbb…", "b": "The second key gives 6, 3 and 10. Setting a bit never checks it first, so bit 6 stays 1.", "w": "Keys share bits. That is why a filter can only say maybe.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "add 0xbb…: bits 3, 6, 10", "big": "2 keys added"}, "f": {"b1": "c", "b3": "ok", "b6": "ok", "b10": "ok", "b12": "c"}, "on": [], "pc": [2, 3, 4]},
+ {"t": "Look up 0x9c41…: surely not", "b": "The lookup runs the same three functions: 3, 9 and 14. It checks them one by one. Bit 3 is 1. Bit 9 is 0, so it stops: adding this key would have set bit 9. The block is skipped.", "w": "Any 0 bit is a sure no. A bloom filter is never wrong about no.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "look up 0x9c41…: bits 3, 9, 14", "ans-u": "a bit is 0: surely not here, skip", "big": "skip the block"}, "f": {"b1": "c", "b3": "w", "b6": "c", "b10": "c", "b12": "c", "b9": "f", "b14": "f", "ans": "ok"}, "on": [], "pc": [5, 6, 7, 8]},
+ {"t": "Look up 0xaa…: maybe, and yes", "b": "Bits 1, 6 and 12 are all 1. The answer is maybe, so the block is read, and the row is there.", "w": "All bits 1 means maybe. Only reading the block confirms it.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "look up 0xaa…: bits 1, 6, 12", "ans-u": "all bits 1: maybe, read the block", "big": "read: found"}, "f": {"b1": "ok", "b3": "c", "b6": "ok", "b10": "c", "b12": "ok", "ans": "w"}, "on": [], "pc": [6, 7, 10]},
+ {"t": "Look up 0x77…: a false alarm", "b": "The functions give 10, 3 and 1. All three are 1, because 0xbb… set 3 and 10, and 0xaa… set 1. No check fails, so the block is read, and the row is not there.", "w": "A false positive costs one wasted read, never a wrong answer.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "look up 0x77…: bits 1, 3, 10", "ans-u": "all bits 1: maybe, read, not found", "big": "false positive: one wasted read"}, "f": {"b1": "w", "b3": "w", "b6": "c", "b10": "w", "b12": "c", "ans": "w"}, "on": [], "pc": [6, 7, 10, 11]},
+ {"t": "Across the day", "b": "Each block has its own filter. Looking up 0xaa…, six blocks have a 0 bit and are skipped. Block 3 holds the row. Block 7 holds other keys that happen to set bits 1, 6 and 12.", "w": "In the program, 10 bits per key with 7 functions gives 0.78 percent false alarms and misses 0 real keys.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "look up 0xaa…", "big": "blocks read: 2 of 8"}, "f": {"b1": "c", "b3": "c", "b6": "c", "b10": "c", "b12": "c", "k0": "n", "k1": "n", "k3": "n", "k4": "n", "k5": "n", "k7": "n", "k2": "ok", "k6": "w"}, "on": ["blk"], "pc": [12, 13, 14]}
+],
+full:[
+ {"t": "Too many keys for the bits", "b": "The filter was sized for a few keys, and 5,000 went in. In the program all 16 bits are 1.", "w": "A saturated filter has forgotten how to say no.", "x": {"b0-t": "1", "b1-t": "1", "b2-t": "1", "b3-t": "1", "b4-t": "1", "b5-t": "1", "b6-t": "1", "b7-t": "1", "b8-t": "1", "b9-t": "1", "b10-t": "1", "b11-t": "1", "b12-t": "1", "b13-t": "1", "b14-t": "1", "b15-t": "1", "key-u": "thousands of keys added", "big": "all 16 bits are 1"}, "f": {"b0": "f", "b1": "f", "b2": "f", "b3": "f", "b4": "f", "b5": "f", "b6": "f", "b7": "f", "b8": "f", "b9": "f", "b10": "f", "b11": "f", "b12": "f", "b13": "f", "b14": "f", "b15": "f"}, "on": [], "pc": [2, 3, 4]},
+ {"t": "Look up 0x9c41…: maybe", "b": "The same check runs on bits 3, 9 and 14. All are 1, so no check can fail, though the key is not there.", "w": "Every lookup is now a maybe.", "x": {"b0-t": "1", "b1-t": "1", "b2-t": "1", "b3-t": "1", "b4-t": "1", "b5-t": "1", "b6-t": "1", "b7-t": "1", "b8-t": "1", "b9-t": "1", "b10-t": "1", "b11-t": "1", "b12-t": "1", "b13-t": "1", "b14-t": "1", "b15-t": "1", "key-u": "look up 0x9c41…: bits 3, 9, 14", "ans-u": "maybe", "big": "maybe, wrongly"}, "f": {"b0": "f", "b1": "f", "b2": "f", "b3": "w", "b4": "f", "b5": "f", "b6": "f", "b7": "f", "b8": "f", "b9": "w", "b10": "f", "b11": "f", "b12": "f", "b13": "f", "b14": "w", "b15": "f", "ans": "w"}, "on": [], "pc": [6, 7, 10]},
+ {"t": "Every block is read", "b": "Every block's filter says maybe. The lookup reads all eight.", "w": "The filter costs storage and saves nothing.", "x": {"b0-t": "1", "b1-t": "1", "b2-t": "1", "b3-t": "1", "b4-t": "1", "b5-t": "1", "b6-t": "1", "b7-t": "1", "b8-t": "1", "b9-t": "1", "b10-t": "1", "b11-t": "1", "b12-t": "1", "b13-t": "1", "b14-t": "1", "b15-t": "1", "key-u": "look up 0x9c41…", "ans-u": "maybe, everywhere", "big": "blocks read: 8 of 8"}, "f": {"b0": "f", "b1": "f", "b2": "f", "b3": "f", "b4": "f", "b5": "f", "b6": "f", "b7": "f", "b8": "f", "b9": "f", "b10": "f", "b11": "f", "b12": "f", "b13": "f", "b14": "f", "b15": "f", "k0": "f", "k1": "f", "k2": "f", "k3": "f", "k4": "f", "k5": "f", "k6": "f", "k7": "f", "ans": "f"}, "on": ["blk"], "pc": [12, 13, 14]},
+ {"t": "A range question has no bits", "b": "WHERE tx_hash > 0x9c00 asks about a range. A bloom filter hashes exact keys, so it cannot answer, and every block is read.", "w": "Bloom filters serve equality only, on a column with many values. A column with two values says maybe in every block.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "tx_hash > 0x9c00…", "ans-u": "cannot answer a range", "big": "blocks read: 8 of 8", "sql": "WHERE tx_hash > 0x9c00…"}, "f": {"b1": "c", "b3": "c", "b6": "c", "b10": "c", "b12": "c", "k0": "f", "k1": "f", "k2": "f", "k3": "f", "k4": "f", "k5": "f", "k6": "f", "k7": "f", "ans": "f"}, "on": ["blk"], "pc": [15]},
+ {"t": "Fix: size it, aim it", "b": "Size the filter by the number of keys, about 10 bits each. Declare it on a column with many values that is looked up by equality. Looking up 0xaa… again, six filters have a 0 bit.", "w": "Sized right, it says no again, and skips most blocks.", "x": {"b1-t": "1", "b3-t": "1", "b6-t": "1", "b10-t": "1", "b12-t": "1", "key-u": "look up 0xaa…", "ans-u": "a bit is 0: skip", "big": "blocks read: 2 of 8", "sql": "bloom_filter_columns = \"tx_hash\""}, "f": {"b1": "c", "b3": "c", "b6": "c", "b10": "c", "b12": "c", "k0": "n", "k1": "n", "k3": "n", "k4": "n", "k5": "n", "k7": "n", "k2": "ok", "k6": "w", "ans": "ok"}, "on": ["blk"], "pc": [16]}
+]
+};
+const base={};
+const code={
+"add":{
+ label:"Go",
+ pc:["filter: an array of m bits, all 0; k hash functions", "add(key):", "  for i in 1 to k:", "    bits[hash(key, i) mod m] = 1        # setting never checks", "maybe(key):", "  for i in 1 to k:", "    if bits[hash(key, i) mod m] = 0:", "      return false                      # surely not here", "  ", "  return true                           # maybe here", "read the block to know for sure         # a false alarm is one wasted read", "lookup across a day:", "  for each block: if maybe(key): read the block", "  else skip the block", "a range has no key to hash: every block is read", "size it: m = about 10 bits per key, k = about 7"],
+ real:["type Bloom struct {", "\tbits []bool", "\tk    int", "}", "", "func New(m, k int) *Bloom { return &Bloom{bits: make([]bool, m), k: k} }", "", "// positions runs the k hash functions: SHA-256 of the key and a function number.", "func (b *Bloom) positions(key string) []int {", "\tout := make([]int, 0, b.k)", "\tfor i := 0; i < b.k; i++ {", "\t\ts := sha256.Sum256([]byte(fmt.Sprintf(\"%s#%d\", key, i)))", "\t\t// One byte is enough for the 16-bit story filter. Bigger filters use 4 bytes.", "\t\tvar v uint32", "\t\tif len(b.bits) <= 256 {", "\t\t\tv = uint32(s[0])", "\t\t} else {", "\t\t\tv = binary.BigEndian.Uint32(s[:4])", "\t\t}", "\t\tout = append(out, int(v%uint32(len(b.bits))))", "\t}", "\treturn out", "}", "", "func (b *Bloom) Add(key string) {", "\tfor _, p := range b.positions(key) {", "\t\tb.bits[p] = true", "\t}", "}", "", "// Maybe is false only when a bit is 0: then the key was surely never added.", "func (b *Bloom) Maybe(key string) bool {", "\tfor _, p := range b.positions(key) {", "\t\tif !b.bits[p] {", "\t\t\treturn false", "\t\t}", "\t}", "\treturn true", "}", "", "// declaring one in StarRocks:", "// ALTER TABLE swaps SET (\"bloom_filter_columns\" = \"tx_hash\");"],
+ map:{"1": [1, 2, 3, 4], "2": [25], "3": [26], "4": [27], "5": [32], "6": [33], "7": [34], "8": [35], "10": [38], "11": [38], "12": [32], "13": [32, 33, 34], "14": [35], "15": [31], "16": [41, 42]}},
+"full":"add"
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

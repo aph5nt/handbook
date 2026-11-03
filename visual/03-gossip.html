@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gossip protocol</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Gossip and cluster membership</h1>
+  <p class="lede">Node F of a cluster dies. Nobody broadcasts. Each second, each node tells one random peer what it knows. Press <b>Next</b> and watch the news double each round, then watch where gossip is not enough.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="spread" id="tab-spread">The rumour spreads</button>
+    <button role="tab" aria-selected="false" data-mode="stale" id="tab-stale">Stale views and SWIM</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Sixteen nodes on a circle passing news to random peers</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-gossip/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">knows F is dead</span>
+    <span style="--c:var(--line)">has not heard yet</span>
+    <span style="--c:var(--fail)">dead, or a failed call</span>
+    <span style="--c:var(--wait)">suspected, or checked indirectly</span>
+    <span style="--c:var(--ok)">proven alive</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cassandra and Redis Cluster use gossip for membership and node state. Consul uses SWIM gossip for health and Raft for its key-value store: two protocols for two jobs.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Use gossip for membership and health, where a view that is a second late hurts nobody. Never use it to elect a leader or grant a lock. Those need an agreed answer, so they need consensus.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Gossip</th><th>Broadcast from a centre</th><th>Consensus (Raft)</th></tr>
+      <tr><td>Centre</td><td>None</td><td>One node sends to all</td><td>One leader</td></tr>
+      <tr><td>Spread time</td><td>About log2 N rounds</td><td>One round, if the centre is alive</td><td>One round trip to a majority</td></tr>
+      <tr><td>Views</td><td>Differ for a few seconds</td><td>Same, once delivered</td><td>Agreed</td></tr>
+      <tr><td>Fits</td><td>Membership, health, hints</td><td>Small clusters</td><td>Leaders, locks, config</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Gossip spreads news to N nodes in about log N rounds with no centre, so I use it for membership and health, never for a decision that must be agreed."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const NM="ABCDEFGHIJKLMNOP".split("");
+const POS={};NM.forEach((n,k)=>{const a=k*22.5*Math.PI/180;POS[n]=[270+150*Math.sin(a),200-150*Math.cos(a)]});
+const ARC=(a,b,col,dash)=>{const[x1,y1]=POS[a],[x2,y2]=POS[b],d=Math.hypot(x2-x1,y2-y1),ux=(x2-x1)/d,uy=(y2-y1)/d;
+  return`<line x1="${x1+ux*22}" y1="${y1+uy*22}" x2="${x2-ux*24}" y2="${y2-uy*24}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`};
+function scene(s){
+  let b="";const msgs=[];
+  NM.forEach(n=>{const[x,y]=POS[n];const st=(s.st&&s.st[n])||(n==="F"&&s.dead?"fail":s.know.includes(n)?"c":"line");
+    const f=KC[st]||"var(--line)";b+=`<circle class="box" cx="${x}" cy="${y}" r="20" fill="${f}"/>`+T(x,y+5,n,{s:15,c:st==="line"?"var(--fg)":"#fff"});
+    if(s.tag&&s.tag[n])b+=T(270+(x-270)*1.2,200+(y-200)*1.2+4,s.tag[n],{s:12,c:"var(--fg)",a:x<250?"end":x>290?"start":"middle"});});
+  (s.arcs||[]).forEach(([a,c,k])=>msgs.push(ARC(a,c,KC[k||"c"],k==="fail")));
+  b+=T(560,50,s.round||"",{a:"start",s:18});
+  if(s.know.length)b+=T(560,96,`${s.know.length} of 15`,{a:"start",s:40,c:"var(--coord)"})+T(560,120,"live nodes know F is dead",{a:"start",s:14,w:400,c:"var(--muted)"});
+  if(s.table){s.table.forEach(([n,r],k)=>{const y=170+k*34;b+=T(560,y,n,{a:"start",s:14,w:400});b+=R(680,y-16,r*18,22,"var(--coord)",{rx:4})+T(690+r*18,y,r+" rounds",{a:"start",s:13})});}
+  if(s.ban)msgs.push(BANNER(388,s.ban));
+  return{base:b,msgs};
+}
+const R2=["A","K"],R3=R2.concat(["D","N"]),R4=R3.concat(["H","C","O","B"]),R5=R4.concat(["E","G","I","J","L","M","P"]);
+const steps={
+spread:[
+ {t:"Sixteen nodes, no centre",b:"Each node keeps a heartbeat counter for every node it knows. Every second it picks one random peer (line 2) and they swap their lists (line 3). Line 4 decides each entry: the higher counter wins, because a higher counter is newer.",w:"Nobody is in charge. Every node runs the same three lines every second.",know:[],round:"Every second: swap with one random peer",pc:[1,2,3,4]},
+ {t:"Node F dies. Node A notices",b:"F stops raising its counter, so A's copy stays at 7. Line 5 runs on A: has F's counter stalled for the timeout, 5 seconds? Yes. A marks F dead. Live nodes that know: 1 of 15.",w:"One node knows. No message was broadcast. The next swaps carry the mark.",know:["A"],dead:true,round:"Round 1",pc:[5]},
+ {t:"Round 2: A tells one random peer",b:"Line 2 picks K for A. They swap views. For entry F, line 4 compares counter 7 dead with counter 7 alive. The counters tie, so dead wins. K now holds the mark. 2 of 15 know.",w:"Each informed node reaches one more node per round.",know:R2,dead:true,round:"Round 2",arcs:[["A","K"]],pc:[2,3,4]},
+ {t:"Round 3: four know",b:"A swaps with D. K swaps with N. Each of the 2 informed nodes creates 1 more: 2 + 2 = 4 of 15.",w:"The count doubles because every informed node runs line 2 in every round.",know:R3,dead:true,round:"Round 3",arcs:[["A","D"],["K","N"]],pc:[2,3,4]},
+ {t:"Round 4: eight know",b:"A, K, D and N swap with H, C, O and B. 4 + 4 = 8 of 15.",w:"Doubling is fast. Half the cluster knows after four rounds.",know:R4,dead:true,round:"Round 4",arcs:[["A","H"],["K","C"],["D","O"],["N","B"]],pc:[2,3,4]},
+ {t:"Round 5: every live node knows",b:"Seven swaps reach the last seven nodes: 8 + 7 = 15 of 15. There were 8 informed nodes and only 7 left to tell, so the doubling stops at the cluster size.",w:"Real picks are random, so some peers are picked twice and some swaps are wasted. Gossip pays that extra traffic for having no centre.",know:R5,dead:true,round:"Round 5",arcs:[["A","E"],["K","G"],["D","I"],["N","J"],["H","L"],["C","M"],["O","P"]],pc:[2,3,4]},
+ {t:"It scales with the logarithm",b:"Doubling means the count after r rounds is about 2 to the power r. So r is about log2 of N: 4 rounds for 16 nodes, 10 for 1,000, 20 for 1,000,000.",w:"A thousand times more nodes adds only about ten rounds, and each node still sends one swap per round.",know:R5,dead:true,round:"Rounds needed, about log2 N",table:[["16 nodes",4],["1,000 nodes",10],["1,000,000",20]],pc:[1,2]}
+],
+stale:[
+ {t:"Mid-spread, views differ",b:"Back at round 3. For A, D, K and N, entry F is marked dead. For the other eleven, line 4 has not run with an informed peer, so entry F still says alive.",w:"Each node reads only its own list, so for a few seconds the cluster holds different answers.",know:R3,dead:true,round:"Round 3",pc:[4]},
+ {t:"The failure: a call to a dead peer",b:"Node M gets a client read. Line 7 picks the first node its view says is alive. M's entry says F is alive, so M calls F and waits for its timeout. Line 8 is switched off here, so the client gets an error.",w:"Gossip never promises that everyone knows now. Routing code that trusts the view fails during the spread.",know:R3,dead:true,round:"Round 3",arcs:[["M","F","fail"]],tag:{M:"thinks F is alive"},ban:"Node M still believes F is alive and sends it a request that times out.",pc:[6,7]},
+ {t:"The fix: retry on the next node",b:"Line 8 is back on. The call to F times out, so M tries the next node in its list, G. G answers. The client sees one slow read, not an error.",w:"The program prints: call to [F] times out, retried on G. Treat a gossip view as a hint, and retry.",know:R3,dead:true,round:"Round 3",st:{G:"ok"},arcs:[["M","F","fail"],["M","G","ok"]],tag:{M:"retries on G"},pc:[7,8]},
+ {t:"Why gossip must not elect a leader",b:"Line 13 forbids this. Suppose each node picked the leader from its own view. D's view has F dead, so D picks G. L's view has F alive, so L picks F. Each would send writes to a different leader.",w:"A decision everyone must share needs consensus. Gossip only gets everyone to agree some time later.",know:R3,dead:true,round:"Round 3",st:{D:"wait",L:"wait"},tag:{D:"leader is G",L:"leader is F"},pc:[13]},
+ {t:"SWIM: a direct check fails",b:"A different problem. A pings G and gets no answer in time (line 9). Line 5 alone would mark G dead. But maybe only the link from A to G is bad.",w:"One node's view is not enough to call another node dead.",know:[],round:"SWIM: check before you accuse",st:{G:"wait"},arcs:[["A","G","fail"]],pc:[9]},
+ {t:"SWIM: ask two others to try",b:"Line 10: A asks 2 helpers, B and C, to ping G for it. Each helper uses its own network path to G.",w:"If any path reaches G, the problem is A's link, not G.",know:[],round:"SWIM: indirect check",st:{G:"wait",B:"wait",C:"wait"},arcs:[["A","B","wait"],["A","C","wait"],["B","G","wait"],["C","G","wait"]],pc:[10]},
+ {t:"G answers B: G stays alive",b:"Line 11 checks: did any helper reach G? B did, and tells A. So G stays alive and line 12 never runs. It would run only if both helpers also failed.",w:"Consul and Serf use SWIM for exactly this. Fewer false deaths mean fewer needless failovers.",know:[],round:"SWIM: G is alive",st:{G:"ok",B:"ok"},arcs:[["G","B","ok"],["B","A","ok"]],pc:[11]}
+]};
+const code={"*": {"label": "Go", "pc": ["every second, on each node:", "  p = pick one random live peer", "  swap views with p", "  for each node x: keep the entry with the higher counter", "  if x's counter stalled for the timeout: mark x dead", "on a client request:", "  target = first node my view says is alive", "  if the call times out: retry on the next node   # my view may be stale", "SWIM, when my ping to g fails:", "  ask 2 helpers to ping g for me", "  if any helper reaches g: g stays alive          # the link was bad", "  else: mark g suspected, then dead", "never: pick a leader or grant a lock from my view # views differ"], "real": ["// Merge swaps views with a peer. For each node, both keep the newer entry:", "// the higher heartbeat wins, and at the same heartbeat \"dead\" wins.", "func Merge(a, b *Node) {", "\tfor name := range union(a.View, b.View) {", "\t\tx, y := a.View[name], b.View[name]", "\t\tnewer := x", "\t\tif y.Heartbeat > x.Heartbeat || (y.Heartbeat == x.Heartbeat && y.Dead) {", "\t\t\tnewer = y", "\t\t}", "\t\ta.View[name], b.View[name] = newer, newer", "\t}", "}", "", "// CheckStalled marks a node dead when its heartbeat has not risen for", "// timeout seconds.", "func (n *Node) CheckStalled(name string, stalledFor, timeout int) {", "\tif stalledFor >= timeout {", "\t\te := n.View[name]", "\t\te.Dead = true", "\t\tn.View[name] = e", "\t}", "}", "", "// Route sends a request to the first node this view thinks is alive.", "// A view can be stale, so a timed-out call is retried on the next node.", "// Never use a view to elect a leader or grant a lock: views differ.", "func Route(from *Node, order []string, reachable func(string) bool) (string, []string) {", "\tvar failed []string", "\tfor _, target := range order {", "\t\tif from.View[target].Dead {", "\t\t\tcontinue // my view says dead: skip", "\t\t}", "\t\tif reachable(target) {", "\t\t\treturn target, failed", "\t\t}", "\t\tfailed = append(failed, target) // timed out: my view was stale", "\t}", "\treturn \"\", failed", "}", "", "// SwimProbe: a direct ping failed, so ask k helpers to ping the target.", "// The target is only suspected when no helper reaches it either.", "func SwimProbe(target string, helpers []string, canReach func(from, to string) bool) string {", "\tfor _, h := range helpers {", "\t\tif canReach(h, target) {", "\t\t\treturn \"alive\" // the link from me was bad, not the node", "\t\t}", "\t}", "\treturn \"suspected\"", "}"], "map": {"1": [1], "2": [1], "3": [3], "4": [6, 7, 10], "5": [17, 19], "6": [27], "7": [29, 30], "8": [33, 34, 36], "9": [43], "10": [44, 45], "11": [45, 46], "12": [49], "13": [26]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

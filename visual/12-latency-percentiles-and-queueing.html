@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Latency percentiles and queueing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Latency percentiles and queueing</h1>
+  <p class="lede">A hundred agent queries hit a warehouse in one second. Most are fast. A few are very slow. Which number tells the truth: the average, p50 or p99? Then load the server harder and watch the wait explode past the knee. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pct">Averages and percentiles</button>
+    <button role="tab" aria-selected="false" data-mode="queue">Queueing and the knee</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated latency distribution and queue wait</title>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-latency-percentiles-and-queueing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">one request</span>
+    <span style="--c:var(--wait)">the average</span>
+    <span style="--c:var(--ok)">p50, the median</span>
+    <span style="--c:var(--fail)">p99, the tail, or past the knee</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every latency dashboard and every SLO (Service Level Objective). Prometheus histograms let you compute p50, p95 and p99 and merge them across hosts. A p99 of p99s is not a p99, so never average percentiles: merge the histograms.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Report p50, p95 and p99, never the mean alone. Set timeouts and budgets on p99. Keep steady utilisation at 50 to 70 percent so a spike has room. Little's law sizes the pool: 100 requests per second at 0.2 seconds each means 20 in flight.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Average</th><th>p50</th><th>p99</th></tr>
+      <tr><td>Means</td><td>Sum divided by count</td><td>Half the requests are faster</td><td>99 of 100 are faster</td></tr>
+      <tr><td>Moved by a few slow requests</td><td>Yes, a lot</td><td>No</td><td>Yes, that is its job</td></tr>
+      <tr><td>Tells you about</td><td>Nobody in particular</td><td>The typical user</td><td>The user who times out and leaves</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"I read p99, not the average, because the tail is what users feel, and I keep utilisation below the knee, because past about 80 percent the queue explodes."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const B="var(--coord)",Y="var(--wait)",G="var(--ok)",R="var(--fail)";
+const L=[];for(let k=0;k<90;k++)L.push(30+((k*37)%61));for(let k=0;k<8;k++)L.push(150+k*60);L.push(2400,3800);
+const S=[...L].sort((a,b)=>a-b),AVG=Math.round(L.reduce((a,b)=>a+b,0)/L.length),P50=S[49],P99=S[98];
+const xs=v=>60+(Math.log10(v)-1)/(Math.log10(5000)-1)*780;
+const steps={
+pct:[
+ {t:"A hundred requests",b:"Each dot is one query, placed by how long it took. The scale grows by ten at each mark, so the slow ones fit on the page.",w:"Most dots crowd on the left, between 30 and 90 milliseconds. A few sit far to the right.",show:[]},
+ {t:"The average",b:`Add all hundred times and divide by a hundred: ${AVG} ms. The line sits in an empty gap, faster than the slow group and slower than almost everyone else.`,w:"The average describes no real request. Two slow ones dragged it far to the right.",show:["avg"]},
+ {t:"p50, the median",b:`Sort the hundred times from fast to slow and take the 50th: ${P50} ms. Half the requests were faster, half slower.`,w:"p50 is the typical user. It does not move when a few requests get very slow.",show:["avg","p50"]},
+ {t:"p99, the tail",b:`Same sorted list, take the 99th of 100: ${P99} ms. Only one request was slower. That is where the slow group lives.`,w:"p99 is the user who waited, gave up, and filed a ticket. In a busy service, 1 percent is thousands of people a day.",show:["avg","p50","p99"]},
+ {t:"The failure that matters: a dashboard of averages",b:`The dashboard shows the average, ${AVG} ms, in green. But agents time out after 2 seconds, and the two slowest requests failed. The dashboard says all is well while users see errors.`,w:"Never let one average be the only latency number. Show p50, p95 and p99, and alert on the tail.",show:["avg","timeout"],dash:true},
+ {t:"Fan-out makes the tail normal",b:"Now a page calls 100 backends, each slow 1 percent of the time. The chance that all 100 are fast is 0.99 to the power 100, about 37 percent.",w:"So about 63 percent of page views hit at least one slow backend. With fan-out, the backend's p99 becomes the page's typical case.",show:["p99"],fan:true}
+],
+queue:[
+ {t:"One server, random arrivals",b:"Requests arrive at random moments and wait in a queue. Utilisation is the share of time the server is busy. Each bar is the average wait, in units of one service time.",w:"For one server, the wait grows like utilisation divided by one minus utilisation.",q:1},
+ {t:"70 percent busy",b:"At 70 percent the wait is 0.7 ÷ (1 − 0.7) = 2.3 service times. Still calm.",w:"This is a healthy steady state. A spike has room.",q:2},
+ {t:"80 percent: the knee",b:"At 80 percent the wait is 0.8 ÷ 0.2 = 4 service times. The curve is bending upward.",w:"Around 70 to 80 percent is the knee. Past it, a small extra load buys a big extra wait.",q:3},
+ {t:"90 percent busy",b:"At 90 percent the wait is 0.9 ÷ 0.1 = 9 service times. A database at 90 percent CPU is not fine with 10 percent headroom: its queue is nine times deeper than at half load.",w:"Little's law then says the number in flight grows the same way, so connection pools fill and timeouts start.",q:4},
+ {t:"The failure that matters: a small spike at 90 percent",b:"Traffic rises a little, from 90 to 95 percent. The wait more than doubles, from 9 to 0.95 ÷ 0.05 = 19 service times. Requests time out, clients retry, and load rises again.",w:"Running hot to save money is paid back in latency, then in an outage. Keep steady load at 50 to 70 percent and shed low-priority work first.",q:5,spike:true}
+]};
+function el(tag,a,txt){const e=document.createElementNS(NS,tag);for(const k in a)e.setAttribute(k,a[k]);if(txt!==undefined)e.textContent=txt;$("dyn").appendChild(e);return e;}
+function vline(v,c,label,y){const x=xs(v);el("line",{x1:x,y1:60,x2:x,y2:300,stroke:c,"stroke-width":3,"stroke-dasharray":c===Y?"8 5":""});el("text",{x,y,fill:c},label);}
+function draw(s){
+  const g=$("dyn");g.innerHTML="";
+  if(mode==="pct"){
+    el("line",{x1:60,y1:300,x2:840,y2:300,stroke:"var(--line)","stroke-width":2});
+    [10,100,1000,5000].forEach(v=>{el("line",{x1:xs(v),y1:300,x2:xs(v),y2:308,stroke:"var(--muted)"});el("text",{x:xs(v),y:326,fill:"var(--muted)"},v>=1000?v/1000+" s":v+" ms");});
+    const bins={};S.forEach(v=>{const b=Math.round(xs(v)/12);bins[b]=(bins[b]||0)+1;const y=290-(bins[b]-1)*13;
+      const bad=s.dash&&v>2000;el("circle",{cx:xs(v),cy:y,r:5.5,fill:bad?R:B,class:"dot"});});
+    if(s.show.includes("avg"))vline(AVG,Y,`average ${AVG} ms`,48);
+    if(s.show.includes("p50"))vline(P50,G,`p50 ${P50} ms`,30);
+    if(s.show.includes("p99"))vline(P99,R,`p99 ${P99} ms`,48);
+    if(s.show.includes("timeout")){const x=xs(2000);el("line",{x1:x,y1:60,x2:x,y2:300,stroke:R,"stroke-width":2,"stroke-dasharray":"4 4"});el("text",{x:x+6,y:76,fill:R,"text-anchor":"start"},"agent timeout 2 s");}
+    if(s.dash){el("rect",{x:300,y:340,width:300,height:44,rx:8,fill:G});el("text",{x:450,y:368,fill:"#fff"},`Dashboard: latency ${AVG} ms, OK`);}
+    if(s.fan){el("rect",{x:200,y:340,width:500,height:44,rx:8,fill:R});el("text",{x:450,y:368,fill:"#fff"},"100 backends: about 63 percent of pages hit the tail");}
+  }else{
+    const U=[50,70,80,90,95],W=U.map(u=>u/(100-u)),base=340,sc=260/19;
+    el("line",{x1:60,y1:base,x2:860,y2:base,stroke:"var(--line)","stroke-width":2});
+    U.forEach((u,k)=>{const x=110+k*150;el("text",{x:x+40,y:base+24,fill:"var(--fg)"},u+" percent busy");
+      if(k<s.q){const h=Math.max(W[k]*sc,3),c=k>=3?R:k===2?Y:G;el("rect",{x,y:base-h,width:80,height:h,rx:6,fill:c,class:"box"});
+        el("text",{x:x+40,y:base-h-8,fill:c},"wait "+(Math.round(W[k]*10)/10)+"x");}});
+    if(s.q>=3){const x=110+2*150+40;el("text",{x,y:60,fill:Y},"the knee");el("line",{x1:x,y1:66,x2:x,y2:base-4*sc-26,stroke:Y,"stroke-width":2,"stroke-dasharray":"4 4"});}
+    if(s.spike){el("text",{x:110+3.5*150+40,y:40,fill:R},"+5 percent load, wait x2");}
+  }
+}
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);const t=$(k+"-t");if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  if(typeof draw==="function")draw(s);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["times = 100 query times in ms", "average = sum(times) / 100           # pulled right by two slow ones", "sorted = sort(times)", "p50 = sorted[50th]                   # the typical user", "p99 = sorted[99th]                   # the tail", "# BUG: the dashboard shows only the average, alerts on it", "allFast = 0.99 ^ backends            # fan-out: 0.99 ^ 100 = 37%", "", "wait(u) = u / (1 - u)                # one server, in service times", "for u in 50%, 70%, 80%, 90%, 95%:", "  print wait(u)                      # 1, 2.3, 4, 9, 19"], "real": ["func Average(t []int) int {", "\tsum := 0", "\tfor _, v := range t {", "\t\tsum += v", "\t}", "\treturn int(math.Round(float64(sum) / float64(len(t))))", "}", "", "// Percentile sorts and takes the value at rank p of n (p50 = the 50th).", "func Percentile(t []int, p int) int {", "\ts := append([]int(nil), t...)", "\tsort.Ints(s)", "\treturn s[len(s)*p/100-1]", "}", "", "// Wait is the average queue wait of one server, in service times.", "func Wait(u float64) float64 { return u / (1 - u) }", "", "t := Times()", "fmt.Printf(\"average %d ms, p50 %d ms, p99 %d ms\\n\", Average(t), Percentile(t, 50), Percentile(t, 99))", "allFast := math.Pow(0.99, 100)", "for _, u := range []float64{0.5, 0.7, 0.8, 0.9, 0.95} {", "\tfmt.Printf(\"%.0f%% busy: wait %.1f service times\\n\", u*100, Wait(u))", "}"], "map": {"1": [19], "2": [1, 2, 3, 4, 5, 6], "3": [10, 11, 12], "4": [13], "5": [13], "6": [20], "7": [21], "9": [16, 17], "10": [22], "11": [23]}}},PCS={"pct": [[1], [2], [3, 4], [3, 5], [2, 6], [7]], "queue": [[9], [9, 10, 11], [9, 10, 11], [9, 10, 11], [9, 11]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

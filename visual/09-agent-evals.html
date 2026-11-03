@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent evals</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent evals: ten runs, not one</h1>
+  <p class="lede">One agent task, run ten times. Each run passes or fails the same checks. The pass rate is the result, not any single run. Watch a skill earn its place against runs without it (ablation). Then switch tabs to see a skill change judged on one lucky run ship a drop from 8 of 10 to 5 of 10.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Ten runs, with and without</button>
+    <button role="tab" aria-selected="false" data-mode="bad">One lucky run</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 430" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Three rows of ten run results, one row per variant, with a pass rate at the end of each row</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text x="10" y="66" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">No skill</text>
+      <text id="rA" x="890" y="66" text-anchor="end" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      <text x="10" y="136" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">Skill v1</text>
+      <text id="rB" x="890" y="136" text-anchor="end" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      <text x="10" y="206" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">Skill v2</text>
+      <text id="rC" x="890" y="206" text-anchor="end" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      <g id="dA0-g" class="msg"><rect id="dA0" class="box" x="110" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA0-l" x="134.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">1</text></g>
+      <g id="dA1-g" class="msg"><rect id="dA1" class="box" x="166" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA1-l" x="190.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">2</text></g>
+      <g id="dA2-g" class="msg"><rect id="dA2" class="box" x="222" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA2-l" x="246.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">3</text></g>
+      <g id="dA3-g" class="msg"><rect id="dA3" class="box" x="278" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA3-l" x="302.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">4</text></g>
+      <g id="dA4-g" class="msg"><rect id="dA4" class="box" x="334" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA4-l" x="358.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">5</text></g>
+      <g id="dA5-g" class="msg"><rect id="dA5" class="box" x="390" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA5-l" x="414.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">6</text></g>
+      <g id="dA6-g" class="msg"><rect id="dA6" class="box" x="446" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA6-l" x="470.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">7</text></g>
+      <g id="dA7-g" class="msg"><rect id="dA7" class="box" x="502" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA7-l" x="526.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">8</text></g>
+      <g id="dA8-g" class="msg"><rect id="dA8" class="box" x="558" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA8-l" x="582.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">9</text></g>
+      <g id="dA9-g" class="msg"><rect id="dA9" class="box" x="614" y="40" width="48" height="40" rx="10" fill="var(--line)"/><text id="dA9-l" x="638.0" y="64.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">10</text></g>
+      <g id="dB0-g" class="msg"><rect id="dB0" class="box" x="110" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB0-l" x="134.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">1</text></g>
+      <g id="dB1-g" class="msg"><rect id="dB1" class="box" x="166" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB1-l" x="190.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">2</text></g>
+      <g id="dB2-g" class="msg"><rect id="dB2" class="box" x="222" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB2-l" x="246.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">3</text></g>
+      <g id="dB3-g" class="msg"><rect id="dB3" class="box" x="278" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB3-l" x="302.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">4</text></g>
+      <g id="dB4-g" class="msg"><rect id="dB4" class="box" x="334" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB4-l" x="358.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">5</text></g>
+      <g id="dB5-g" class="msg"><rect id="dB5" class="box" x="390" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB5-l" x="414.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">6</text></g>
+      <g id="dB6-g" class="msg"><rect id="dB6" class="box" x="446" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB6-l" x="470.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">7</text></g>
+      <g id="dB7-g" class="msg"><rect id="dB7" class="box" x="502" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB7-l" x="526.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">8</text></g>
+      <g id="dB8-g" class="msg"><rect id="dB8" class="box" x="558" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB8-l" x="582.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">9</text></g>
+      <g id="dB9-g" class="msg"><rect id="dB9" class="box" x="614" y="110" width="48" height="40" rx="10" fill="var(--line)"/><text id="dB9-l" x="638.0" y="134.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">10</text></g>
+      <g id="dC0-g" class="msg"><rect id="dC0" class="box" x="110" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC0-l" x="134.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">1</text></g>
+      <g id="dC1-g" class="msg"><rect id="dC1" class="box" x="166" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC1-l" x="190.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">2</text></g>
+      <g id="dC2-g" class="msg"><rect id="dC2" class="box" x="222" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC2-l" x="246.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">3</text></g>
+      <g id="dC3-g" class="msg"><rect id="dC3" class="box" x="278" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC3-l" x="302.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">4</text></g>
+      <g id="dC4-g" class="msg"><rect id="dC4" class="box" x="334" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC4-l" x="358.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">5</text></g>
+      <g id="dC5-g" class="msg"><rect id="dC5" class="box" x="390" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC5-l" x="414.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">6</text></g>
+      <g id="dC6-g" class="msg"><rect id="dC6" class="box" x="446" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC6-l" x="470.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">7</text></g>
+      <g id="dC7-g" class="msg"><rect id="dC7" class="box" x="502" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC7-l" x="526.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">8</text></g>
+      <g id="dC8-g" class="msg"><rect id="dC8" class="box" x="558" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC8-l" x="582.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">9</text></g>
+      <g id="dC9-g" class="msg"><rect id="dC9" class="box" x="614" y="180" width="48" height="40" rx="10" fill="var(--line)"/><text id="dC9-l" x="638.0" y="204.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">10</text></g>
+      <g id="bA-g" class="msg"><rect id="bA" class="box" x="680" y="40" width="60" height="40" rx="10" fill="var(--line)"/><text id="bA-l" x="710.0" y="64.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text></g>
+      <g id="bB-g" class="msg"><rect id="bB" class="box" x="680" y="110" width="120" height="40" rx="10" fill="var(--line)"/><text id="bB-l" x="740.0" y="134.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text></g>
+      <g id="bC-g" class="msg"><rect id="bC" class="box" x="680" y="180" width="75" height="40" rx="10" fill="var(--line)"/><text id="bC-l" x="717.5" y="204.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text></g>
+      <g id="bC1-g" class="msg"><rect id="bC1" class="box" x="680" y="180" width="150" height="40" rx="10" fill="var(--line)"/><text id="bC1-l" x="755.0" y="204.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text></g>
+      <text x="10" y="240" font-size="14" font-weight="700" fill="var(--fg)">Eval log</text>
+      <rect x="10" y="250" width="880" height="170" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-agent-evals/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">run passed every check</span>
+    <span style="--c:var(--fail)">run failed a check</span>
+    <span style="--c:var(--coord)">pass-rate bar, or a decision</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>`claude plugin eval . --runs 3 --ablation with-without` in a Claude Code harness: each case runs several times with the skill and without it, and the report gives both pass rates and the delta. LangSmith and promptfoo run the same idea as experiments over a dataset.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Run every case several times, with and without the change. Compare pass rates, not single runs. Block a merge when the rate drops, even when the run you looked at was green. Raise the run count when two rates are close.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Ten runs, with and without</th><th>One run</th></tr>
+      <tr><td>Result</td><td>A pass rate per variant, and a delta</td><td>Pass or fail, by luck</td></tr>
+      <tr><td>Catches a drop from 8 to 5 of 10</td><td>Yes</td><td>Half the time it shows green</td></tr>
+      <tr><td>Proves the skill helps</td><td>Yes, against the no-skill rate</td><td>No baseline at all</td></tr>
+      <tr><td>Cost</td><td>Ten times the calls</td><td>One call</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"An agent is non-deterministic, so I judge a change by its pass rate over many runs, with and without it, never by one green run."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"t": "One task, one set of checks", "b": "The task: 'Who funded wallet 0x9f…0071? Name every exchange, with full addresses.' The checks: every address 42 characters, both exchanges named.", "w": "The checks are fixed. Only the runs vary.", "box": {}, "show": [], "pc": [2]},
+{"t": "Ten runs with no skill", "b": "The agent runs the task ten times with no skill loaded. Each answer goes through check(): run 2 shortens the funder to 0x18aa...cb24 (13 characters, not 42), run 5 names only one exchange. 4 of 10 pass.", "w": "Outputs vary between runs: the tool order, the wording, what gets left out.", "box": {"dA0": "ok", "dA1": "fail", "dA2": "ok", "dA3": "ok", "dA4": "fail", "dA5": "fail", "dA6": "fail", "dA7": "ok", "dA8": "fail", "dA9": "fail", "bA": "coord"}, "show": ["dA0", "dA1", "dA2", "dA3", "dA4", "dA5", "dA6", "dA7", "dA8", "dA9", "bA"], "txt": {"rA": "4 of 10"}, "rows": [["no skill: 4 of 10 pass", "fail"]], "pc": [1, 3, 4]},
+{"t": "Ten runs with skill v1", "b": "The same task, ten times, with the skill that says 'name every exchange, write every address in full'. The same check() runs on each answer. Run 3 drops an exchange and run 9 shortens an address. 8 of 10 pass.", "w": "Same task, same checks. Only the skill changed.", "box": {"dA0": "ok", "dA1": "fail", "dA2": "ok", "dA3": "ok", "dA4": "fail", "dA5": "fail", "dA6": "fail", "dA7": "ok", "dA8": "fail", "dA9": "fail", "bA": "coord", "dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord"}, "show": ["dA0", "dA1", "dA2", "dA3", "dA4", "dA5", "dA6", "dA7", "dA8", "dA9", "bA", "dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB"], "txt": {"rA": "4 of 10", "rB": "8 of 10"}, "rows": [["skill v1: 8 of 10 pass", "ok"]], "pc": [3, 4]},
+{"t": "The delta is the proof", "b": "delta = 8 - 4 = +4. Nothing was live before, so there is no drop to check. delta is above 0, so the gate says merge. That is ablation: run with and without, compare.", "w": "Without the no-skill row, 8 of 10 means nothing. Maybe the model did it anyway.", "box": {"dA0": "ok", "dA1": "fail", "dA2": "ok", "dA3": "ok", "dA4": "fail", "dA5": "fail", "dA6": "fail", "dA7": "ok", "dA8": "fail", "dA9": "fail", "bA": "coord", "dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord"}, "show": ["dA0", "dA1", "dA2", "dA3", "dA4", "dA5", "dA6", "dA7", "dA8", "dA9", "bA", "dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB"], "txt": {"rA": "4 of 10", "rB": "8 of 10"}, "rows": [["delta: +4 in 10, skill v1 merges", "coord"]], "pc": [5, 7, 8]},
+{"t": "A change: skill v2", "b": "Someone shortens the skill's description. The eval runs it ten times. 5 runs pass.", "w": "The change looked harmless. The rate says otherwise.", "box": {"dA0": "ok", "dA1": "fail", "dA2": "ok", "dA3": "ok", "dA4": "fail", "dA5": "fail", "dA6": "fail", "dA7": "ok", "dA8": "fail", "dA9": "fail", "bA": "coord", "dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "dC1": "fail", "dC2": "fail", "dC3": "ok", "dC4": "fail", "dC5": "ok", "dC6": "ok", "dC7": "fail", "dC8": "ok", "dC9": "fail", "bC": "coord"}, "show": ["dA0", "dA1", "dA2", "dA3", "dA4", "dA5", "dA6", "dA7", "dA8", "dA9", "bA", "dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "dC1", "dC2", "dC3", "dC4", "dC5", "dC6", "dC7", "dC8", "dC9", "bC"], "txt": {"rA": "4 of 10", "rB": "8 of 10", "rC": "5 of 10"}, "rows": [["skill v2: 5 of 10 pass", "fail"]], "pc": [3, 4]},
+{"t": "The drop blocks the merge", "b": "The gate first asks: is the candidate's rate below the live rate? 5 < 8, yes, so it blocks before the delta (5 - 4 = +1) is even read. The shorter description no longer makes the skill load on this task.", "w": "Compare against the current version, not only against no skill.", "box": {"dA0": "ok", "dA1": "fail", "dA2": "ok", "dA3": "ok", "dA4": "fail", "dA5": "fail", "dA6": "fail", "dA7": "ok", "dA8": "fail", "dA9": "fail", "bA": "coord", "dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "dC1": "fail", "dC2": "fail", "dC3": "ok", "dC4": "fail", "dC5": "ok", "dC6": "ok", "dC7": "fail", "dC8": "ok", "dC9": "fail", "bC": "coord"}, "show": ["dA0", "dA1", "dA2", "dA3", "dA4", "dA5", "dA6", "dA7", "dA8", "dA9", "bA", "dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "dC1", "dC2", "dC3", "dC4", "dC5", "dC6", "dC7", "dC8", "dC9", "bC"], "txt": {"rA": "4 of 10", "rB": "8 of 10", "rC": "5 of 10"}, "rows": [["v2 below v1: merge blocked", "coord"]], "pc": [6]}],
+"bad":[
+{"t": "Skill v1 is live", "b": "Skill v1 passes 8 of 10. Nobody measured that, though. It was shipped on a good feeling.", "w": "No number means no way to see a drop.", "box": {"dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord"}, "show": ["dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB"], "txt": {"rB": "8 of 10"}, "pc": []},
+{"t": "A change, one run", "b": "Skill v2 shortens the description. The author runs the task once: runs = 1. Run 1 of v2 happens to pass check().", "w": "One sample from a process that varies.", "box": {"dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "bC1": "coord"}, "show": ["dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "bC1"], "txt": {"rB": "8 of 10", "rC": "1 of 1"}, "rows": [["skill v2: 1 run, green", "ok"]], "pc": [1]},
+{"t": "It ships", "b": "With runs = 1 the rate is 1 of 1. Nobody ran the live skill or the no-skill row, so there is no rate to compare. The gate falls through to merge.", "w": "A green run is a sample, not a proof. 5 of 10 runs are green too.", "box": {"dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "bC1": "coord"}, "show": ["dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "bC1"], "txt": {"rB": "8 of 10", "rC": "'works'"}, "rows": [["merged on one green run", "fail"]], "pc": [8]},
+{"t": "The real rate", "b": "In use, v2 passes only 5 of 10. Half the answers miss an exchange or shorten an address.", "w": "The drop from 8 to 5 was there all along. One run could not show it.", "box": {"dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "dC1": "fail", "dC2": "fail", "dC3": "ok", "dC4": "fail", "dC5": "ok", "dC6": "ok", "dC7": "fail", "dC8": "ok", "dC9": "fail", "bC": "coord"}, "show": ["dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "dC1", "dC2", "dC3", "dC4", "dC5", "dC6", "dC7", "dC8", "dC9", "bC"], "txt": {"rB": "8 of 10", "rC": "5 of 10"}, "rows": [["real rate: 5 of 10", "fail"]], "pc": [3, 4]},
+{"t": "Users find it", "b": "Investigators get answers missing an exchange. Each one becomes a bug report.", "w": "Users became the eval. That is the slowest, costliest eval there is.", "box": {"dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "dC1": "fail", "dC2": "fail", "dC3": "ok", "dC4": "fail", "dC5": "ok", "dC6": "ok", "dC7": "fail", "dC8": "ok", "dC9": "fail", "bC": "coord"}, "show": ["dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "dC1", "dC2", "dC3", "dC4", "dC5", "dC6", "dC7", "dC8", "dC9", "bC"], "txt": {"rB": "8 of 10", "rC": "5 of 10"}, "rows": [["bug reports: missing exchange", "fail"]], "pc": []},
+{"t": "The fix: rates with and without", "b": "Every change runs each case many times, with and without it, against the live version. A drop blocks the merge.", "w": "Gate on the rate and the delta, never on one run.", "box": {"dA0": "ok", "dA1": "fail", "dA2": "ok", "dA3": "ok", "dA4": "fail", "dA5": "fail", "dA6": "fail", "dA7": "ok", "dA8": "fail", "dA9": "fail", "bA": "coord", "dB0": "ok", "dB1": "ok", "dB2": "fail", "dB3": "ok", "dB4": "ok", "dB5": "ok", "dB6": "ok", "dB7": "ok", "dB8": "fail", "dB9": "ok", "bB": "coord", "dC0": "ok", "dC1": "fail", "dC2": "fail", "dC3": "ok", "dC4": "fail", "dC5": "ok", "dC6": "ok", "dC7": "fail", "dC8": "ok", "dC9": "fail", "bC": "coord"}, "show": ["dA0", "dA1", "dA2", "dA3", "dA4", "dA5", "dA6", "dA7", "dA8", "dA9", "bA", "dB0", "dB1", "dB2", "dB3", "dB4", "dB5", "dB6", "dB7", "dB8", "dB9", "bB", "dC0", "dC1", "dC2", "dC3", "dC4", "dC5", "dC6", "dC7", "dC8", "dC9", "bC"], "txt": {"rA": "4 of 10", "rB": "8 of 10", "rC": "5 of 10"}, "rows": ["clear", ["gate: v2 5 of 10 < v1 8 of 10, blocked", "coord"]], "pc": [1, 6]}]},
+"T0":{"rA": "", "rB": "", "rC": ""},"panel":{"x": 10, "y": 250, "w": 880, "h": 170, "title": "Eval log", "rh": 28, "fs": 12},"code":{"_": {"label": "Python", "pc": ["runs = 10                                   # one run proves nothing", "check(answer): every address is 42 characters and every exchange is named", "for each variant in [no skill, live skill, candidate]:", "  rate[variant] = runs where check(agent(task, variant)) passes", "delta = rate[candidate] - rate[no skill]    # ablation: with minus without", "if rate[candidate] < rate[live]: block      # a drop, even after a green run", "elif delta <= 0: block                      # the skill adds nothing", "else: merge"], "real": ["RUNS = 10  # one run proves nothing", "", "", "def check(answer):", "    addresses = re.findall(r\"0x[0-9a-fA-F]+(?:\\.\\.\\.[0-9a-fA-F]+)?\", answer)", "    full = all(len(a) == 42 for a in addresses)  # every address in full", "    named = all(e in answer for e in EXCHANGES)  # every exchange named", "    return full and named", "", "", "def pass_rate(variant, runs=RUNS):", "    passed = 0", "    for run in range(runs):", "        if check(fake_agent(TASK, variant, run)):", "            passed += 1", "    return passed", "", "", "def gate(rates, live, candidate):", "    delta = rates[candidate] - rates[\"no skill\"]  # ablation: with minus without", "    if rates[candidate] < rates[live]:", "        return f\"blocked: {candidate} {rates[candidate]} of {RUNS} < {live} {rates[live]} of {RUNS}\"", "    if delta <= 0:", "        return \"blocked: the skill adds nothing\"", "    return f\"merge: delta +{delta} in {RUNS}\""], "map": {"1": [1], "2": [4, 6, 7], "3": [11, 13], "4": [14, 15], "5": [20], "6": [21, 22], "7": [23, 24], "8": [25]}, "path": "handbook/code/09-agent-evals/main.py", "cmd": "python3 main.py", "note": ""}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

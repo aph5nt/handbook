@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Stampede</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.dot{transition:transform .6s ease,fill .35s}
+.tick{transition:transform .6s ease,opacity .35s}
+@media (prefers-reduced-motion:reduce){.box,.dot,.tick{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache stampede: fifty misses at once</h1>
+  <p class="lede">A news site caches its home page query for exactly 60 seconds. Fifty readers load the page every moment. Press <b>Next</b> and watch what happens at second 61, with no protection and then with one request doing the work for all.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="none">No protection</button>
+    <button role="tab" aria-selected="false" data-mode="coal">Coalescing and jitter</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Fifty requests, a cache and a database, with a query counter</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <text x="130" y="92" text-anchor="middle" fill="var(--muted)">50 readers</text>
+        <rect id="bx-c" class="box" x="360" y="170" width="180" height="70" rx="8" fill="var(--svc)"/>
+        <text x="450" y="198" text-anchor="middle" fill="#fff">Cache: home page</text>
+        <text id="tx-c" x="450" y="224" text-anchor="middle" fill="#fff" font-size="14"></text>
+        <rect id="bx-d" class="box" x="680" y="170" width="180" height="70" rx="8" fill="var(--svc)"/>
+        <text x="770" y="198" text-anchor="middle" fill="#fff">Database</text>
+        <text id="tx-d" x="770" y="224" text-anchor="middle" fill="#fff" font-size="14"></text>
+        <text id="count" x="770" y="272" text-anchor="middle" fill="var(--fg)"></text>
+        <rect x="680" y="282" width="180" height="12" rx="6" fill="var(--line)"/>
+        <rect id="load" class="box" x="680" y="282" width="0" height="12" rx="6" fill="var(--ok)"/>
+      </g>
+      <g id="dots"></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13" fill="var(--muted)">
+        <text x="40" y="318" font-weight="700" fill="var(--fg)" id="strip-title">When 10 keys expire</text>
+        <line x1="100" y1="350" x2="800" y2="350" stroke="var(--line)" stroke-width="2"/>
+        <text x="100" y="372" text-anchor="middle">50 s</text><text x="450" y="372" text-anchor="middle">60 s</text><text x="800" y="372" text-anchor="middle">70 s</text>
+      </g>
+      <g id="ticks"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-stampede/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">served from the cache</span>
+    <span style="--c:var(--wait)">missed, waiting</span>
+    <span style="--c:var(--fail)">query at the database</span>
+    <span style="--c:var(--coord)">the one request that recomputes</span>
+    <span style="--c:var(--undo)">served the stale copy</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>An API in front of a warehouse such as StarRocks, where a dashboard query is cached for one minute and every open tab refreshes together. Also every restart or deploy: the cache is empty and all traffic misses at once. Warm the hot keys before taking traffic.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>In Go, wrap the loader in <code>singleflight</code>: one call per key in flight, the rest share its result. Add a few percent of random jitter to every TTL. Where users can see a slightly old page, serve stale while one request refreshes in the background.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No protection</th><th>Coalescing and jitter</th></tr>
+      <tr><td>Queries per expiry</td><td>One per waiting request: 50 here</td><td>One per key</td></tr>
+      <tr><td>What readers feel</td><td>Slow pages, then errors</td><td>A short wait, or the stale copy at once</td></tr>
+      <tr><td>Many keys set together</td><td>All expire at the same second</td><td>Spread over a few seconds</td></tr>
+      <tr><td>Longer TTL helps?</td><td>No. The same herd, later</td><td>Not needed</td></tr>
+      <tr><td>Bigger cache helps?</td><td>No. It is timing, not size</td><td>Not needed</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A stampede is many misses on one key at the same moment. One caller recomputes while the rest wait or serve stale, and TTLs get jitter so keys do not expire together."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const N=50;
+const pos={
+  grid:k=>[40+(k%10)*20,120+Math.floor(k/10)*28],
+  wait:k=>[372+(k%10)*17,104+Math.floor(k/10)*11],
+  db:k=>[692+(k%10)*17,104+Math.floor(k/10)*11]
+};
+const kinds={hit:["grid","var(--ok)"],miss:["grid","var(--wait)"],wait:["wait","var(--wait)"],db:["db","var(--fail)"],one:["db","var(--coord)"],served:["grid","var(--ok)"],stale:["grid","var(--undo)"]};
+const STACK=[0,0,0,0,0,0,0,0,0,0], SPREAD=[-5.6,-3.9,-2.7,-1.4,-0.3,0.8,1.9,3.2,4.4,5.8];
+const steps={
+"none":[
+ {pc:[2],t:"Start: the key is hot",b:"The home page query result sits in the cache. All 50 readers get it from the cache. The database does nothing.",w:"This is a healthy cache: one database query per minute serves thousands of page loads.",d:{hit:50},c:["fresh, 58 s left","var(--svc)"],q:0,load:0,db:["idle","var(--svc)"]},
+ {pc:[2],t:"Second 60: the key expires",b:"The TTL runs out. The cache entry is gone. Nothing has gone wrong yet.",w:"Expiry is normal. What matters is what the next readers do.",d:{hit:50},c:["expired","var(--line)"],q:0,load:0,db:["idle","var(--svc)"]},
+ {pc:[2],t:"All 50 miss at once",b:"Fifty readers ask for the page in the same moment. The check on line 2 fails for every one. This tab has no lock, so lines 5 and 6 do not stop anyone, and every one decides to rebuild the page itself.",w:"Fifty identical questions are about to reach the database. Each one costs the full query.",d:{miss:50},c:["empty","var(--line)"],q:0,load:0,db:["idle","var(--svc)"]},
+ {pc:[7],t:"Fifty identical queries",b:"All 50 run the same home page query against the database. It was built to run this query once a minute, not fifty times a second.",w:"The database is doing fifty copies of one job. None of them can finish faster than the others.",d:{db:50},c:["empty","var(--line)"],q:50,load:.8,db:["50 queries","var(--wait)"]},
+ {pc:[7],t:"The failure that matters: it feeds itself",b:"The database slows down. Because no query finishes, the cache stays empty. New readers keep arriving and missing. The count doubles to 100, and the database falls over.",w:"A stampede makes the miss last longer, which makes the stampede bigger. A longer TTL only moves it later. A bigger cache does not change the timing.",d:{db:50},c:["still empty","var(--fail)"],q:100,load:1,db:["overloaded","var(--fail)"],banner:"database down: every page now fails"},
+ {pc:[14],t:"Why many keys make it worse",b:"The site set 10 popular keys at startup, all with a TTL of exactly 60 seconds. All 10 expire at second 60, in the same instant.",w:"Ten stampedes at once. The strip below shows every expiry on one line. Next tab: one request does the work, and jitter spreads the expiries.",d:{db:50},c:["10 keys expired","var(--fail)"],q:100,load:1,db:["overloaded","var(--fail)"],strip:STACK}
+],
+"coal":[
+ {pc:[2],t:"Start: the key is hot",b:"Same site, same 50 readers. The cache now has one rule: for a missing key, only one request may rebuild it at a time.",w:"In Go this is singleflight. In Redis it is a short lock key set with SET NX and a small TTL of its own.",d:{hit:50},c:["fresh, 58 s left","var(--svc)"],q:0,load:0,db:["idle","var(--svc)"]},
+ {pc:[2],t:"Second 60: the key expires",b:"The entry expires, exactly as before.",w:"Nothing different yet. The difference is in the next step.",d:{hit:50},c:["expired","var(--line)"],q:0,load:0,db:["idle","var(--svc)"]},
+ {pc:[5, 6, 7, 11],t:"One goes, 49 wait",b:"The check on line 5: does anybody hold lock:home? No, so the first reader takes the lock and runs the query. For the other 49 the same check says yes, so line 11 makes them wait for its result.",w:"The database sees one query, the same as a healthy minute. The lock has a short TTL, so if its holder dies, the next reader takes over.",d:{one:1,wait:49},c:["rebuilding","var(--wait)"],q:1,load:.05,db:["1 query","var(--svc)"]},
+ {pc:[8, 9, 10, 12],t:"Everyone gets the new page",b:"The query finishes. The result fills the cache. All 49 waiting readers get it from the cache.",w:"Fifty readers, one database query. The wait was one query long, not fifty.",d:{served:50},c:["fresh, 60 s left","var(--svc)"],q:1,load:.05,db:["idle","var(--svc)"]},
+ {pc:[3, 4],t:"Better still: serve the stale copy",b:"With stale-while-revalidate, the old page is kept a little past its TTL. The check on line 3 now says yes. The 49 readers get the old page at once while one request refreshes it in the background.",w:"Nobody waits at all. The page is a few seconds old. For a news home page that is fine. For a bank balance it is not.",d:{one:1,stale:49},c:["stale, refreshing","var(--undo)"],q:1,load:.05,db:["1 query","var(--svc)"]},
+ {pc:[14, 15],t:"Jitter spreads the expiries",b:"Each TTL now gets a random few seconds added or taken away: 60 seconds plus or minus 6. The 10 popular keys expire across 12 seconds instead of in one instant.",w:"The database sees a trickle of single queries instead of a wall. Jitter costs nothing and fixes the many-keys case.",d:{hit:50},c:["fresh","var(--svc)"],q:1,load:.05,db:["idle","var(--svc)"],strip:SPREAD}
+]};
+let mode="none",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const dots=[];for(let k=0;k<N;k++){const c=document.createElementNS(NS,"circle");c.setAttribute("r","7");c.setAttribute("class","dot");c.setAttribute("cx","0");c.setAttribute("cy","0");$("dots").appendChild(c);dots.push(c);}
+const ticks=[];for(let k=0;k<10;k++){const r=document.createElementNS(NS,"rect");r.setAttribute("class","tick");r.setAttribute("width","10");r.setAttribute("height","10");r.setAttribute("rx","3");r.setAttribute("x","-5");r.setAttribute("y","-5");r.setAttribute("fill","var(--fail)");$("ticks").appendChild(r);ticks.push(r);}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  let k=0,slot={grid:0,wait:0,db:0};
+  for(const [kind,n] of Object.entries(s.d)){for(let j=0;j<n;j++,k++){const [place,col]=kinds[kind];
+    const idx=place==="grid"?k:slot[place]++;const [x,y]=pos[place](idx);
+    dots[k].style.transform=`translate(${x}px,${y}px)`;dots[k].setAttribute("fill",col);}}
+  $("tx-c").textContent=s.c[0];$("bx-c").setAttribute("fill",s.c[1]);
+  $("tx-c").setAttribute("fill",s.c[1]==="var(--line)"?"var(--fg)":"#fff");
+  $("tx-d").textContent=s.db[0];$("bx-d").setAttribute("fill",s.db[1]);
+  $("count").textContent=`queries at the database: ${s.q}`;
+  $("load").setAttribute("width",180*s.load);$("load").setAttribute("fill",s.load>.7?"var(--fail)":s.load>.3?"var(--wait)":"var(--ok)");
+  ticks.forEach((t,j)=>{if(s.strip){const x=450+s.strip[j]*35,y=s.strip===STACK?350-j*6:350;t.style.transform=`translate(${x}px,${y}px)`;t.style.opacity=1;t.setAttribute("fill",s.strip===STACK?"var(--fail)":"var(--ok)");}else{t.style.opacity=0;}});
+  $("banner").innerHTML=s.banner?`<rect x="300" y="60" width="580" height="26" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="590" y="78" text-anchor="middle" fill="var(--fail)">${s.banner}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+const code={
+"none": {
+"label": "Go",
+"pc": [
+"function read(key):",
+"  if key is fresh: return it             # hit",
+"  if the lock is held and a stale copy exists:   # stale-while-revalidate",
+"    return the stale copy                # one reader refreshes, nobody waits",
+"  if nobody holds lock:key:              # SET lock:key NX EX 5",
+"    take the lock",
+"    v = runQuery()                       # one query",
+"    cache.set(key, v, ttl)",
+"    release the lock; wake the waiters",
+"    return v",
+"  wait for the holder's result           # 49 readers",
+"  return it",
+"",
+"ttl = 60 + random(-6 .. +6) seconds      # jitter: keys set together",
+"                                         # do not expire together"
+],
+"real": [
+"func (c *Cache) ReadLocked(serveStale bool) string {",
+"\tc.mu.Lock()",
+"\tif c.fresh {",
+"\t\tdefer c.mu.Unlock()",
+"\t\treturn c.val",
+"\t}",
+"\tif c.loading { // someone holds the lock",
+"\t\tif serveStale {",
+"\t\t\tdefer c.mu.Unlock()",
+"\t\t\treturn c.stale // the old page, at once",
+"\t\t}",
+"\t\tdone := c.done",
+"\t\tc.mu.Unlock()",
+"\t\tc.waited.Add(1)",
+"\t\t<-done",
+"\t\treturn c.val",
+"\t}",
+"\tc.loading, c.done = true, make(chan struct{})",
+"\tc.mu.Unlock()",
+"\tv := c.query() // one query",
+"\tc.mu.Lock()",
+"\tc.val, c.fresh, c.loading = v, true, false",
+"\tclose(c.done) // wake the waiters",
+"\tc.mu.Unlock()",
+"\treturn v",
+"}",
+"",
+"// ReadNaive has no lock: every reader that misses calls c.query()",
+"",
+"spread[60+r.Intn(13)-6]++ // 60 s plus or minus 6"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4,
+5
+],
+"3": [
+7,
+8
+],
+"4": [
+9,
+10
+],
+"5": [
+7
+],
+"6": [
+18,
+19
+],
+"7": [
+20
+],
+"8": [
+22
+],
+"9": [
+23,
+24
+],
+"10": [
+25
+],
+"11": [
+12,
+13,
+14,
+15
+],
+"12": [
+16
+],
+"14": [
+30
+],
+"15": [
+30
+]
+}
+},
+"coal": {
+"label": "Go",
+"pc": [
+"function read(key):",
+"  if key is fresh: return it             # hit",
+"  if the lock is held and a stale copy exists:   # stale-while-revalidate",
+"    return the stale copy                # one reader refreshes, nobody waits",
+"  if nobody holds lock:key:              # SET lock:key NX EX 5",
+"    take the lock",
+"    v = runQuery()                       # one query",
+"    cache.set(key, v, ttl)",
+"    release the lock; wake the waiters",
+"    return v",
+"  wait for the holder's result           # 49 readers",
+"  return it",
+"",
+"ttl = 60 + random(-6 .. +6) seconds      # jitter: keys set together",
+"                                         # do not expire together"
+],
+"real": [
+"func (c *Cache) ReadLocked(serveStale bool) string {",
+"\tc.mu.Lock()",
+"\tif c.fresh {",
+"\t\tdefer c.mu.Unlock()",
+"\t\treturn c.val",
+"\t}",
+"\tif c.loading { // someone holds the lock",
+"\t\tif serveStale {",
+"\t\t\tdefer c.mu.Unlock()",
+"\t\t\treturn c.stale // the old page, at once",
+"\t\t}",
+"\t\tdone := c.done",
+"\t\tc.mu.Unlock()",
+"\t\tc.waited.Add(1)",
+"\t\t<-done",
+"\t\treturn c.val",
+"\t}",
+"\tc.loading, c.done = true, make(chan struct{})",
+"\tc.mu.Unlock()",
+"\tv := c.query() // one query",
+"\tc.mu.Lock()",
+"\tc.val, c.fresh, c.loading = v, true, false",
+"\tclose(c.done) // wake the waiters",
+"\tc.mu.Unlock()",
+"\treturn v",
+"}",
+"",
+"// ReadNaive has no lock: every reader that misses calls c.query()",
+"",
+"spread[60+r.Intn(13)-6]++ // 60 s plus or minus 6"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4,
+5
+],
+"3": [
+7,
+8
+],
+"4": [
+9,
+10
+],
+"5": [
+7
+],
+"6": [
+18,
+19
+],
+"7": [
+20
+],
+"8": [
+22
+],
+"9": [
+23,
+24
+],
+"10": [
+25
+],
+"11": [
+12,
+13,
+14,
+15
+],
+"12": [
+16
+],
+"14": [
+30
+],
+"15": [
+30
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

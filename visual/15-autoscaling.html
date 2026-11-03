@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autoscaling</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.nd rect{transition:fill .35s,stroke .35s}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.nd rect{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Autoscaling</h1>
+  <p class="lede">A query API runs three pods. A news story doubles the traffic. Press <b>Next</b> to watch the HPA and the cluster autoscaler work as a pair, then open the second tab for the two autoscaling mistakes.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="sc">HPA and cluster autoscaler</button>
+    <button role="tab" aria-selected="false" data-mode="tr">What not to scale</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Autoscaling, step by step</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle">
+        <g id="cpu" class="nd" data-s="svc"><rect x="20" y="30" width="210" height="60" rx="8" stroke-width="3"/><text id="cpu-t" data-t x="125.0" y="57.0" font-size="15" font-weight="700">CPU vs target 60%</text><text id="cpu-s" data-t x="125.0" y="75.0" font-size="12">60%</text></g>
+        <g id="hpa" class="nd" data-s="coord"><rect x="20" y="115" width="210" height="60" rx="8" stroke-width="3"/><text id="hpa-t" data-t x="125.0" y="142.0" font-size="15" font-weight="700">HPA</text><text id="hpa-s" data-t x="125.0" y="160.0" font-size="12">min 2, max 8</text></g>
+        <g id="ca" class="nd" data-s="coord"><rect x="20" y="200" width="210" height="60" rx="8" stroke-width="3"/><text id="ca-t" data-t x="125.0" y="227.0" font-size="15" font-weight="700">Cluster autoscaler</text><text id="ca-s" data-t x="125.0" y="245.0" font-size="12">watching Pending</text></g>
+        <g id="vpa" class="nd" data-s="ghost"><rect x="20" y="285" width="210" height="60" rx="8" stroke-width="3"/><text id="vpa-t" data-t x="125.0" y="312.0" font-size="15" font-weight="700">VPA</text><text id="vpa-s" data-t x="125.0" y="330.0" font-size="12">off</text></g>
+        <g id="pend" class="nd" data-s="ghost"><rect x="260" y="300" width="620" height="50" rx="8" stroke-width="3"/><text id="pend-t" data-t x="570.0" y="322.0" font-size="14" font-weight="700">Pending pods</text><text id="pend-s" data-t x="570.0" y="340.0" font-size="12">none</text></g>
+        <g id="n0" class="nd" data-s="coord"><rect x="260" y="30" width="195" height="56" rx="8" stroke-width="3"/><text id="n0-t" data-t x="357.5" y="55.0" font-size="14" font-weight="700">node 1</text><text id="n0-s" data-t x="357.5" y="73.0" font-size="12">room for 3 pods</text></g>
+        <g id="s00" class="nd" data-s="ghost"><rect x="260" y="100" width="195" height="52" rx="8" stroke-width="3"/><text id="s00-t" data-t x="357.5" y="131.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="s01" class="nd" data-s="ghost"><rect x="260" y="162" width="195" height="52" rx="8" stroke-width="3"/><text id="s01-t" data-t x="357.5" y="193.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="s02" class="nd" data-s="ghost"><rect x="260" y="224" width="195" height="52" rx="8" stroke-width="3"/><text id="s02-t" data-t x="357.5" y="255.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="n1" class="nd" data-s="coord"><rect x="470" y="30" width="195" height="56" rx="8" stroke-width="3"/><text id="n1-t" data-t x="567.5" y="55.0" font-size="14" font-weight="700">node 2</text><text id="n1-s" data-t x="567.5" y="73.0" font-size="12">room for 3 pods</text></g>
+        <g id="s10" class="nd" data-s="ghost"><rect x="470" y="100" width="195" height="52" rx="8" stroke-width="3"/><text id="s10-t" data-t x="567.5" y="131.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="s11" class="nd" data-s="ghost"><rect x="470" y="162" width="195" height="52" rx="8" stroke-width="3"/><text id="s11-t" data-t x="567.5" y="193.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="s12" class="nd" data-s="ghost"><rect x="470" y="224" width="195" height="52" rx="8" stroke-width="3"/><text id="s12-t" data-t x="567.5" y="255.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="n2" class="nd" data-s="ghost"><rect x="680" y="30" width="195" height="56" rx="8" stroke-width="3"/><text id="n2-t" data-t x="777.5" y="55.0" font-size="14" font-weight="700">node 3</text><text id="n2-s" data-t x="777.5" y="73.0" font-size="12">does not exist</text></g>
+        <g id="s20" class="nd" data-s="ghost"><rect x="680" y="100" width="195" height="52" rx="8" stroke-width="3"/><text id="s20-t" data-t x="777.5" y="131.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="s21" class="nd" data-s="ghost"><rect x="680" y="162" width="195" height="52" rx="8" stroke-width="3"/><text id="s21-t" data-t x="777.5" y="193.0" font-size="13" font-weight="700">free slot</text></g>
+        <g id="s22" class="nd" data-s="ghost"><rect x="680" y="224" width="195" height="52" rx="8" stroke-width="3"/><text id="s22-t" data-t x="777.5" y="255.0" font-size="13" font-weight="700">free slot</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter" aria-live="polite"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/15-autoscaling/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">controller or node</span>
+    <span style="--c:var(--svc)">metric at target</span>
+    <span style="--c:var(--ok)">pod running</span>
+    <span style="--c:var(--wait)">starting, Pending or busy</span>
+    <span style="--c:var(--fail)">over target, or broken</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: stateless services</h2>
+      <p>A query API scales on CPU. A queue worker scales on queue depth (KEDA does this from events). Spot worker pools grow and shrink with the cluster autoscaler.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: writers and sizing</h2>
+      <p>A single-writer indexer is never autoscaled; it is split into block ranges. The VPA runs in recommend mode to size requests from real use.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Autoscaler</th><th>Changes</th><th>Signal</th></tr>
+      <tr><td>HPA</td><td>Number of pods</td><td>CPU, memory or a custom metric</td></tr>
+      <tr><td>VPA</td><td>Requests of each pod</td><td>Observed use over time</td></tr>
+      <tr><td>Cluster autoscaler</td><td>Number of nodes</td><td>Pending pods, idle nodes</td></tr>
+      <tr><td>KEDA</td><td>Number of pods, down to zero</td><td>Events: queue depth, lag</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The HPA changes the number of pods, the VPA changes their size, the cluster autoscaler changes the number of nodes, and I only scale out what is stateless."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps={
+"sc":[
+ {"t": "Three pods at target", "b": "The query API runs three pods. Average CPU is 60 percent, exactly the target the HPA (Horizontal Pod Autoscaler) was given. The formula gives 3 times 60 divided by 60: 3 pods. Nothing changes.", "w": "The HPA does nothing while the metric sits at the target.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "cpu": "svc"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "cpu": "60%"}, "h": [], "pc": [1, 2, 3]},
+ {"t": "Traffic doubles", "b": "A news story sends twice the queries. CPU climbs to 85 percent. The HPA computes 3 pods × 85 ÷ 60 = 4.25, rounds up, and asks for 5 pods.", "w": "The HPA changes the count, never the size of each pod.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "cpu": "fail", "hpa": "wait"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "cpu": "85%", "hpa": "3 × 85 ÷ 60 → 5 pods"}, "h": ["hpa"], "pc": [2, 3, 5]},
+ {"t": "No room for two", "b": "The Deployment now wants 5 pods. Only one slot is free on node 1 and node 2; the others hold other services. api-4 starts. api-5 has nowhere to go and stays Pending.", "w": "A pod that fits no node waits. That wait is the signal for the next autoscaler.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "s11": "wait", "cpu": "fail", "hpa": "wait", "pend": "wait"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "s11-t": "api-4 starting", "cpu": "85%", "hpa": "wants 5", "pend": "api-5: no node has room"}, "h": ["pend"], "pc": [6]},
+ {"t": "The cluster autoscaler adds a node", "b": "The cluster autoscaler sees a Pending pod that would fit on a new node. It asks the cloud (or the spot pool) for one. Node 3 joins.", "w": "The HPA scales pods, the cluster autoscaler scales nodes. They work as a pair.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "s11": "ok", "cpu": "wait", "hpa": "wait", "ca": "wait", "n2": "coord", "pend": "wait"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "s11-t": "api-4", "cpu": "64%", "hpa": "wants 5", "ca": "adding node 3", "n2": "joining", "pend": "api-5: waiting for node 3"}, "h": ["ca", "n2"], "pc": [7, 8]},
+ {"t": "Five pods serve", "b": "api-5 starts on node 3. The same load over 5 pods is 51 percent each. The formula gives 5 times 51 divided by 60, 4.25, rounded up: 5. So it holds.", "w": "Capacity followed demand, with no person awake.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "s11": "ok", "s20": "ok", "cpu": "svc", "hpa": "coord", "n2": "coord"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "s11-t": "api-4", "s20-t": "api-5", "cpu": "51%", "hpa": "5 pods", "n2": "room for 3 pods"}, "h": [], "pc": [2, 3]},
+ {"t": "Traffic falls, both scale down", "b": "The news cycle ends and CPU falls to 34.8 percent. The formula says 5 times 34.8 divided by 60: 3 pods. The HPA takes the highest answer of the last 5 minutes, so it moves only after 5 minutes of 3. Node 3 has been idle for 10 minutes, so the cluster autoscaler removes it.", "w": "Scale down slowly, so a short dip does not throw away pods you need a minute later.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "cpu": "svc", "hpa": "coord", "ca": "coord"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "cpu": "58%", "hpa": "back to 3", "ca": "removed idle node 3"}, "h": [], "pc": [3, 4, 5, 9]}
+],
+"tr":[
+ {"t": "A single-writer indexer", "b": "The indexer is one pod with one checkpoint. During a catch-up its CPU runs hot, which is normal: it is reading as fast as it can.", "w": "Hot CPU here means busy, not overloaded.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "cpu": "wait", "hpa": "ghost"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "indexer, block 9,506,000", "cpu": "95%", "hpa": "none"}, "h": [], "pc": [2]},
+ {"t": "Someone adds an HPA", "b": "An engineer sees 95 percent CPU and adds an HPA to the indexer. The formula gives 1 times 95 divided by 60, 1.58, rounded up: 2 pods.", "w": "The HPA cannot know the service has only one checkpoint.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s10": "wait", "cpu": "wait", "hpa": "wait"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "indexer, block 9,506,000", "s10-t": "indexer-2 starting", "cpu": "95%", "hpa": "wants 2"}, "h": ["hpa"], "pc": [3, 5]},
+ {"t": "The failure that matters", "b": "Both pods read the same checkpoint, block 9,506,000, and both write the same blocks. Rows are written twice and the checkpoint jumps back and forth.", "w": "Scaling out a single writer doubles the writes, not the speed. Fix: never autoscale a writer with one checkpoint.", "c": {"s02": "idle", "s12": "idle", "s00": "fail", "s10": "fail", "cpu": "wait", "hpa": "fail"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "indexer, writes 9,506,000+", "s10-t": "indexer-2, writes 9,506,000+", "cpu": "95%", "hpa": "2 pods, one checkpoint"}, "h": ["s00", "s10"], "pc": [10]},
+ {"t": "Scale a writer by splitting the work", "b": "The HPA is removed. To go faster, the work is split into block ranges: one Job per range, each with its own checkpoint. The follow pod stays one.", "w": "A writer scales by partitioning the data, never by cloning the process.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s10": "ok", "s20": "ok", "cpu": "wait", "hpa": "ghost", "n2": "coord"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "indexer, head follow", "s10-t": "Job: blocks 1 to 5M", "s20-t": "Job: blocks 5M to 10M", "cpu": "95%", "hpa": "removed", "n2": "added for the Jobs"}, "h": [], "pc": [11]},
+ {"t": "Second trap: HPA and VPA on one metric", "b": "On the query API, the VPA (Vertical Pod Autoscaler) is set to change CPU requests automatically, while the HPA scales on CPU percent of the request. The VPA raises the request, the percent drops, the HPA removes pods, the percent rises, the VPA raises again.", "w": "Two controllers on one metric fight. Fix: VPA in recommend mode only, or let the HPA scale on a different metric.", "c": {"s02": "idle", "s12": "idle", "s00": "ok", "s01": "ok", "s10": "ok", "cpu": "fail", "hpa": "fail", "vpa": "fail"}, "a": [], "x": {"s02-t": "graph sync (other)", "s12-t": "log store (other)", "s00-t": "api-1", "s01-t": "api-2", "s10-t": "api-3", "cpu": "swinging", "hpa": "scaling in and out", "vpa": "raising requests"}, "h": ["hpa", "vpa"], "pc": [12]}
+]
+};
+const code={
+ "sc":{"label":"Go",
+  "pc":["every 15 s, the HPA:", "  metric = average CPU of the pods, as a percent of their request", "  desired = ceil(current * metric / target)     # 3 * 85 / 60 = 4.25 -> 5", "  if desired < current: take the highest desired of the last 5 minutes", "  set the Deployment's replicas to desired", "the scheduler: a pod that fits no node stays Pending", "every 10 s, the cluster autoscaler:", "  if a pod is Pending and a new node could hold it: add a node", "  if a node has been idle for 10 minutes: remove it", "an HPA clones the process: same image, same checkpoint", "a writer scales by range: one Job per block range, its own checkpoint", "a VPA changes the request, so the percent moves, so the HPA reacts"],
+  "real":["const targetCPU = 60.0 // percent of the request", "", "// desired is the HPA formula.", "func desired(current int, metric float64) int {", "\treturn int(math.Ceil(float64(current) * metric / targetCPU))", "}", "", "// stabilised is the scale-down rule: use the highest desired count", "// seen in the last 5 minutes, so a short dip keeps its pods.", "func stabilised(recent []int) int {", "\ttop := 0", "\tfor _, d := range recent {", "\t\ttop = max(top, d)", "\t}", "\treturn top", "}", "", "// place returns how many of the wanted pods stay Pending.", "func (c *Cluster) place(pods int) (pending int) {", "\tif pods > c.Free {", "\t\tpending = pods - c.Free", "\t}", "\tc.Free -= pods - pending", "\treturn pending", "}", "", "// the cluster autoscaler: a Pending pod makes it add a node.", "func (c *Cluster) addNode() {", "\tc.Nodes++", "\tc.Free += c.SlotsPerNewNode", "}", "", "// removeNode: a node idle for 10 minutes is removed.", "func (c *Cluster) removeNode() {", "\tc.Nodes--", "\tc.Free -= c.SlotsPerNewNode", "}", "", "// percent is the HPA metric: use as a share of the request. A VPA moves the request.", "func percent(usedCores, requestCores float64) float64 { return 100 * usedCores / requestCores }", "", "// clones is what an HPA does to a writer: every pod starts at the one checkpoint.", "func clones(pods, checkpoint int) []int {", "\tstarts := make([]int, pods)", "\tfor i := range starts {", "\t\tstarts[i] = checkpoint // same image, same checkpoint: the same blocks twice", "\t}", "\treturn starts", "}", "", "// ranges is how a writer scales: one Job per block range, each its own checkpoint.", "func ranges(from, to, jobs int) [][2]int {", "\tsize := (to - from + 1) / jobs", "\tvar out [][2]int", "\tfor j := 0; j < jobs; j++ {", "\t\tout = append(out, [2]int{from + j*size, from + (j+1)*size - 1})", "\t}", "\treturn out", "}"],
+  "map":{"1": [4], "2": [40], "3": [5], "4": [10, 11, 12, 13, 14, 15], "5": [5], "6": [19, 20, 21, 22, 23, 24], "7": [28], "8": [28, 29, 30], "9": [34, 35, 36], "10": [43, 44, 45, 46], "11": [52, 53, 54, 55, 56], "12": [40]}},
+ "tr":{"label":"Go",
+  "pc":["every 15 s, the HPA:", "  metric = average CPU of the pods, as a percent of their request", "  desired = ceil(current * metric / target)     # 3 * 85 / 60 = 4.25 -> 5", "  if desired < current: take the highest desired of the last 5 minutes", "  set the Deployment's replicas to desired", "the scheduler: a pod that fits no node stays Pending", "every 10 s, the cluster autoscaler:", "  if a pod is Pending and a new node could hold it: add a node", "  if a node has been idle for 10 minutes: remove it", "an HPA clones the process: same image, same checkpoint", "a writer scales by range: one Job per block range, its own checkpoint", "a VPA changes the request, so the percent moves, so the HPA reacts"],
+  "real":["const targetCPU = 60.0 // percent of the request", "", "// desired is the HPA formula.", "func desired(current int, metric float64) int {", "\treturn int(math.Ceil(float64(current) * metric / targetCPU))", "}", "", "// stabilised is the scale-down rule: use the highest desired count", "// seen in the last 5 minutes, so a short dip keeps its pods.", "func stabilised(recent []int) int {", "\ttop := 0", "\tfor _, d := range recent {", "\t\ttop = max(top, d)", "\t}", "\treturn top", "}", "", "// place returns how many of the wanted pods stay Pending.", "func (c *Cluster) place(pods int) (pending int) {", "\tif pods > c.Free {", "\t\tpending = pods - c.Free", "\t}", "\tc.Free -= pods - pending", "\treturn pending", "}", "", "// the cluster autoscaler: a Pending pod makes it add a node.", "func (c *Cluster) addNode() {", "\tc.Nodes++", "\tc.Free += c.SlotsPerNewNode", "}", "", "// removeNode: a node idle for 10 minutes is removed.", "func (c *Cluster) removeNode() {", "\tc.Nodes--", "\tc.Free -= c.SlotsPerNewNode", "}", "", "// percent is the HPA metric: use as a share of the request. A VPA moves the request.", "func percent(usedCores, requestCores float64) float64 { return 100 * usedCores / requestCores }", "", "// clones is what an HPA does to a writer: every pod starts at the one checkpoint.", "func clones(pods, checkpoint int) []int {", "\tstarts := make([]int, pods)", "\tfor i := range starts {", "\t\tstarts[i] = checkpoint // same image, same checkpoint: the same blocks twice", "\t}", "\treturn starts", "}", "", "// ranges is how a writer scales: one Job per block range, each its own checkpoint.", "func ranges(from, to, jobs int) [][2]int {", "\tsize := (to - from + 1) / jobs", "\tvar out [][2]int", "\tfor j := 0; j < jobs; j++ {", "\t\tout = append(out, [2]int{from + j*size, from + (j+1)*size - 1})", "\t}", "\treturn out", "}"],
+  "map":{"1": [4], "2": [40], "3": [5], "4": [10, 11, 12, 13, 14, 15], "5": [5], "6": [19, 20, 21, 22, 23, 24], "7": [28], "8": [28, 29, 30], "9": [34, 35, 36], "10": [43, 44, 45, 46], "11": [52, 53, 54, 55, 56], "12": [40]}}
+};
+const COL={idle:["var(--line)","var(--fg)"],coord:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],wait:["var(--wait)","#1f2320"],undo:["var(--undo)","#fff"],ghost:["none","var(--muted)"],hide:["none","transparent"]};
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)");
+const nodes=[...document.querySelectorAll(".nd")],msgs=[...document.querySelectorAll(".msg")],labs=[...document.querySelectorAll(".lb")];
+document.querySelectorAll("[data-t]").forEach(t=>t.dataset.d=t.textContent);
+const saved={};
+Object.values(steps).flat().forEach(s=>Object.entries(s.at||{}).forEach(([id,o])=>Object.keys(o).forEach(k=>{const key=id+"|"+k;if(!(key in saved))saved[key]=$(id).getAttribute(k);})));
+const vis=el=>{const t=el.dataset.tab;return !t||t.split(" ").includes(mode);};
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-t]").forEach(t=>t.textContent=t.dataset.d);
+  for(const[k,v]of Object.entries(s.x)){const el=$(k+"-s")||$(k);if(el&&el.tagName==="text")el.textContent=v;}
+  nodes.forEach(g=>{g.style.display=vis(g)?"":"none";const st=s.c[g.id]||g.dataset.s;const[f,tc]=COL[st];const r=g.querySelector("rect");
+    r.setAttribute("fill",f);r.setAttribute("stroke",s.h.includes(g.id)?"var(--fg)":(st==="ghost"?"var(--line)":"none"));
+    r.setAttribute("stroke-dasharray",st==="ghost"?"5 5":"none");g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",tc));});
+  labs.forEach(l=>l.style.display=vis(l)?"":"none");
+  msgs.forEach((m,k)=>{m.style.display=vis(m)?"":"none";const on=s.a.includes(m.id);
+    if(!on)return m.classList.remove("on");if(m.classList.contains("on"))return;
+    RM.matches?m.classList.add("on"):setTimeout(()=>{if(steps[mode][i].a.includes(m.id))m.classList.add("on")},40+60*s.a.indexOf(m.id));});
+  for(const[key,v]of Object.entries(saved)){const[id,k]=key.split("|");v===null?$(id).removeAttribute(k):$(id).setAttribute(k,v);}
+  for(const[id,o]of Object.entries(s.at||{}))for(const[k,v]of Object.entries(o))$(id).setAttribute(k,v);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

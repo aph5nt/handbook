@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed tracing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Distributed tracing: one request, four services, one picture</h1>
+  <p class="lede">An agent asks for a price-weighted balance. The request passes through the MCP proxy, the graph API, the price service and StarRocks. A trace id travels with it, and each service adds a span. Watch the waterfall show where the second went, then watch one service drop the header. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="trace">Trace and waterfall</button>
+    <button role="tab" aria-selected="false" data-mode="broken">A dropped header, and sampling</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Four services in a call chain above a waterfall of spans</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-px" class="box" x="20" y="24" width="170" height="56" rx="8"/><text id="b-px-t" x="105" y="49">MCP proxy</text><text id="b-px-l" x="105" y="69" class="sm"></text>
+        <rect id="b-ga" class="box" x="250" y="24" width="170" height="56" rx="8"/><text id="b-ga-t" x="335" y="49">Graph API</text><text id="b-ga-l" x="335" y="69" class="sm"></text>
+        <rect id="b-ps" class="box" x="480" y="24" width="170" height="56" rx="8"/><text id="b-ps-t" x="565" y="49">Price service</text><text id="b-ps-l" x="565" y="69" class="sm"></text>
+        <rect id="b-sr" class="box" x="710" y="24" width="170" height="56" rx="8"/><text id="b-sr-t" x="795" y="49">StarRocks</text><text id="b-sr-l" x="795" y="69" class="sm"></text>
+        <text x="40" y="138" text-anchor="start" class="sm" fill="var(--muted)">Waterfall: one bar per span, time runs left to right</text>
+        <line x1="170" y1="320" x2="860" y2="320" stroke="var(--muted)" stroke-width="1.5"/>
+        <g class="sm" fill="var(--muted)"><text x="170" y="340">0 ms</text><text x="515" y="340">500 ms</text><text x="860" y="340">1000 ms</text></g>
+        <text id="cap" x="450" y="372" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-distributed-tracing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">a span, healthy</span>
+    <span style="--c:var(--fail)">the slow span, or a broken trace</span>
+    <span style="--c:var(--wait)">an orphan trace</span>
+    <span style="--c:var(--line)">service not reached yet</span>
+    <span style="--c:var(--ok)">service done</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>OpenTelemetry SDKs (software development kits) in each service, sending spans to a collector, viewed in Jaeger, Tempo or Grafana. The W3C <code>traceparent</code> HTTP header carries the trace id and the parent span id between services. A Go indexer passes the trace context in its <code>context.Context</code> to every StarRocks call.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Instrument every client and server with the same library, so the header is passed on without hand-written code. Put the trace id in every log line. Sample at the head when traffic is huge and cost matters. Sample at the tail when you must keep every slow or failed request.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Head sampling</th><th>Tail sampling</th></tr>
+      <tr><td>Decided</td><td>At the first service, before anything is known</td><td>At the collector, after the whole trace is in</td></tr>
+      <tr><td>Keeps</td><td>A fixed share, for example 1 in 100</td><td>Every slow or failed trace, plus a share of the rest</td></tr>
+      <tr><td>Cost</td><td>Cheap: dropped traces are never recorded</td><td>Every span is buffered until the trace ends</td></tr>
+      <tr><td>Misses</td><td>The rare slow request, 99 times out of 100</td><td>Little, if the buffer is big enough</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A trace id and a parent span id travel in a header through every hop, each service records a span, and the waterfall shows where the time went, so every client must pass the header on or the trace breaks in two."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const base={f:{"b-px":N,"b-ga":N,"b-ps":N,"b-sr":N},x:{"b-px-l":"","b-ga-l":"","b-ps-l":"","b-sr-l":"","cap":""}};
+const D={trace:base,broken:base};
+const H1=[190,52,248,52],H2=[420,52,478,52],H3=[650,52,708,52];
+const SA=[0,"A  proxy: answer query",0,1000,C],SB=[1,"B  graph API: build answer",40,960,C],SC=[2,"C  price service: weight by price",120,920,C],SD=[3,"D  StarRocks: price rows",160,900,R];
+const steps={
+trace:[
+ {t:"The request arrives",b:"An agent asks the MCP (Model Context Protocol) proxy for a price-weighted balance. The proxy looks for a traceparent header and finds none, so it starts a new trace, 7f3a, and opens its own span, A, with no parent.",w:"A trace is the whole journey of one request. A span is one piece of work inside it, with a start and an end.",f:{"b-px":C},x:{"b-px-l":"trace 7f3a, span A"},sp:[SA]},
+ {t:"The header goes with the call",b:"The proxy calls the graph API and adds the header: 00-7f3a-A-01. The graph API finds the header, keeps trace 7f3a, takes A as the parent, and opens span B.",w:"The W3C traceparent header is the thread that ties the services together. Without it, each service would see an unrelated request.",f:{"b-px":C,"b-ga":C},x:{"b-px-l":"span A","b-ga-l":"span B, parent A"},m:[[...H1,"trace 7f3a",C,0,219,100]],sp:[SA,SB]},
+ {t:"Two more hops",b:"The graph API calls the price service with parent B, and the price service calls StarRocks with parent C. Each hop passes the same trace id and its own span id.",w:"The trace id is the same in every service. The span id is new in every service. The parent id says who called whom.",f:{"b-px":C,"b-ga":C,"b-ps":C,"b-sr":C},x:{"b-px-l":"span A","b-ga-l":"span B","b-ps-l":"span C, parent B","b-sr-l":"span D, parent C"},m:[[...H1,"7f3a",C,0,219,100],[...H2,"7f3a",C,0,449,100],[...H3,"7f3a",C,0,679,100]],sp:[SA,SB,SC,SD]},
+ {t:"Spans go to a collector",b:"Each service sends its finished spans to an OpenTelemetry collector. The collector groups them by trace id and joins them by parent id into one tree.",w:"No service knows the whole story. The collector builds it afterwards, from the pieces.",f:{"b-px":G,"b-ga":G,"b-ps":G,"b-sr":G},x:{"b-px-l":"sent","b-ga-l":"sent","b-ps-l":"sent","b-sr-l":"sent"},sp:[SA,SB,SC,SD]},
+ {t:"Read the waterfall",b:"The waterfall draws each span as a bar under its parent. Self time is a span's time minus its children's: A 80, B 120, C 60, D 740 milliseconds. D, the StarRocks read, has the most.",w:"Metrics said the request was slow. The trace says where: the price rows in StarRocks. That is the next thing to look at, with a query plan.",f:{"b-px":G,"b-ga":G,"b-ps":G,"b-sr":R},x:{"b-sr-l":"740 ms: the slow part","cap":"the slow span is the longest bar with nothing slow inside it"},sp:[SA,SB,SC,SD],hl:3},
+ {t:"Link the trace to the logs",b:"Every log line written while the request ran carries trace 7f3a. One click from span D shows the StarRocks log: a full scan of the price table.",w:"The trace says where, the log says why. The shared trace id is what joins them.",f:{"b-px":G,"b-ga":G,"b-ps":G,"b-sr":R},x:{"b-sr-l":"log: full table scan","cap":"log line: trace_id=7f3a span_id=D \"scanned 40 partitions\""},sp:[SA,SB,SC,SD],hl:3}
+],
+broken:[
+ {t:"A new HTTP client in the price service",b:"The price service switches to a new HTTP client. Nobody adds the tracing wrapper to it. It calls StarRocks without the traceparent header.",w:"Propagation is only as strong as the weakest hop. One client that forgets the header breaks every trace that passes through it.",f:{"b-px":C,"b-ga":C,"b-ps":C,"b-sr":Y},x:{"b-px-l":"span A","b-ga-l":"span B","b-ps-l":"span C","b-sr-l":"no header arrives"},m:[[...H1,"7f3a",C,0,219,100],[...H2,"7f3a",C,0,449,100],[...H3,"no header",R,1,679,100]],sp:[SA,SB,SC]},
+ {t:"StarRocks starts a new trace",b:"StarRocks looks for the header and finds none. The check fails, so it does what the proxy did at the door: a fresh trace, 91c2, with a root span and no parent.",w:"The work still happens. It is just recorded under a different story.",f:{"b-px":C,"b-ga":C,"b-ps":C,"b-sr":Y},x:{"b-sr-l":"new trace 91c2"},sp:[SA,SB,SC,[3,"D  trace 91c2: orphan",160,900,Y]]},
+ {t:"The failure that matters: the trace breaks in two",b:"The collector groups by trace id, so it builds two trees. In 7f3a, span C has no child, so its self time is all 800 milliseconds. The slow StarRocks read sits in 91c2, which nobody opens.",w:"The on-call blames the price service code, because the trace says the time was spent there. The real cause is one hop down, in a trace that is not linked.",f:{"b-px":G,"b-ga":G,"b-ps":R,"b-sr":Y},x:{"b-ps-l":"800 ms, nothing inside","b-sr-l":"in orphan trace 91c2","cap":"trace 7f3a ends at the price service. trace 91c2 starts at StarRocks"},sp:[SA,SB,[2,"C  price service: 800 ms, empty",120,920,R]]},
+ {t:"The fix: propagate everywhere",b:"Wrap every HTTP and database client with the same OpenTelemetry instrumentation. Add a test that calls the service and checks the header reaches the next hop.",w:"Make propagation automatic and tested, not a line each developer must remember.",f:{"b-px":G,"b-ga":G,"b-ps":G,"b-sr":G},x:{"b-sr-l":"span D, parent C"},m:[[...H3,"7f3a",C,0,679,100]],sp:[SA,SB,SC,SD]},
+ {t:"Head sampling: decide at the door",b:"Tracing every request costs storage. With head sampling, the proxy decides at the start to keep 1 trace in 100 and writes the answer in the header's last field: 00-7f3a-A-00 means do not record.",w:"Cheap and simple. But the decision is made before anyone knows the request will be slow, so 99 of 100 slow requests are thrown away.",f:{"b-px":C},x:{"b-px-l":"keep 1 in 100","cap":"sampled=0 travels in the header: downstream services record nothing"},sp:[]},
+ {t:"Tail sampling: decide at the end",b:"With tail sampling, every service records its spans and the collector waits until the trace is complete. Then it runs one rule: keep if any span took over 500 milliseconds or the request failed. 1,000 is over 500, so 7f3a stays; a 90 millisecond trace goes.",w:"Tail sampling keeps exactly the traces you need, at the cost of buffering every span for a few seconds.",f:{"b-px":G,"b-ga":G,"b-ps":G,"b-sr":R},x:{"cap":"collector rule: keep if duration > 500 ms or any span has an error"},sp:[SA,SB,SC,SD],hl:3}
+]};
+function draw(s,g){let h="";const X=t=>170+t*0.69,Y=r=>160+r*38;
+  (s.sp||[]).forEach(([r,l,a,b,c],k)=>{const w=X(b)-X(a);
+    h+=`<rect class="dot" x="${X(a)}" y="${Y(r)}" width="${w}" height="26" rx="5" fill="${c}" ${s.hl===k?'stroke="var(--fg)" stroke-width="2.5"':''}/><text x="${X(a)+8}" y="${Y(r)+18}" font-size="13" font-weight="700" fill="#fff">${l}</text>`;});
+  g.innerHTML=h;}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["inject(header, trace, span, flag):", "  header traceparent = 00-trace-span-flag", "extract(header):", "  no header: not ok", "  else: trace and parent from the header", "open(header, id, name):        # every service", "  ok: same trace, parent from the header", "  not ok: new trace, no parent", "collect(spans):                # the collector", "  group by trace id", "selfTime(span): its time minus its children's time", "the waterfall: the span with the most self time is the slow one", "keepTail(trace, failed):", "  keep if any span > 500 ms or failed", "newClient(): an empty header   # no tracing wrapper", "logLine(span, text): trace_id and span_id in every line"], "real": ["func Inject(h http.Header, trace, span, flag string) {", "\th.Set(\"traceparent\", \"00-\"+trace+\"-\"+span+\"-\"+flag)", "}", "", "func Extract(h http.Header) (trace, parent string, ok bool) {", "\tp := strings.Split(h.Get(\"traceparent\"), \"-\")", "\tif len(p) != 4 {", "\t\treturn \"\", \"\", false", "\t}", "\treturn p[1], p[2], true", "}", "", "func Open(h http.Header, id, name, newTrace string, start, end int) Span {", "\ttrace, parent, ok := Extract(h)", "\tif !ok {", "\t\ttrace, parent = newTrace, \"\"", "\t}", "\treturn Span{trace, id, parent, name, start, end}", "}", "", "func NewClient() http.Header {", "\treturn http.Header{}", "}", "", "func LogLine(s Span, text string) string {", "\treturn fmt.Sprintf(\"trace_id=%s span_id=%s %q\", s.Trace, s.ID, text)", "}", "", "func Collect(spans []Span) map[string][]Span {", "\ttraces := map[string][]Span{}", "\tfor _, s := range spans {", "\t\ttraces[s.Trace] = append(traces[s.Trace], s)", "\t}", "\treturn traces", "}", "", "func SelfTime(s Span, all []Span) int {", "\tself := s.End - s.Start", "\tfor _, c := range all {", "\t\tif c.Parent == s.ID {", "\t\t\tself -= c.End - c.Start", "\t\t}", "\t}", "\treturn self", "}", "", "func KeepTail(all []Span, failed bool) bool {", "\tfor _, s := range all {", "\t\tif s.End-s.Start > 500 {", "\t\t\treturn true", "\t\t}", "\t}", "\treturn failed", "}"], "map": {"1": [1], "2": [2], "3": [5], "4": [6, 7, 8], "5": [10], "6": [13], "7": [14], "8": [15, 16], "9": [29], "10": [30, 31, 32, 33, 34], "11": [37, 38, 39, 40, 41, 42, 43, 44], "12": [44], "13": [47], "14": [49, 50, 53], "15": [22], "16": [26]}}},PCS={"trace": [[3, 4, 6, 8], [1, 2, 3, 5, 6, 7], [1, 2, 6, 7], [9, 10], [11, 12], [16]], "broken": [[15], [3, 4, 6, 8], [11, 12], [1, 2, 3, 5], [1, 2], [13, 14]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

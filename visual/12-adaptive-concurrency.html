@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adaptive concurrency limit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Adaptive concurrency limits: learn the limit from latency</h1>
+  <p class="lede">An MCP (Model Context Protocol) proxy must decide how many queries to send to a graph lane at once. The right number changes with the graph's load. Watch the limit climb while latency stays flat and halve when latency rises, then watch a fixed limit fail on a busy day. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="aimd">Learn the limit (AIMD)</button>
+    <button role="tab" aria-selected="false" data-mode="fixed">A fixed limit: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A proxy with a concurrency limit, a graph lane, and the limit over time</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-px" class="box" x="20" y="30" width="200" height="66" rx="8"/><text id="b-px-t" x="120" y="60">Proxy limit</text><text id="b-px-l" x="120" y="80" class="sm"></text>
+        <rect id="b-gr" class="box" x="700" y="30" width="180" height="66" rx="8"/><text id="b-gr-t" x="790" y="60">Graph lane</text><text id="b-gr-l" x="790" y="80" class="sm"></text>
+        <line x1="220" y1="63" x2="698" y2="63" stroke="var(--coord)" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text id="inf" x="460" y="54" class="sm" fill="var(--coord)"></text>
+        <rect id="b-lat" class="box" x="700" y="170" width="180" height="62" rx="8"/><text id="b-lat-t" x="790" y="198">Latency</text><text id="b-lat-l" x="790" y="218" class="sm"></text>
+        <rect id="b-rej" class="box" x="700" y="262" width="180" height="62" rx="8"/><text id="b-rej-t" x="790" y="290">Refused fast</text><text id="b-rej-l" x="790" y="310" class="sm"></text>
+        <line x1="40" y1="330" x2="640" y2="330" stroke="var(--muted)" stroke-width="1.5"/><line x1="40" y1="140" x2="40" y2="330" stroke="var(--muted)" stroke-width="1.5"/>
+        <text x="44" y="134" text-anchor="start" class="sm" fill="var(--muted)">limit over time</text>
+        <text x="640" y="352" text-anchor="end" class="sm" fill="var(--muted)">time</text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-adaptive-concurrency/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">the limit</span>
+    <span style="--c:var(--ok)">latency at its normal level</span>
+    <span style="--c:var(--wait)">latency rising</span>
+    <span style="--c:var(--fail)">overload or timeouts</span>
+    <span style="--c:var(--muted)">the graph's real capacity today</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Netflix's concurrency-limits library replaced fixed thresholds after Hystrix was retired in 2018. Envoy's adaptive concurrency filter does the same in a proxy. TCP (Transmission Control Protocol) congestion control is the original: AIMD on the congestion window.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Put the limit at the client side of each dependency. Measure latency per request and keep a running minimum as the baseline. Grow the limit slowly while latency holds, cut it fast when latency rises. Refuse requests above the limit at once, with a clear error. Keep a floor and a ceiling.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Adaptive limit</th><th>Fixed limit</th></tr>
+      <tr><td>Set by</td><td>Measured latency, every few seconds</td><td>A person, once</td></tr>
+      <tr><td>Busy graph</td><td>Limit falls, the graph stays below its knee</td><td>Queues inside the graph, everyone times out</td></tr>
+      <tr><td>Quiet graph</td><td>Limit rises, capacity is used</td><td>Refusals while the graph sits idle</td></tr>
+      <tr><td>Tuning</td><td>Floor, ceiling, how fast to react</td><td>Re-tune after every change</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"An adaptive concurrency limit grows while latency stays at its baseline and cuts back when latency rises, so the caller finds the dependency's real capacity on each day instead of trusting a number someone set once."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const D={aimd:{f:{"b-px":C,"b-gr":G,"b-lat":G,"b-rej":N},x:{"b-px-l":"","b-gr-l":"","b-lat-l":"","b-rej-l":"0","inf":""}},fixed:{f:{"b-px":C,"b-gr":G,"b-lat":G,"b-rej":N},x:{"b-px-l":"fixed at 100","b-gr-l":"","b-lat-l":"","b-rej-l":"0","inf":""}}};
+const H1=[20],H2=[20,25,30,35,40],H3=H2.concat([45,50,55,60]),H4=H3.concat([30]),H6=H4.concat([35,40,45,50,55,28,33,38,43,48,53,27]);
+const steps={
+aimd:[
+ {t:"Start low",b:"The proxy starts with a limit of 20 queries in flight. Latency is 20 ms. The proxy remembers that as the baseline.",w:"The baseline is the best latency seen recently: the time with no queueing.",x:{"b-px-l":"limit 20","b-lat-l":"20 ms (baseline)","inf":"20 in flight"},h:H1,cp:55},
+ {t:"Latency flat: add a little",b:"Every few seconds the proxy checks: is latency under 1.5 × the baseline, 30 ms? It is 20 ms, so it raises the limit by 5: 25, 30, 35, 40.",w:"Additive increase. Probe for more capacity slowly, so a mistake is small.",x:{"b-px-l":"limit 40","b-lat-l":"21 ms","inf":"40 in flight"},h:H2,cp:55},
+ {t:"Latency starts to rise",b:"The graph can take 55 at once. At 60 in flight, 5 queries queue inside it and latency climbs to 35 ms.",w:"Rising latency is the earliest sign the graph is past its knee. Errors come later.",f:{"b-lat":Y},x:{"b-px-l":"limit 60","b-lat-l":"35 ms, rising","inf":"60 in flight"},h:H3,cp:55},
+ {t:"Cut it in half",b:"35 ms is past 1.5 × 20 = 30 ms. The check fails, so the proxy halves the limit: 60 becomes 30. At 30 latency is back to 20 ms.",w:"Multiplicative decrease. Back off fast, so the queue inside the graph drains. Together: AIMD, additive increase, multiplicative decrease.",x:{"b-px-l":"limit 30","b-lat-l":"22 ms","inf":"30 in flight"},h:H4,cp:55},
+ {t:"Above the limit: refuse at once",b:"Before it sends, the proxy checks: is in flight below the limit? Query number 31 finds 30 in flight and is refused right away with \"busy, retry later\". It never reaches the graph.",w:"A fast refusal costs nothing. A query queued inside a busy graph costs everyone.",f:{"b-rej":Y},x:{"b-px-l":"limit 30","b-lat-l":"22 ms","b-rej-l":"a few per second","inf":"30 in flight"},h:H4,cp:55},
+ {t:"A sawtooth around the real capacity",b:"The limit climbs 30, 35 ... 55, 60, halves to 30, and climbs again. It saws around the graph's real capacity of 55.",w:"A gradient variant scales the limit by baseline latency divided by current latency, so it moves smoothly instead of halving.",x:{"b-px-l":"limit near 50","b-lat-l":"20 to 30 ms","inf":"about 50 in flight"},h:H6,cp:55},
+ {t:"The graph gets busy: the limit follows",b:"A heavy sync starts on the graph. Its capacity drops to 25. At 55 latency jumps to 110 ms, so the limit halves to 27. It halves again at 32 (41 ms) to 16, then saws between 15 and 31 around 25.",w:"Nobody re-tuned anything. The proxy learned the new capacity from latency.",f:{"b-gr":Y},x:{"b-px-l":"limit near 25","b-gr-l":"sync running","b-lat-l":"22 ms","inf":"about 25 in flight"},h:H6.concat([20,24,26,22,25]),cp:25}
+],
+fixed:[
+ {t:"A fixed limit, chosen on a good day",b:"An engineer measured the graph on a quiet day and set a fixed limit of 100.",w:"The number was true once. The graph's capacity changes with load, data size and other jobs.",x:{"inf":"60 in flight"},h:[100,100,100,100,100],cp:110},
+ {t:"Today the graph can take 50",b:"A sync is running. The graph's real capacity drops to 50. The proxy still sends up to 100 at once, and each query takes 170 ms instead of 20.",w:"50 queries now queue inside the graph, where the proxy cannot see or cancel them.",f:{"b-gr":Y,"b-lat":Y},x:{"b-gr-l":"sync running","b-lat-l":"170 ms, rising","inf":"100 in flight"},h:[100,100,100,100,100,100,100,100],cp:50},
+ {t:"The failure that matters: everyone times out",b:"A timed-out query keeps running inside the graph, and the agent's retry joins behind it. So each round of retries adds 50 to the queue, at 3 ms a place. After 34 rounds latency is 5,120 ms, past the 5 s timeout. Nothing finishes.",w:"Past the knee, more concurrency means less throughput. The fixed limit keeps the graph overloaded.",f:{"b-gr":R,"b-lat":R},x:{"b-gr-l":"overloaded","b-lat-l":"over 5 s: timeouts","inf":"100 in flight, all timing out"},h:[100,100,100,100,100,100,100,100,100,100,100],cp:50},
+ {t:"Set it low instead? Wasted capacity",b:"After the outage someone lowers the fixed limit to 20. On a quiet day the graph could take 120, but the proxy refuses work at 20.",w:"A fixed number is wrong on most days: too high on busy ones, too low on quiet ones.",f:{"b-rej":R},x:{"b-px-l":"fixed at 20","b-lat-l":"20 ms","b-rej-l":"many, graph idle","inf":"20 in flight"},h:[20,20,20,20,20,20,20,20,20,20,20],cp:120},
+ {t:"The fix: learn it",b:"Replace the number with an adaptive limit: grow while latency is flat, halve when it rises, refuse above it.",w:"That is the first tab. The limit follows the real capacity every day.",x:{"b-px-l":"adaptive","b-lat-l":"20 to 30 ms","inf":"tracks capacity"},h:[20,30,40,50,60,30,40,50,60,30,40],cp:55}
+]};
+function draw(s,g){const Y=v=>330-v*1.45,X=k=>50+k*22;let h="";
+ if(s.cp!=null)h+=`<line x1="40" y1="${Y(s.cp)}" x2="640" y2="${Y(s.cp)}" stroke="var(--muted)" stroke-width="2" stroke-dasharray="6 5"/><text x="636" y="${Y(s.cp)+18}" text-anchor="end" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-size="13" font-weight="700" fill="var(--muted)">real capacity today: ${s.cp}</text>`;
+ const pts=(s.h||[]).map((v,k)=>`${X(k)},${Y(v)}`).join(" ");h+=`<polyline points="${pts}" fill="none" stroke="var(--coord)" stroke-width="3"/>`;
+ (s.h||[]).forEach((v,k)=>h+=`<circle class="dot" cx="${X(k)}" cy="${Y(v)}" r="4" fill="var(--coord)"/>`);
+ g.innerHTML=h;}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["limit = 20; baseline = 20 ms", "", "every few seconds, with latency measured:", "  baseline = min(baseline, latency)   # the time with no queueing", "  if latency > 1.5 * baseline:        # the graph has started to queue", "    limit = limit / 2                 # multiplicative decrease", "  else:", "    limit = limit + 5                 # additive increase", "", "on each query:", "  if inFlight >= limit: refuse \"busy, retry later\"", "  else: send it to the graph", "", "# BUG fixed limit: limit = 100, set on a quiet day, never changes", "#   a timed-out query keeps running; its retry joins behind it", "#   or limit = 20: safe on a quiet day, but slots sit idle"], "real": ["type Limiter struct {", "\tLimit    int", "\tBaseline int // best latency seen: no queueing", "}", "", "// Tick runs every few seconds with the latency just measured.", "func (l *Limiter) Tick(latency int) {", "\tif latency < l.Baseline {", "\t\tl.Baseline = latency", "\t}", "\tif latency*2 > l.Baseline*3 { // past 1.5 x baseline: the graph queues", "\t\tl.Limit /= 2 // multiplicative decrease", "\t\treturn", "\t}", "\tl.Limit += 5 // additive increase", "}", "", "// Admit refuses at once above the limit, so the query never reaches the graph.", "func (l *Limiter) Admit(inFlight int) bool { return inFlight < l.Limit }", "", "l := &Limiter{Limit: 20, Baseline: 20}", "fmt.Printf(\"fixed 100 on a busy day (capacity 50): %d ms per query, 50 queued inside the graph\\n\", Latency(100, 50))", "for Latency(50+queued, 50) <= 5000 {", "\tqueued += 50 // a timed-out query keeps running; its retry joins behind it", "fmt.Printf(\"fixed 20 on a quiet day (capacity 120): %d ms, but %d slots left idle\\n\", Latency(20, 120), 120-20)"], "map": {"1": [21], "3": [6, 7], "4": [8, 9, 10], "5": [11], "6": [12, 13], "7": [14], "8": [15], "10": [18], "11": [19], "12": [19], "14": [22], "15": [23, 24], "16": [25]}}},PCS={"aimd": [[1], [3, 5, 8], [3, 4, 5], [5, 6], [10, 11], [5, 6, 8], [5, 6]], "fixed": [[14], [14], [14, 15], [16, 11], [5, 6, 8, 11]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

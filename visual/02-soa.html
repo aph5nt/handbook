@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SOA and the enterprise service bus</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>SOA and the enterprise service bus</h1>
+  <p class="lede">A bank in the 2000s links its account, loan and card systems through an ESB (enterprise service bus). The bus translates every message into one company-wide Customer model and routes it. The integration team owns the bus. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="soa" id="tab-soa">SOA with a smart bus</button>
+    <button role="tab" aria-selected="false" data-mode="ms" id="tab-ms">Smart endpoints, dumb pipes</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Account, loan and card systems linked through an enterprise service bus with one canonical model</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-soa">
+          <g class="node" id="n-ac" data-c="c"><rect class="box" id="r-ac" x="40" y="30" width="200" height="56" rx="8"/><text id="t-acl" x="140.0" y="63" text-anchor="middle" font-size="15">Accounts</text></g>
+          <g class="node" id="n-ln" data-c="c"><rect class="box" id="r-ln" x="350" y="30" width="200" height="56" rx="8"/><text id="t-lnl" x="450.0" y="63" text-anchor="middle" font-size="15">Loans</text></g>
+          <g class="node" id="n-cd" data-c="c"><rect class="box" id="r-cd" x="660" y="30" width="200" height="56" rx="8"/><text id="t-cdl" x="760.0" y="63" text-anchor="middle" font-size="15">Cards</text></g>
+          <g class="node" id="n-esb" data-c="w"><rect class="box" id="r-esb" x="40" y="160" width="820" height="70" rx="8"/><text id="t-esbl" x="450.0" y="192" text-anchor="middle" font-size="15">Enterprise service bus</text><text id="t-esbs" x="450.0" y="208" text-anchor="middle" font-size="12" font-weight="400">routes, translates, orchestrates</text></g>
+          <g class="node" id="n-cm" data-c="m"><rect class="box" id="r-cm" x="300" y="280" width="300" height="50" rx="8"/><text id="t-cml" x="450.0" y="310" text-anchor="middle" font-size="14">Canonical Customer model</text></g>
+          <g class="arrow" id="a-a1" data-c="m"><path class="route" d="M140 86 L140 156" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-a2" data-c="m"><path class="route" d="M450 86 L450 156" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-a3" data-c="m"><path class="route" d="M760 86 L760 156" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-cmb" data-c="m"><path class="route" d="M450 230 L450 276" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-ev1" data-c="x"><path class="route" d="M240 50 L346 50" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-ev2" data-c="x"><path class="route" d="M550 50 L656 50" marker-end="url(#arr)"/></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-soa/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a service</span>
+    <span style="--c:var(--wait)">the bus</span>
+    <span style="--c:var(--muted)">the shared model</span>
+    <span style="--c:var(--fail)">logic or coupling in the wrong place</span>
+    <span style="--c:var(--ok)">a change kept inside one team</span>
+    <span style="--c:var(--line)">a dumb pipe</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: enterprise integration</h2>
+      <p>Banks, insurers and telecoms still run ESBs such as MuleSoft or IBM Integration Bus. If you join one, map where the business rules live before changing anything.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: gateways and brokers today</h2>
+      <p>A Kafka broker or a RabbitMQ exchange is a dumb pipe. An API gateway must stay one too. The test: could the pipe team change a business outcome? Then it is a bus.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>SOA with an ESB</th><th>Microservices</th></tr>
+      <tr><td>Pipe</td><td>Smart: routes, translates, orchestrates</td><td>Dumb: carries messages</td></tr>
+      <tr><td>Model</td><td>One canonical company model</td><td>One per bounded context</td></tr>
+      <tr><td>Owner of rules</td><td>Often the integration team</td><td>The service team</td></tr>
+      <tr><td>Goal</td><td>Reuse</td><td>Independent change</td></tr>
+      <tr><td>Trap</td><td>The bus becomes the monolith</td><td>The distributed monolith</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"SOA put the logic in a shared bus with one company model; microservices keep the pipes dumb and each service owns its model."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+soa:[
+ {"t": "Coarse services on a shared bus", "b": "Accounts, loans and cards are big services. None talks to another directly. The routes table lives in the bus: AccountOpened goes to Loans, CardIssued goes to Accounts. The bus decides.", "w": "SOA (service-oriented architecture) aimed at reuse: build a service once, let every system call it.", "pc": [1]},
+ {"t": "The bus translates everything", "b": "The bus maps each system's messages into one canonical Customer model, and back out again. The model has 3 fields: id, name and address. All 3 systems are mapped through it.", "w": "One company model sounds tidy. Every system now depends on it.", "n": {"cm": "c"}, "pc": [2]},
+ {"t": "Logic creeps into the bus", "b": "A loan approval needs an account check and a card check. The integration team writes that rule inside the bus. The test asks: does the pipe hold a rule? Yes. So a pipe team can change a loan outcome.", "w": "Business rules now live in the pipe, owned by a team that does not own the business.", "n": {"esb": "f"}, "x": {"esbs": "routes, translates, and decides loans"}, "pc": [3, 14]},
+ {"t": "A field changes", "b": "Cards needs loyalty_tier on Customer. The canonical model gets the field. Retest is every mapped system except Cards: Accounts and Loans. All 3 mappings in the bus must change too.", "w": "A shared model couples every service to every change.", "n": {"cm": "f", "ac": "w", "ln": "w"}, "pc": [4, 5, 6, 7]},
+ {"t": "The bus team is the queue", "b": "Three teams want three changes: the Cards field touches the model, the loan flow touches a rule, a new statements feed touches a route. The check asks: does the bus hold what this change touches? Yes, three times. All 3 wait for the integration team.", "w": "This is why SOA got a bad name: the smart bus became the new monolith.", "m": "changes waiting on the bus team: 3 of 3", "pc": [8]}
+],
+ms:[
+ {"t": "Same systems, dumb pipes", "b": "The services publish events and call each other's APIs. The broker holds 0 routes, 0 rules and 0 model fields. It carries messages and reads no body. Each subscriber picks what it listens to.", "w": "Microservices: smart endpoints, dumb pipes.", "n": {"esb": "o", "cm": "h"}, "a": {"a1": "x", "a2": "x", "a3": "x", "cmb": "x", "ev1": "c", "ev2": "c"}, "x": {"esbl": "Message broker", "esbs": "carries messages, decides nothing"}, "pc": [10]},
+ {"t": "Each service owns its own model", "b": "Cards has its own idea of a customer. Accounts keeps id and iban. Loans keeps id and income. They map at their own borders. Shared model fields: 0.", "w": "No company-wide model. Each bounded context keeps its own.", "pc": [11]},
+ {"t": "Cards adds a field", "b": "Cards adds loyalty_tier to its own model and its own events, as an optional field. Each consumer reads only the fields it needs: Accounts needs id, Loans needs id and limit. Both are still there, so nothing breaks. Accounts ignores 2 fields, Loans ignores 1.", "w": "The change stays inside one team.", "n": {"cd": "ok"}, "a": {"ev2": "ok"}, "m": "systems to retest: 0", "pc": [12]},
+ {"t": "Loan approval lives in loans", "b": "The loan service asks accounts and cards through their APIs. Both say yes, so it approves. The rule lives with the team that owns loans. The broker holds no route, model or rule, so the same 3 changes wait for nobody.", "w": "Rules belong in endpoints, never in the pipe.", "n": {"ln": "ok"}, "a": {"ev1": "ok"}, "m": "changes waiting on the pipe team: 0 of 3", "pc": [13, 8]},
+ {"t": "The same trap, one level up", "b": "The test asks: does the pipe hold a rule or a model? The broker does not. An API gateway with a freeShipping rule does, so it is the bus again. Keep it dumb.", "w": "Recognise SOA's failure wherever a pipe starts to think.", "n": {"esb": "w"}, "x": {"esbs": "keep it dumb"}, "pc": [14]}
+]};
+const SCENE={"soa": "soa", "ms": "soa"};
+const CODE={
+ soa:{label:"Go",why:"",
+  pc:[
+   "bus.routes[message type] = the system the bus sends it to",
+   "bus.canonical = one company Customer model, mapped by every system",
+   "bus.rules[approveLoan] = account check, card check   # logic in the pipe",
+   "changeField(team, field):",
+   "  canonical.add(field)",
+   "  retest = every mapped system except team",
+   "  bus mappings to change = every mapped system",
+   "waitsOnPipeTeam(change) = the pipe holds the route, model or rule it touches",
+   "# smart endpoints, dumb pipes",
+   "broker = a pipe with no routes, no rules and no model",
+   "each service keeps its own model",
+   "consume(event): read only the needed fields, an extra field breaks nothing",
+   "approveLoan in Loans: ask Accounts, ask Cards, decide here",
+   "isBus(pipe) = the pipe holds a rule or a model"],
+  real:[
+   "// isBus is the gateway test: can the pipe team change a business outcome?",
+   "func (p *Pipe) isBus() bool { return len(p.rules) > 0 || len(p.canonical) > 0 }",
+   "",
+   "func (p *Pipe) changeField(team, field string) (retest []string, mappings int) {",
+   "\tp.canonical[field] = true",
+   "\tfor _, s := range p.mappedBy {",
+   "\t\tif s != team {",
+   "\t\t\tretest = append(retest, s)",
+   "\t\t}",
+   "\t}",
+   "\treturn retest, len(p.mappedBy) // every mapping in the bus changes too",
+   "}",
+   "",
+   "func (p *Pipe) waitsOnPipeTeam(c Change) bool {",
+   "\tswitch c.touches {",
+   "\tcase \"model\":",
+   "\t\treturn len(p.canonical) > 0",
+   "\tcase \"rule\":",
+   "\t\treturn len(p.rules) > 0",
+   "\tcase \"route\":",
+   "\t\treturn len(p.routes) > 0",
+   "\t}",
+   "\treturn false",
+   "}",
+   "",
+   "// consume reads only the fields it needs. A new optional field breaks nothing.",
+   "func (s *Service) consume(event map[string]string) (ignored int, broken bool) {",
+   "\tfor _, f := range s.needs {",
+   "\t\tif _, ok := event[f]; !ok {",
+   "\t\t\tbroken = true",
+   "\t\t}",
+   "\t}",
+   "\treturn len(event) - len(s.needs), broken",
+   "}",
+   "",
+   "// approveLoan lives in Loans: ask the two APIs, decide here.",
+   "func approveLoan(accountOK, cardOK bool) bool { return accountOK && cardOK }",
+   "",
+   "bus := &Pipe{",
+   "\troutes:    map[string]string{\"AccountOpened\": \"Loans\", \"CardIssued\": \"Accounts\"},",
+   "\tcanonical: map[string]bool{\"id\": true, \"name\": true, \"address\": true},",
+   "\tmappedBy:  systems,",
+   "\trules:     map[string][]string{},",
+   "}",
+   "bus.rules[\"approveLoan\"] = []string{\"account check\", \"card check\"}",
+   "broker := &Pipe{name: \"Message broker\"}",
+   "acc := &Service{\"Accounts\", map[string]bool{\"id\": true, \"iban\": true}, []string{\"id\"}}",
+   "lns := &Service{\"Loans\", map[string]bool{\"id\": true, \"income\": true}, []string{\"id\", \"limit\"}}"],
+  map:{"1": [40], "2": [41, 42], "3": [45], "4": [4], "5": [5], "6": [6, 7, 8, 9, 10], "7": [11], "8": [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], "10": [46], "11": [47, 48], "12": [27, 28, 29, 30, 31, 32, 33, 34], "13": [37], "14": [2]}},
+ ms:{label:"Go",why:"",
+  pc:[
+   "bus.routes[message type] = the system the bus sends it to",
+   "bus.canonical = one company Customer model, mapped by every system",
+   "bus.rules[approveLoan] = account check, card check   # logic in the pipe",
+   "changeField(team, field):",
+   "  canonical.add(field)",
+   "  retest = every mapped system except team",
+   "  bus mappings to change = every mapped system",
+   "waitsOnPipeTeam(change) = the pipe holds the route, model or rule it touches",
+   "# smart endpoints, dumb pipes",
+   "broker = a pipe with no routes, no rules and no model",
+   "each service keeps its own model",
+   "consume(event): read only the needed fields, an extra field breaks nothing",
+   "approveLoan in Loans: ask Accounts, ask Cards, decide here",
+   "isBus(pipe) = the pipe holds a rule or a model"],
+  real:[
+   "// isBus is the gateway test: can the pipe team change a business outcome?",
+   "func (p *Pipe) isBus() bool { return len(p.rules) > 0 || len(p.canonical) > 0 }",
+   "",
+   "func (p *Pipe) changeField(team, field string) (retest []string, mappings int) {",
+   "\tp.canonical[field] = true",
+   "\tfor _, s := range p.mappedBy {",
+   "\t\tif s != team {",
+   "\t\t\tretest = append(retest, s)",
+   "\t\t}",
+   "\t}",
+   "\treturn retest, len(p.mappedBy) // every mapping in the bus changes too",
+   "}",
+   "",
+   "func (p *Pipe) waitsOnPipeTeam(c Change) bool {",
+   "\tswitch c.touches {",
+   "\tcase \"model\":",
+   "\t\treturn len(p.canonical) > 0",
+   "\tcase \"rule\":",
+   "\t\treturn len(p.rules) > 0",
+   "\tcase \"route\":",
+   "\t\treturn len(p.routes) > 0",
+   "\t}",
+   "\treturn false",
+   "}",
+   "",
+   "// consume reads only the fields it needs. A new optional field breaks nothing.",
+   "func (s *Service) consume(event map[string]string) (ignored int, broken bool) {",
+   "\tfor _, f := range s.needs {",
+   "\t\tif _, ok := event[f]; !ok {",
+   "\t\t\tbroken = true",
+   "\t\t}",
+   "\t}",
+   "\treturn len(event) - len(s.needs), broken",
+   "}",
+   "",
+   "// approveLoan lives in Loans: ask the two APIs, decide here.",
+   "func approveLoan(accountOK, cardOK bool) bool { return accountOK && cardOK }",
+   "",
+   "bus := &Pipe{",
+   "\troutes:    map[string]string{\"AccountOpened\": \"Loans\", \"CardIssued\": \"Accounts\"},",
+   "\tcanonical: map[string]bool{\"id\": true, \"name\": true, \"address\": true},",
+   "\tmappedBy:  systems,",
+   "\trules:     map[string][]string{},",
+   "}",
+   "bus.rules[\"approveLoan\"] = []string{\"account check\", \"card check\"}",
+   "broker := &Pipe{name: \"Message broker\"}",
+   "acc := &Service{\"Accounts\", map[string]bool{\"id\": true, \"iban\": true}, []string{\"id\"}}",
+   "lns := &Service{\"Loans\", map[string]bool{\"id\": true, \"income\": true}, []string{\"id\", \"limit\"}}"],
+  map:{"1": [40], "2": [41, 42], "3": [45], "4": [4], "5": [5], "6": [6, 7, 8, 9, 10], "7": [11], "8": [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24], "10": [46], "11": [47, 48], "12": [27, 28, 29, 30, 31, 32, 33, 34], "13": [37], "14": [2]}}};
+let mode="soa";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

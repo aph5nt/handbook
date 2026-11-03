@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skip indexes</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Skip indexes: rule blocks out, do not find rows</h1>
+  <p class="lede">One day of <b>swaps</b> in StarRocks, stored in eight blocks of rows. Each block keeps a tiny summary. Watch the <b>blocks read</b> counter: the job of a skip index is to keep it low.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="zone">Zone map on the sort key</button>
+    <button role="tab" aria-selected="false" data-mode="unsorted">Unsorted column fails</button>
+    <button role="tab" aria-selected="false" data-mode="bitmap">Bitmap and others</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Eight blocks of a day of swaps with their summaries, and three bitmap rows</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="q" class="box" data-f="var(--line)" x="30" y="26" width="840" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="q-t" data-t="swaps, one day, sorted by (pool, block_height)" x="450" y="53" text-anchor="middle" font-size="13" fill="var(--fg)">swaps, one day, sorted by (pool, block_height)</text>
+<g id="blk">
+<rect id="b0" class="box" data-f="var(--line)" x="30" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b0-t" data-t="block 1" x="78.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 1</text>
+<text id="b0-u" data-t="pool 001–120" x="78.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 001–120</text>
+<rect id="b1" class="box" data-f="var(--line)" x="137" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b1-t" data-t="block 2" x="185.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 2</text>
+<text id="b1-u" data-t="pool 121–240" x="185.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 121–240</text>
+<rect id="b2" class="box" data-f="var(--line)" x="244" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b2-t" data-t="block 3" x="292.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 3</text>
+<text id="b2-u" data-t="pool 241–360" x="292.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 241–360</text>
+<rect id="b3" class="box" data-f="var(--line)" x="351" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b3-t" data-t="block 4" x="399.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 4</text>
+<text id="b3-u" data-t="pool 361–430" x="399.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 361–430</text>
+<rect id="b4" class="box" data-f="var(--line)" x="458" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b4-t" data-t="block 5" x="506.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 5</text>
+<text id="b4-u" data-t="pool 431–431" x="506.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 431–431</text>
+<rect id="b5" class="box" data-f="var(--line)" x="565" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b5-t" data-t="block 6" x="613.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 6</text>
+<text id="b5-u" data-t="pool 431–520" x="613.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 431–520</text>
+<rect id="b6" class="box" data-f="var(--line)" x="672" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b6-t" data-t="block 7" x="720.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 7</text>
+<text id="b6-u" data-t="pool 521–700" x="720.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 521–700</text>
+<rect id="b7" class="box" data-f="var(--line)" x="779" y="100" width="97" height="74" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b7-t" data-t="block 8" x="827.5" y="132" text-anchor="middle" font-size="13" fill="var(--fg)">block 8</text>
+<text id="b7-u" data-t="pool 701–999" x="827.5" y="152" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">pool 701–999</text>
+</g>
+<text id="found" data-t="" x="450" y="210" text-anchor="middle" font-size="14" font-weight="400" fill="var(--muted)"></text>
+<g id="bm" class="msg">
+<text id="lb0" data-t="dex_name = aerodrome" x="30" y="253" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">dex_name = aerodrome</text>
+<rect id="c0_0" class="box" data-f="var(--line)" x="230" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_1" class="box" data-f="var(--line)" x="270" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_2" class="box" data-f="var(--line)" x="310" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_3" class="box" data-f="var(--line)" x="350" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_4" class="box" data-f="var(--line)" x="390" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_5" class="box" data-f="var(--line)" x="430" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_6" class="box" data-f="var(--line)" x="470" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_7" class="box" data-f="var(--line)" x="510" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_8" class="box" data-f="var(--line)" x="550" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_9" class="box" data-f="var(--line)" x="590" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_10" class="box" data-f="var(--line)" x="630" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_11" class="box" data-f="var(--line)" x="670" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_12" class="box" data-f="var(--line)" x="710" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_13" class="box" data-f="var(--line)" x="750" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_14" class="box" data-f="var(--line)" x="790" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c0_15" class="box" data-f="var(--line)" x="830" y="236" width="32" height="24" rx="4" fill="var(--line)"/>
+<text id="lb1" data-t="token = WETH" x="30" y="289" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">token = WETH</text>
+<rect id="c1_0" class="box" data-f="var(--line)" x="230" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_1" class="box" data-f="var(--line)" x="270" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_2" class="box" data-f="var(--line)" x="310" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_3" class="box" data-f="var(--line)" x="350" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_4" class="box" data-f="var(--line)" x="390" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_5" class="box" data-f="var(--line)" x="430" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_6" class="box" data-f="var(--line)" x="470" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_7" class="box" data-f="var(--line)" x="510" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_8" class="box" data-f="var(--line)" x="550" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_9" class="box" data-f="var(--line)" x="590" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_10" class="box" data-f="var(--line)" x="630" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_11" class="box" data-f="var(--line)" x="670" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_12" class="box" data-f="var(--line)" x="710" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_13" class="box" data-f="var(--line)" x="750" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_14" class="box" data-f="var(--line)" x="790" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c1_15" class="box" data-f="var(--line)" x="830" y="272" width="32" height="24" rx="4" fill="var(--line)"/>
+<text id="lb2" data-t="both: AND" x="30" y="325" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">both: AND</text>
+<rect id="c2_0" class="box" data-f="var(--line)" x="230" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_1" class="box" data-f="var(--line)" x="270" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_2" class="box" data-f="var(--line)" x="310" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_3" class="box" data-f="var(--line)" x="350" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_4" class="box" data-f="var(--line)" x="390" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_5" class="box" data-f="var(--line)" x="430" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_6" class="box" data-f="var(--line)" x="470" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_7" class="box" data-f="var(--line)" x="510" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_8" class="box" data-f="var(--line)" x="550" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_9" class="box" data-f="var(--line)" x="590" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_10" class="box" data-f="var(--line)" x="630" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_11" class="box" data-f="var(--line)" x="670" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_12" class="box" data-f="var(--line)" x="710" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_13" class="box" data-f="var(--line)" x="750" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_14" class="box" data-f="var(--line)" x="790" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+<rect id="c2_15" class="box" data-f="var(--line)" x="830" y="308" width="32" height="24" rx="4" fill="var(--line)"/>
+</g>
+<rect x="20" y="352" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="blocks read: 0 of 8" x="38" y="378" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)">blocks read: 0 of 8</text>
+<text id="sql" data-t="" x="862" y="377" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-skip-indexes/main.go</code> (<code>go run .</code>). </p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">summary or bit checked</span>
+    <span style="--c:var(--ok)">read and useful</span>
+    <span style="--c:var(--wait)">maybe: must read</span>
+    <span style="--c:var(--fail)">read for nothing</span>
+    <span style="--c:var(--undo)">inverted index rows</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>StarRocks <code>swaps</code> sorted by <code>(pool, block_height)</code>: one-pool queries prune blocks. <code>tx_hash</code> lookups on a table sorted by height: declare a bloom filter on <code>tx_hash</code>. <code>dex_name = 'aerodrome' AND token = 'WETH'</code>: two bitmaps and one AND.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Choose the sort key from the filters people run, so zone maps skip. Add a bloom filter for equality on an unsorted column, a bitmap for a column with few values, and an inverted index for terms in text or arrays.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Zone map</th><th>Bloom filter</th><th>Bitmap</th><th>Inverted</th></tr>
+      <tr><td>Stores</td><td>min and max per block</td><td>a compact set per block</td><td>one bit per row per value</td><td>rows per term</td></tr>
+      <tr><td>Good for</td><td>ranges on the sort key</td><td>equality on an unsorted column</td><td>few distinct values</td><td>text, arrays</td></tr>
+      <tr><td>Fails on</td><td>an unsorted column</td><td>ranges</td><td>millions of values</td><td>exact ranges</td></tr>
+      <tr><td>Interview line</td><td colspan=4>"Skip indexes do not find rows, they skip blocks, and they only skip when the data is laid out for them."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+zone:[
+ {"t": "One day of swaps, in blocks", "b": "StarRocks has no B-tree on swaps. Inside each day the rows are sorted by (pool, block_height) and stored in blocks. Each block keeps a zone map: the min and max of its values.", "w": "The small summary per block is the whole index.", "pc": [1], "rl": [1, 2, 3, 4, 5, 6, 7, 8, 9]},
+ {"t": "A query for one pool", "b": "The query asks for pool 431. The check for each block is: min at or below 431, and max at or above 431? The engine runs it against the eight summaries first.", "w": "Reading a summary costs almost nothing next to reading a block.", "f": {"q": "c", "b0": "c", "b1": "c", "b2": "c", "b3": "c", "b4": "c", "b5": "c", "b6": "c", "b7": "c"}, "x": {"q-t": "WHERE pool = 431", "big": "read 8 small summaries first"}, "pc": [2, 3, 4], "rl": [11, 12, 15, 16, 17]},
+ {"t": "Skip what cannot match", "b": "Block 4 has max 430, below 431: no. Block 7 has min 521, above 431: no. Blocks 1 to 4, 7 and 8 fail the check, so they are never read.", "w": "A zone map does not find rows. It rules blocks out.", "f": {"q": "c", "b0": "n", "b1": "n", "b2": "n", "b3": "n", "b6": "n", "b7": "n"}, "x": {"q-t": "WHERE pool = 431", "big": "6 blocks skipped"}, "pc": [3, 4, 5], "rl": [12, 16, 17]},
+ {"t": "Read only what is left", "b": "Blocks 5 (431 to 431) and 6 (431 to 520) pass the check. The engine reads them and finds every swap of the pool.", "w": "The query reads a sliver of the day.", "f": {"q": "c", "b0": "n", "b1": "n", "b2": "n", "b3": "n", "b6": "n", "b7": "n", "b4": "ok", "b5": "ok"}, "x": {"q-t": "WHERE pool = 431", "found": "every swap of pool 431 is in blocks 5 and 6", "big": "blocks read: 2 of 8"}, "pc": [3, 4, 6], "rl": [12, 18]},
+ {"t": "Add a height filter", "b": "Heights are sorted inside each pool. A second check runs on the height summary: max above 21,400,000? Block 5 has max 21,399,000: no. Block 6 has max 21,800,000: yes.", "w": "Each column of the sort key prunes, in key order.", "f": {"q": "c", "b0": "n", "b1": "n", "b2": "n", "b3": "n", "b4": "n", "b6": "n", "b7": "n", "b5": "ok"}, "x": {"q-t": "WHERE pool = 431 AND block_height > 21,400,000", "big": "blocks read: 1 of 8"}, "pc": [7], "rl": [13, 18]}
+],
+unsorted:[
+ {"t": "A lookup on an unsorted column", "b": "Now the query looks up one transaction by tx_hash. The table is sorted by pool, not by hash, so hashes are mixed in every block.", "w": "Each block holds hashes from the lowest to the highest.", "f": {"q": "c"}, "x": {"b0-u": "tx 0x00…0xff", "b1-u": "tx 0x00…0xff", "b2-u": "tx 0x00…0xff", "b3-u": "tx 0x00…0xff", "b4-u": "tx 0x00…0xff", "b5-u": "tx 0x00…0xff", "b6-u": "tx 0x00…0xff", "b7-u": "tx 0x00…0xff", "q-t": "WHERE tx_hash = 0x9c41…"}, "pc": [2]},
+ {"t": "Every range covers everything", "b": "The same check runs. Is 0x9c between the min and the max? Every block has min 0x00 and max 0xff, so the answer is yes eight times.", "w": "A zone map on an unsorted column skips nothing.", "f": {"q": "c", "b0": "w", "b1": "w", "b2": "w", "b3": "w", "b4": "w", "b5": "w", "b6": "w", "b7": "w"}, "x": {"b0-u": "tx 0x00…0xff", "b1-u": "tx 0x00…0xff", "b2-u": "tx 0x00…0xff", "b3-u": "tx 0x00…0xff", "b4-u": "tx 0x00…0xff", "b5-u": "tx 0x00…0xff", "b6-u": "tx 0x00…0xff", "b7-u": "tx 0x00…0xff", "q-t": "WHERE tx_hash = 0x9c41…", "big": "0 blocks can be skipped"}, "pc": [3, 4]},
+ {"t": "Read all eight", "b": "The engine reads every block of the day to find one row.", "w": "The summary costs storage and saves nothing here.", "f": {"q": "c", "b0": "f", "b1": "f", "b2": "f", "b3": "f", "b4": "f", "b5": "f", "b6": "f", "b7": "f"}, "x": {"b0-u": "tx 0x00…0xff", "b1-u": "tx 0x00…0xff", "b2-u": "tx 0x00…0xff", "b3-u": "tx 0x00…0xff", "b4-u": "tx 0x00…0xff", "b5-u": "tx 0x00…0xff", "b6-u": "tx 0x00…0xff", "b7-u": "tx 0x00…0xff", "q-t": "WHERE tx_hash = 0x9c41…", "big": "blocks read: 8 of 8", "found": "one row found, the whole day read"}, "pc": [6]},
+ {"t": "Fix: a bloom filter on tx_hash", "b": "A bloom filter keeps a compact set of the hashes per block. It answers \"surely not here\" or \"maybe here\". The check is per block: are all the bits of 0x9c41 set? Six filters have a 0 bit, so they say no.", "w": "A bloom filter can be wrong about maybe, never about no.", "f": {"q": "c", "b0": "n", "b1": "n", "b3": "n", "b4": "n", "b5": "n", "b7": "n", "b2": "w", "b6": "w"}, "x": {"b0-u": "bloom: no", "b1-u": "bloom: no", "b2-u": "bloom: maybe", "b3-u": "bloom: no", "b4-u": "bloom: no", "b5-u": "bloom: no", "b6-u": "bloom: maybe", "b7-u": "bloom: no", "q-t": "WHERE tx_hash = 0x9c41…", "big": "blocks read: 2 of 8"}, "pc": [8, 9, 10]},
+ {"t": "One real hit, one false alarm", "b": "Block 3 holds the row. Block 7 said maybe but held nothing: a false positive, one wasted read.", "w": "Declare a bloom filter for equality lookups on a column the sort key does not cover.", "f": {"q": "c", "b0": "n", "b1": "n", "b3": "n", "b4": "n", "b5": "n", "b7": "n", "b2": "ok", "b6": "f"}, "x": {"b0-u": "bloom: no", "b1-u": "bloom: no", "b2-u": "bloom: maybe", "b3-u": "bloom: no", "b4-u": "bloom: no", "b5-u": "bloom: no", "b6-u": "bloom: maybe", "b7-u": "bloom: no", "q-t": "WHERE tx_hash = 0x9c41…", "big": "2 read: 1 hit, 1 false alarm", "found": "block 3 held the row, block 7 was a false alarm"}, "pc": [10, 11]},
+ {"t": "The real fix: choose the sort key", "b": "Choose the sort key from the filters people actually run. Bloom filters cover the few equality lookups the sort key cannot.", "w": "Lay the data out for the query, then the skip index works.", "f": {"q": "ok", "b4": "ok", "b5": "ok", "b0": "n", "b1": "n", "b2": "n", "b3": "n", "b6": "n", "b7": "n"}, "x": {"q-t": "sort key = the filter people run most", "big": "layout first, skip index second"}, "pc": [12]}
+],
+bitmap:[
+ {"t": "One bit per row per value", "b": "A bitmap index keeps, for each value of dex_name, one bit per row: 1 if the row has that value. Here are 16 rows for aerodrome.", "w": "dex_name has about 30 values, so 30 short bit strings. Small and fast.", "f": {"c0_0": "c", "c0_3": "c", "c0_4": "c", "c0_7": "c", "c0_10": "c", "c0_11": "c", "c0_14": "c"}, "x": {"q-t": "bitmap index on dex_name", "big": "16 rows, one bit each"}, "pc": [13], "rl": [1, 2]},
+ {"t": "A second bitmap", "b": "The query also filters on token = WETH. That column has its own bitmap.", "w": "Each filter is a bit string the engine already has.", "f": {"c0_0": "c", "c0_3": "c", "c0_4": "c", "c0_7": "c", "c0_10": "c", "c0_11": "c", "c0_14": "c", "c1_0": "w", "c1_1": "w", "c1_3": "w", "c1_6": "w", "c1_8": "w", "c1_9": "w", "c1_11": "w", "c1_15": "w"}, "x": {"q-t": "WHERE dex_name = 'aerodrome' AND token = 'WETH'", "big": "two bit strings"}, "pc": [13], "rl": [3]},
+ {"t": "AND them, then read", "b": "The engine ANDs the two strings bit by bit: 1001100100110010 AND 1101001011010001 gives 1001000000010000. Only rows with 1 in both are read.", "w": "Two filters combine in one cheap bit operation, before any row is read.", "f": {"c0_0": "c", "c0_3": "c", "c0_4": "c", "c0_7": "c", "c0_10": "c", "c0_11": "c", "c0_14": "c", "c1_0": "w", "c1_1": "w", "c1_3": "w", "c1_6": "w", "c1_8": "w", "c1_9": "w", "c1_11": "w", "c1_15": "w", "c2_0": "ok", "c2_3": "ok", "c2_11": "ok"}, "x": {"q-t": "WHERE dex_name = 'aerodrome' AND token = 'WETH'", "big": "rows read: 3 of 16"}, "pc": [14, 15], "rl": [5, 6, 7]},
+ {"t": "Failure: millions of values", "b": "Put a bitmap on address. A million rows with a million values is a million strings of a million bits: 125 GB before compression, and each string is almost all zeros.", "w": "A bitmap fits few distinct values. Many values need a bloom filter or the sort key.", "f": {"c0_3": "f", "c1_11": "f", "c2_6": "f"}, "x": {"lb0": "address 0x0001…", "lb1": "address 0x0002…", "lb2": "… a million more", "q-t": "bitmap index on address", "big": "a million strings, nearly all zeros"}, "pc": [16], "rl": [9, 10]},
+ {"t": "Hash and inverted indexes", "b": "An inverted index lists the rows that hold each term: good for full text and a labels array. A hash index answers equality only: no range, no order.", "w": "Pick the skip index by the question: range on the sort key, equality, few values, or terms.", "f": {"c0_2": "u", "c0_9": "u", "c1_4": "u", "c1_11": "u", "c1_13": "u"}, "x": {"lb0": "label Mixer", "lb1": "label Exchange", "lb2": "", "q-t": "inverted index on labels", "big": "term → the rows that hold it"}, "pc": [12], "rl": [12, 13]}
+]
+};
+const base={"bitmap": {"on": ["bm"], "d": ["blk"]}};
+const code={
+"zone":{
+ label:"SQL",
+ pc:["block summary: min and max of each column", "zone_scan(column = v):", "  for each block:", "    if v < block.min or v > block.max:", "      skip the block                     # it cannot hold v", "    else: read the block", "  a second column of the sort key runs the same check", "bloom_scan(tx_hash = v):                 # the zone map skipped nothing", "  for each block:", "    if any bit of v is 0 in the block's filter: skip the block", "    else: read it, and maybe find nothing", "layout first: choose the sort key from the filters people run", "bitmap_scan(a = x AND b = y):", "  bits = bitmap(a, x) AND bitmap(b, y)   # one bit per row", "  read only the rows whose bit is 1", "a bitmap needs few distinct values, or it costs one string per value"],
+ real:["-- StarRocks: sorted inside each day, no B-tree", "CREATE TABLE swaps (", "  block_day    DATE,", "  pool         BIGINT,", "  block_height BIGINT,", "  tx_hash      VARCHAR(66)", ")", "DUPLICATE KEY (pool, block_height)", "PARTITION BY RANGE (block_day) ();", "", "SELECT * FROM swaps", "WHERE  block_day = '2026-10-01' AND pool = 431", "  AND  block_height > 21400000;", "", "-- the query profile shows the skipping", "-- ZoneMapIndexFilterRows: large", "-- SegmentZoneMapFilterRows: large", "-- RawRowsRead: small"],
+ map:{"1": [8], "2": [11, 12], "3": [12], "4": [16, 17], "5": [16, 17], "6": [18], "7": [13, 18]}},
+"unsorted":{
+ label:"SQL",
+ pc:["block summary: min and max of each column", "zone_scan(column = v):", "  for each block:", "    if v < block.min or v > block.max:", "      skip the block                     # it cannot hold v", "    else: read the block", "  a second column of the sort key runs the same check", "bloom_scan(tx_hash = v):                 # the zone map skipped nothing", "  for each block:", "    if any bit of v is 0 in the block's filter: skip the block", "    else: read it, and maybe find nothing", "layout first: choose the sort key from the filters people run", "bitmap_scan(a = x AND b = y):", "  bits = bitmap(a, x) AND bitmap(b, y)   # one bit per row", "  read only the rows whose bit is 1", "a bitmap needs few distinct values, or it costs one string per value"],
+ real:["-- tx_hash is not in the sort key: the zone map skips nothing", "SELECT * FROM swaps", "WHERE  block_day = '2026-10-01' AND tx_hash = '0x9c41';", "-- RawRowsRead: the whole day", "", "-- fix: a bloom filter on the column", "ALTER TABLE swaps SET (\"bloom_filter_columns\" = \"tx_hash\");", "", "-- the same query now skips blocks", "-- BloomFilterFilterRows: large", "", "-- the real fix: a sort key that matches the common filter", "-- DUPLICATE KEY (pool, block_height)"],
+ map:{"2": [2, 3], "3": [3], "4": [3, 4], "6": [4], "8": [6, 7], "9": [9], "10": [10], "11": [10], "12": [12, 13]}},
+"bitmap":{
+ label:"SQL",
+ pc:["block summary: min and max of each column", "zone_scan(column = v):", "  for each block:", "    if v < block.min or v > block.max:", "      skip the block                     # it cannot hold v", "    else: read the block", "  a second column of the sort key runs the same check", "bloom_scan(tx_hash = v):                 # the zone map skipped nothing", "  for each block:", "    if any bit of v is 0 in the block's filter: skip the block", "    else: read it, and maybe find nothing", "layout first: choose the sort key from the filters people run", "bitmap_scan(a = x AND b = y):", "  bits = bitmap(a, x) AND bitmap(b, y)   # one bit per row", "  read only the rows whose bit is 1", "a bitmap needs few distinct values, or it costs one string per value"],
+ real:["-- few distinct values: a bitmap on each column", "CREATE INDEX swaps_dex   ON swaps (dex_name) USING BITMAP;", "CREATE INDEX swaps_token ON swaps (token)    USING BITMAP;", "", "SELECT count(*) FROM swaps", "WHERE  dex_name = 'aerodrome' AND token = 'WETH';", "-- BitmapIndexFilterRows: large", "", "-- many distinct values: no bitmap. A bloom filter instead", "ALTER TABLE swaps SET (\"bloom_filter_columns\" = \"from_address\");", "", "-- text or a labels array: an inverted index (GIN)", "-- equality only: a hash index, no range and no order"],
+ map:{"12": [2, 3], "13": [2, 3], "14": [5, 6], "15": [7], "16": [9, 10]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

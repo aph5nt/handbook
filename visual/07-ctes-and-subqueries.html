@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CTEs and subqueries</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>CTEs and subqueries: name a step, walk with a bound</h1>
+  <p class="lede">An investigator asks where money went, up to three hops from one address. A recursive CTE (Common Table Expression) walks the transfers hop by hop. Watch the depth bound stop it, and watch what a cycle does without one. The second tab shows a subquery that runs once against one that runs once per row.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="walk">Recursive CTE: three hops</button>
+    <button role="tab" aria-selected="false" data-mode="sub">Subquery: once, or once per row</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">CTEs and subqueries: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">start address or current row</span>
+    <span style="--c:var(--ok)">row added or kept</span>
+    <span style="--c:var(--wait)">step running now</span>
+    <span style="--c:var(--line)">not reached yet</span>
+    <span style="--c:var(--fail)">the trap</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Short, bounded walks in SQL: two or three hops for a report. Real graph walks over millions of addresses go to a graph database such as DozerDB (Neo4j-compatible), fed by a graph sync. Long reports read better as a chain of named CTEs, one step each.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Every recursive CTE gets a depth bound, <code>WHERE h.depth &lt; 3</code>, or a visited set. Write correlated subqueries as a join against a grouped CTE when the planner may not do it for you, and check with <code>EXPLAIN</code>.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Uncorrelated subquery</th><th>Correlated subquery</th><th>Recursive CTE</th></tr>
+      <tr><td>Names the outer row</td><td>No</td><td>Yes</td><td>The step names the last rows it added</td></tr>
+      <tr><td>Runs</td><td>Once</td><td>Once per outer row, in principle</td><td>Once per hop, until no new rows</td></tr>
+      <tr><td>Trap</td><td>Rarely one</td><td>A million rows, a million runs, if the planner cannot rewrite it</td><td>A cycle with no bound never ends</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A CTE names a step. A recursive CTE walks until no new rows appear, so I always give it a bound."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const N={S:[40,170,80],A:[190,60,80],B:[190,280,80],C:[340,60,80],D:[340,280,80],E:[460,280,70]};
+const nd=ks=>Object.entries(N).map(([n,[x,y,w]])=>B(x,y,w,n,ks[n]||"n",40));
+const ed=(k)=>[A(122,182,188,88,"",k.SA||"m"),A(122,198,188,292,"",k.SB||"m"),A(272,80,338,80,"",k.AC||"m"),A(272,300,338,300,"",k.BD||"m"),A(422,300,458,300,"",k.DE||"m"),A(350,102,126,176,"",k.CS||"m",1)];
+const hops=(rows)=>[F(560,50,320,340,"hops (the CTE)"),T(570,86,"to_address"),T(700,86,"depth"),...rows.flatMap((r,j)=>[B(570,94+36*j,120,r[0],r[2],30),B(700,94+36*j,80,r[1],r[2],30)])];
+const legT=T(20,370,"bound: WHERE h.depth < 3","f","start",15);
+const R1=[["A","1","n"],["B","1","n"]],R2=[["C","2","n"],["D","2","n"]];
+const OUT=[["p1","120"],["p1","40"],["p2","5"],["p2","9"]];
+const outer=ks=>[F(20,50,400,240,"swaps (outer query)"),T(30,86,"pool"),T(130,86,"amount"),...OUT.flatMap((r,j)=>[B(30,94+44*j,80,r[0],ks[j]),B(130,94+44*j,100,r[1],ks[j])])];
+const runs=(n,k)=>T(470,350,"inner query runs: "+n,k||"f","start",18);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The SQL is the real code: <code>handbook/code/07-ctes-and-subqueries/main.py</code> loads these rows into SQLite, runs each statement and prints the rows quoted here (<code>python3 main.py</code>).";
+const CODE={
+walk:{pc:["transfers: S->A  S->B  A->C  B->D  D->E  C->S",
+"hops = receivers of S, depth 1            # start rows: A, B",
+"repeat:",
+"  new = receivers of last round's rows, depth + 1",
+"  only expand rows with depth < 3        # the bound",
+"  if new is empty: stop",
+"  hops += new                             # UNION ALL keeps every row",
+"result: A 1, B 1, C 2, D 2, E 3, S 3",
+"no bound: S at 3 -> A, B at 4 -> ... S at 6 -> never empty"],
+ views:[{v:"real",label:"SQL",lines:[].concat(["CREATE TABLE transfers (from_address TEXT, to_address TEXT);", "INSERT INTO transfers VALUES ('S', 'A'), ('S', 'B'), ('A', 'C'), ('B', 'D'), ('D', 'E'), ('C', 'S');"],[""],["-- walk the money out of S, at most three hops", "WITH RECURSIVE hops(to_address, depth) AS (", "  SELECT to_address, 1 FROM transfers WHERE from_address = 'S'", "  UNION ALL", "  SELECT t.to_address, h.depth + 1", "  FROM hops h JOIN transfers t ON t.from_address = h.to_address", "  WHERE h.depth < 3", ")", "SELECT to_address, depth FROM hops ORDER BY depth, to_address;"],[""],["-- the same walk with no bound: the cycle C -> S feeds it for ever", "WITH RECURSIVE hops(to_address, depth) AS (", "  SELECT to_address, 1 FROM transfers WHERE from_address = 'S'", "  UNION ALL", "  SELECT t.to_address, h.depth + 1", "  FROM hops h JOIN transfers t ON t.from_address = h.to_address", ")", "SELECT to_address, depth FROM hops LIMIT 20;"]),
+  map:[["transfers: S","CREATE TABLE transfers","INSERT INTO transfers"],["hops = receivers","SELECT to_address, 1 FROM transfers WHERE from_address = 'S'#1"],
+   ["repeat:","WITH RECURSIVE hops(to_address, depth) AS (#1"],["new = receivers","SELECT t.to_address, h.depth + 1#1","FROM hops h JOIN transfers t ON t.from_address = h.to_address#1"],
+   ["only expand","WHERE h.depth < 3"],["if new is empty","WHERE h.depth < 3"],["hops += new","UNION ALL#1"],
+   ["result: A 1","SELECT to_address, depth FROM hops ORDER BY depth, to_address;"],["no bound:","the same walk with no bound","FROM hops h JOIN transfers t ON t.from_address = h.to_address#2","=)#2"]]}]},
+sub:{pc:["swaps: p1 120, p1 40, p2 5, p2 9    pools: p1 aerodrome, p2 uniswap",
+"list = pools where dex == aerodrome      # inner runs once: { p1 }",
+"keep swaps whose pool is in list         # p1 120, p1 40",
+"for each swap s:",
+"  avg = average amount of s.pool         # inner runs again: 4 runs",
+"  keep s if s.amount > avg               # p1 120, p2 9",
+"fix: avg_per_pool in one grouped scan    # p1 80, p2 7",
+"join swaps to avg_per_pool, keep amount > a"],
+ views:[{v:"real",label:"SQL",lines:[].concat(["CREATE TABLE swaps (pool TEXT, amount INT);", "INSERT INTO swaps VALUES ('p1', 120), ('p1', 40), ('p2', 5), ('p2', 9);", "CREATE TABLE pools (pool TEXT, dex TEXT);", "INSERT INTO pools VALUES ('p1', 'aerodrome'), ('p2', 'uniswap');"],[""],["-- the inner query names nothing outside itself: it runs once", "SELECT pool, amount FROM swaps", "WHERE pool IN (SELECT pool FROM pools WHERE dex = 'aerodrome');"],[""],["-- the inner query names s.pool: it runs once per outer row", "-- (inner_run() counts each run and returns 1)", "SELECT pool, amount FROM swaps s", "WHERE amount > (SELECT AVG(amount) * inner_run() FROM swaps s2", "                WHERE s2.pool = s.pool);"],[""],["-- the fix: every average in one scan, then one join", "WITH avg_per_pool AS (", "  SELECT pool, AVG(amount) AS a FROM swaps GROUP BY pool", ")", "SELECT s.pool, s.amount FROM swaps s", "JOIN avg_per_pool p ON p.pool = s.pool", "WHERE s.amount > p.a;"]),
+  map:[["swaps: p1","CREATE TABLE swaps..'uniswap');"],["list = pools","WHERE pool IN"],["keep swaps whose","the inner query names nothing..WHERE pool IN"],
+   ["for each swap s","=SELECT pool, amount FROM swaps s"],["avg = average","WHERE amount > (SELECT AVG(amount) * inner_run()..WHERE s2.pool = s.pool);"],
+   ["keep s if","WHERE amount > (SELECT"],["fix: avg_per_pool","the fix: every average..GROUP BY pool","=)"],["join swaps to","SELECT s.pool, s.amount..WHERE s.amount > p.a;"]]}]}};
+// CODE PANEL END
+const S={
+walk:{name:"money walk from address S",st:[
+ {t:"Start: one address",pc:["transfers: S"],b:"The walk starts at address S. Each arrow is a transfer. The CTE will add the receivers of S, then their receivers.",w:"The bound is depth < 3. Without it the walk has no reason to stop.",d:nd({S:"r"}).concat(ed({}),hops([]),[legT])},
+ {t:"Start rows: depth 1",pc:["hops = receivers"],b:"The first part of the CTE selects the receivers of S: A and B, at depth 1.",w:"These are the start rows. The recursive part will build on them.",d:nd({S:"r",A:"c",B:"c"}).concat(ed({SA:"w",SB:"w"}),hops([["A","1","c"],["B","1","c"]]),[legT])},
+ {t:"Recursive step: depth 2",pc:["repeat:", "new = receivers", "hops += new"],b:"UNION ALL a step that joins the last rows, A and B, to transfers again. Their receivers are C and D, at depth 2.",w:"Each round joins only the rows the round before it added.",d:nd({S:"r",A:"n",B:"n",C:"c",D:"c"}).concat(ed({AC:"w",BD:"w"}),hops(R1.concat([["C","2","c"],["D","2","c"]])),[legT])},
+ {t:"Depth 3: the walk comes back to S",pc:["new = receivers", "hops += new"],b:"C and D have depth 2, which passes depth < 3, so the round expands them. From D the money goes to E. From C it goes back to S, the start. Both are added at depth 3.",w:"That arrow back to S is a cycle. Money that loops is common in fraud.",d:nd({S:"w",C:"n",D:"n",E:"c"}).concat(ed({DE:"w",CS:"w"}),hops(R1.concat(R2,[["S","3","w"],["E","3","c"]])),[legT])},
+ {t:"The bound stops it",pc:["only expand", "if new is empty", "result: A 1"],b:"The next round only expands rows with depth < 3. E and S have depth 3, so no row qualifies, the step adds nothing, and the CTE ends. Six rows: A 1, B 1, C 2, D 2, E 3, S 3.",w:"A recursive CTE stops when a round adds no rows. The bound makes sure that round comes.",d:nd({S:"r",A:"c",B:"c",C:"c",D:"c",E:"c"}).concat(ed({}),hops(R1.concat(R2,[["S","3","n"],["E","3","n"]])),[T(20,370,"bound: WHERE h.depth < 3  stopped at 3","c","start",15)])},
+ {t:"The trap: no bound, no end",pc:["no bound:"],b:"Remove the bound. S at depth 3 is expanded again: A and B at depth 4, C and D at depth 5, S at depth 6, and round again. The program stops it with LIMIT 20: it had reached depth 10.",w:"UNION ALL keeps every row, so a cycle adds new rows for ever. Add a depth bound or a visited set.",d:nd({S:"x",A:"x",B:"x",C:"x",D:"x"}).concat(ed({SA:"x",SB:"x",AC:"x",BD:"x",CS:"x"}),hops(R1.concat(R2,[["S","3","n"],["E","3","n"],["A","4","x"],["B","4","x"]])),[T(20,370,"no bound: depth 5, 6, 7 ... never ends","x","start",15)])}
+]},
+sub:{name:"filters on swaps",st:[
+ {t:"Uncorrelated: the inner query runs once",pc:["list = pools"],b:"WHERE pool IN (SELECT pool FROM pools WHERE dex = 'aerodrome'). The inner query names nothing outside itself. It runs once and returns p1. SQLite's plan calls it LIST SUBQUERY.",w:"An uncorrelated subquery is a fixed list. Cheap.",d:outer(["n","n","n","n"]).concat([B(470,94,400,"inner: aerodrome pools = { p1 }","c",40),runs(1)])},
+ {t:"Each outer row checks the list",pc:["keep swaps whose"],b:"The two p1 swaps are in the list and stay. The two p2 swaps drop out. The inner query did not run again.",w:"One run for any number of outer rows.",d:outer(["c","c","g","g"]).concat([B(470,94,400,"inner: aerodrome pools = { p1 }","c",40),runs(1)])},
+ {t:"Correlated: row 1 runs the inner query",pc:["for each swap s", "avg = average"],b:"Now: WHERE amount > (SELECT AVG(amount) FROM swaps s2 WHERE s2.pool = s.pool). The inner query names the outer row's pool. Row 1 is p1, average 80. 120 > 80, kept.",w:"The inner query depends on the outer row, so in principle it runs once per row.",d:outer(["r","n","n","n"]).concat([B(470,94,400,"inner for p1: AVG = 80","w",40),A(232,111,466,114,"","w"),runs(1)])},
+ {t:"Row 2 runs it again",pc:["avg = average", "keep s if"],b:"Row 2 is also p1. The inner query runs again and computes the same average, 80. 40 is not more than 80, dropped.",w:"Same pool, same answer, computed twice.",d:outer(["c","r","n","n"]).concat([B(470,94,400,"inner for p1: AVG = 80","w",40),A(232,155,466,118,"","w"),runs(2)])},
+ {t:"The trap: one run per row",pc:["avg = average"],b:"Rows 3 and 4 are p2: two more runs, average 7. Four rows, four runs: the program's counter prints 4, and SQLite's plan says CORRELATED SCALAR SUBQUERY. On a million swaps, a million runs.",w:"Good planners rewrite this shape into a join. Not every shape, and not in every engine.",d:outer(["c","g","g","c"]).concat([B(470,94,400,"inner for p2: AVG = 7","w",40),A(232,243,466,118,"","w"),runs(4,"x"),T(470,380,"1,000,000 rows: 1,000,000 runs","x","start",15)])},
+ {t:"Fix: one grouped CTE, one join",pc:["fix: avg_per_pool", "join swaps to"],b:"WITH avg_per_pool AS (SELECT pool, AVG(amount) AS a FROM swaps GROUP BY pool) gives p1 80 and p2 7. Join swaps to it and keep amount > a: the same rows, p1 120 and p2 9.",w:"The averages are computed once per pool in one scan. Same answer, no per-row runs.",d:outer(["c","g","g","c"]).concat([F(470,50,410,150,"avg_per_pool (CTE)"),B(480,94,120,"p1","r"),B(610,94,120,"80","c"),B(480,140,120,"p2","r"),B(610,140,120,"7","c"),A(232,111,476,111,"join","u"),T(470,350,"averages computed in 1 scan","c","start",18)])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

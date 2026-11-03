@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Output parser</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Output parser: from text to a typed value</h1>
+  <p class="lede">A model writes a risk verdict as text. An output parser turns that text into a typed value code can use, and checks it. Watch a parse succeed, and a bad answer get one retry with the error attached. Then switch tabs to see a parser that hides its failures behind a default.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Parse, or retry with the error</button>
+    <button role="tab" aria-selected="false" data-mode="bad">A parser that defaults quietly</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Model text, a parser with a schema, a typed value, and a retry path back to the model</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="e1" class="edge" d="M190 110 L226 110" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e2" class="edge" d="M530 110 L566 110" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e3" class="edge" d="M720 110 L756 110" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e4" class="edge" d="M825 140 L825 216" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="eb" class="edge msg" d="M645 140 L645 180 L100 180 L100 144" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"/>
+      <text id="lb" class="msg" x="372" y="198" text-anchor="middle" font-size="12" font-weight="700" fill="var(--wait)">retry with the error message</text>
+      <g><rect id="model" class="box" x="10" y="80" width="180" height="60" rx="10" fill="var(--line)"/><text id="model-l" x="100.0" y="114.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Model</text></g>
+      <g><rect id="text" class="box" x="230" y="70" width="300" height="80" rx="10" fill="var(--line)"/><text id="text-l" x="380.0" y="114.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="parser" class="box" x="570" y="80" width="150" height="60" rx="10" fill="var(--line)"/><text id="parser-l" x="645.0" y="106.75" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"><tspan x="645.0" dy="0">Parser +</tspan><tspan x="645.0" dy="15.6">schema</tspan></text></g>
+      <g><rect id="val" class="box" x="760" y="80" width="130" height="60" rx="10" fill="var(--line)"/><text id="val-l" x="825.0" y="114.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="code" class="box" x="620" y="220" width="270" height="56" rx="10" fill="var(--line)"/><text id="code-l" x="755.0" y="252.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Code: label the address</text></g>
+      <text x="10" y="290" font-size="14" font-weight="700" fill="var(--fg)">Result</text>
+      <rect x="10" y="300" width="880" height="92" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-output-parser/main.py</code> (<code>python3 main.py</code>). The LangChain (shape only) view shows the framework shape of the same steps; it is not run (<code>shape_langchain.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+      <button data-v="alt" aria-pressed="false" id="alttab">LangChain (shape only)</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">model or parser at work</span>
+    <span style="--c:var(--ok)">valid, typed value</span>
+    <span style="--c:var(--wait)">retry with the reason</span>
+    <span style="--c:var(--fail)">bad text, or a silent default</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>LangChain output parsers (JSON, Pydantic), Pydantic validation in plain code, and retry parsers. They matter most with models or providers that have no structured output mode.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Validate against a schema and fail loudly. On a failure, retry once or twice with the error message attached, then stop and report. Never fill a missing value with a default that looks like a real answer. Prefer structured output where the provider has it.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Output parser</th><th>Structured output</th></tr>
+      <tr><td>When the check runs</td><td>After the text is written</td><td>While each token is chosen</td></tr>
+      <tr><td>Bad text</td><td>Possible, so a retry is needed</td><td>Impossible for the shape</td></tr>
+      <tr><td>Works with</td><td>Any model</td><td>Providers that support it</td></tr>
+      <tr><td>Main failure</td><td>A silent default on error</td><td>A valid but wrong value</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"An output parser turns model text into a typed value and must fail loudly, retry with the error, and never invent a default that looks like an answer."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"t": "Format instructions", "b": "The prompt ends with format instructions from the parser: return JSON with risk_kind and confidence.", "w": "The parser tells the model what it expects.", "box": {"model": "coord"}, "pc": [1]},
+{"t": "The model writes text", "b": "The model answers {\"risk_kind\": \"mixer\", \"confidence\": 0.8}. It is still a string.", "w": "It is still only text until something checks it.", "box": {"text": "coord"}, "ed": {"e1": "coord"}, "txt": {"text-l": "{\"risk_kind\": \"mixer\", \"confidence\": 0.8}"}, "pc": [2]},
+{"t": "Parse and validate", "b": "json.loads() checks the syntax. Then each field: is 'mixer' in (mixer, exchange, scam, none)? Yes. Is 0.8 a number from 0 to 1? Yes.", "w": "Parsing checks the syntax. Validation checks the meaning of each field.", "box": {"parser": "ok"}, "ed": {"e2": "ok"}, "pc": [3, 4]},
+{"t": "A typed value", "b": "Code receives a typed verdict and labels the address.", "w": "From here on, code works with fields, not prose.", "box": {"val": "ok", "code": "ok"}, "ed": {"e3": "ok", "e4": "ok"}, "txt": {"val-l": "Verdict(mixer, 0.8)"}, "rows": [["labelled: mixer, confidence 0.8", "ok"]], "pc": [5]},
+{"t": "A bad answer", "b": "Another call returns 'Sure! It looks like a mixer.' json.loads() fails, so parse() raises 'expected JSON with risk_kind and confidence'. That starts retry 1 of 2: the model is called again with its own answer and that error.", "w": "The error message is the best hint for the retry.", "box": {"text": "fail", "parser": "wait"}, "ed": {"eb": "wait"}, "show": ["eb", "lb"], "txt": {"text-l": "Sure! It looks like a mixer.", "val-l": ""}, "rows": ["clear", ["parse error: retry 1 of 2, error attached", "wait"]], "pc": [3, 6]},
+{"t": "The retry parses", "b": "The retry returns the JSON, which parses. Had it failed again, and again on retry 2, line 7 would raise 'could not parse after 2 retries' instead of guessing.", "w": "A retry cap keeps a broken prompt from looping.", "box": {"text": "ok", "parser": "ok", "val": "ok"}, "ed": {"e2": "ok", "e3": "ok"}, "txt": {"text-l": "{\"risk_kind\": \"mixer\", \"confidence\": 0.8}", "val-l": "Verdict(mixer, 0.8)"}, "rows": [["retry 1 parsed", "ok"]], "pc": [3, 4, 5, 7]}],
+"bad":[
+{"t": "Bad text again", "b": "The model answers in prose: 'Sure! It looks like a mixer.'", "w": "This will happen. The question is what the parser does.", "box": {"text": "fail"}, "ed": {"e1": "coord"}, "txt": {"text-l": "Sure! It looks like a mixer."}, "pc": [8]},
+{"t": "The parser catches and defaults", "b": "ask_quietly() wraps parse() in try/except and returns Verdict('none', 0.0) on any error. The prose answer fails json.loads(), so the default comes back.", "w": "A default that looks like a real answer hides the failure.", "box": {"parser": "fail"}, "ed": {"e2": "fail"}, "txt": {"val-l": "Verdict(none, 0.0)"}, "pc": [8]},
+{"t": "The address is labelled clean", "b": "Code downstream sees risk_kind 'none' and labels the address clean. It has no way to know the parser failed.", "w": "The worst failure is the one that looks like success.", "box": {"val": "fail", "code": "fail"}, "ed": {"e3": "fail", "e4": "fail"}, "rows": [["labelled: clean (it is a mixer)", "fail"]], "pc": [8]},
+{"t": "The fix: fail loudly", "b": "Delete the default. On a ParseError, retry with the error up to 2 times, then raise 'could not parse'. 'Unknown' is honest; 'none' is a lie.", "w": "'Unknown' is honest. 'None' is a lie.", "box": {"parser": "wait"}, "ed": {"eb": "wait"}, "show": ["eb", "lb"], "txt": {"val-l": ""}, "rows": ["clear", ["parse error: retry with the error, then report", "wait"]], "pc": [6, 7]},
+{"t": "Better still: structured output", "b": "Where the provider supports it, structured output makes the bad text impossible in the first place.", "w": "Parse when you must. Constrain when you can.", "box": {"parser": "ok", "val": "ok", "code": "ok"}, "ed": {"e2": "ok", "e3": "ok", "e4": "ok"}, "txt": {"text-l": "{\"risk_kind\": \"mixer\", \"confidence\": 0.8}", "val-l": "Verdict(mixer, 0.8)"}, "rows": [["labelled: mixer", "ok"]], "pc": [9]}]},
+"T0":{"text-l": "", "val-l": ""},"panel":{"x": 10, "y": 300, "w": 880, "h": 92, "title": "Result", "rh": 28, "fs": 12},"code":{"_": {"label": "Python", "pc": ["instructions = 'Return only JSON: risk_kind (mixer|exchange|scam|none), confidence 0 to 1'", "text = model(prompt + instructions)", "data = json.loads(text)                      # syntax", "check risk_kind is one of 4, confidence is a number from 0 to 1   # meaning", "return Verdict(risk_kind, confidence)        # a typed value", "on a parse error: text = model(prompt + text + the error)   # retry with the reason", "after 2 failed retries: raise 'could not parse'   # never invent an answer", "WRONG: on error return Verdict('none', 0.0)  # a default that looks real", "better: structured output, the provider constrains every token"], "real": ["KINDS = (\"mixer\", \"exchange\", \"scam\", \"none\")", "FORMAT = 'Return only JSON: {\"risk_kind\": one of mixer|exchange|scam|none, \"confidence\": 0 to 1}'", "", "", "@dataclass", "class Verdict:", "    risk_kind: str", "    confidence: float", "", "", "class ParseError(Exception):", "    pass", "", "", "def parse(text):", "    try:", "        data = json.loads(text)  # syntax", "    except json.JSONDecodeError:", "        raise ParseError(\"expected JSON with risk_kind and confidence\")", "    if data.get(\"risk_kind\") not in KINDS:  # meaning, field by field", "        raise ParseError(f\"risk_kind must be one of {KINDS}\")", "    c = data.get(\"confidence\")", "    if not isinstance(c, (int, float)) or not 0 <= c <= 1:", "        raise ParseError(\"confidence must be a number from 0 to 1\")", "    return Verdict(data[\"risk_kind\"], float(c))  # a typed value", "", "", "def ask(model, prompt, retries=2):", "    text = model(prompt + \"\\n\" + FORMAT)", "    for attempt in range(retries + 1):", "        try:", "            return parse(text)", "        except ParseError as e:", "            if attempt == retries:  # retries spent", "                raise ParseError(f\"could not parse after {retries} retries: {e}\")  # never a default", "            text = model(f\"{prompt}\\nYour answer: {text}\\nError: {e}\\n{FORMAT}\")  # retry with the reason", "", "", "def ask_quietly(model, prompt):", "    try:", "        return parse(model(prompt + \"\\n\" + FORMAT))  # the model's text, parsed", "    except ParseError:  # any error at all", "        return Verdict(\"none\", 0.0)  # WRONG: a default that looks like an answer", "", "# better, where the provider has it: structured output, the schema", "# constrains every token, so the bad text cannot be written"], "map": {"1": [2], "3": [17, 19, 32], "4": [20, 21, 23, 24, 32], "5": [25, 32], "2": [29], "7": [34, 35], "6": [36], "8": [40, 41, 42, 43], "9": [45, 46]}, "path": "handbook/code/09-output-parser/main.py", "cmd": "python3 main.py", "note": "The LangChain (shape only) view shows the framework shape of the same steps; it is not run (<code>shape_langchain.py</code>).", "alt": {"label": "LangChain (shape only)", "lines": ["\"\"\"LangChain shape of the same parser. Shape only: not run, needs LangChain.\"\"\"", "from typing import Literal", "", "from langchain.output_parsers import RetryWithErrorOutputParser", "from langchain_core.output_parsers import PydanticOutputParser", "from pydantic import BaseModel, Field", "", "", "class Verdict(BaseModel):  # the schema checks each field", "    risk_kind: Literal[\"mixer\", \"exchange\", \"scam\", \"none\"]", "    confidence: float = Field(ge=0, le=1)", "", "", "parser = PydanticOutputParser(pydantic_object=Verdict)", "prompt = \"Screen this wallet.\\n\" + parser.get_format_instructions()", "text = model.invoke(prompt).content", "verdict = parser.parse(text)  # raises OutputParserException", "", "retry = RetryWithErrorOutputParser.from_llm(parser=parser, llm=model, max_retries=2)", "", "typed = model.with_structured_output(Verdict)  # the provider constrains the tokens"], "map": {"4": [9, 10, 11, 14, 17], "5": [9, 14, 17], "3": [14, 17], "1": [15], "2": [16], "6": [19], "7": [19], "9": [21]}, "file": "shape_langchain.py"}}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

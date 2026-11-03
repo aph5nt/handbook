@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Sizing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache sizing: the working set and the hit-rate curve</h1>
+  <p class="lede">How much memory does the risk cache need? Press <b>Next</b> and watch the hit rate climb fast for the hottest keys, then flatten. Then switch tabs and watch a cache one key too small miss every read.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="curve">The hit-rate curve</button>
+    <button role="tab" aria-selected="false" data-mode="thrash">Too small: thrashing</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Bars of reads per key, and a hit-rate curve with a dot for the chosen cache size</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <text id="pt" x="40" y="28" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">Reads per key (illustrative skewed access, 20 keys)</text>
+        <rect id="b1" class="box" x="40" y="60" width="15" height="240" fill="var(--line)"/>
+        <rect id="b2" class="box" x="59" y="180" width="15" height="120" fill="var(--line)"/>
+        <rect id="b3" class="box" x="78" y="220" width="15" height="80" fill="var(--line)"/>
+        <rect id="b4" class="box" x="97" y="240" width="15" height="60" fill="var(--line)"/>
+        <rect id="b5" class="box" x="116" y="252" width="15" height="48" fill="var(--line)"/>
+        <rect id="b6" class="box" x="135" y="260" width="15" height="40" fill="var(--line)"/>
+        <rect id="b7" class="box" x="154" y="266" width="15" height="34" fill="var(--line)"/>
+        <rect id="b8" class="box" x="173" y="270" width="15" height="30" fill="var(--line)"/>
+        <rect id="b9" class="box" x="192" y="273" width="15" height="27" fill="var(--line)"/>
+        <rect id="b10" class="box" x="211" y="276" width="15" height="24" fill="var(--line)"/>
+        <rect id="b11" class="box" x="230" y="278" width="15" height="22" fill="var(--line)"/>
+        <rect id="b12" class="box" x="249" y="280" width="15" height="20" fill="var(--line)"/>
+        <rect id="b13" class="box" x="268" y="282" width="15" height="18" fill="var(--line)"/>
+        <rect id="b14" class="box" x="287" y="283" width="15" height="17" fill="var(--line)"/>
+        <rect id="b15" class="box" x="306" y="284" width="15" height="16" fill="var(--line)"/>
+        <rect id="b16" class="box" x="325" y="285" width="15" height="15" fill="var(--line)"/>
+        <rect id="b17" class="box" x="344" y="286" width="15" height="14" fill="var(--line)"/>
+        <rect id="b18" class="box" x="363" y="287" width="15" height="13" fill="var(--line)"/>
+        <rect id="b19" class="box" x="382" y="287" width="15" height="13" fill="var(--line)"/>
+        <rect id="b20" class="box" x="401" y="288" width="15" height="12" fill="var(--line)"/>
+        <text id="pl" x="40" y="322" text-anchor="start" font-size="12" fill="var(--muted)">hot keys</text>
+        <text id="pr" x="420" y="322" text-anchor="end" font-size="12" fill="var(--muted)">long tail</text>
+        <line x1="500" y1="300" x2="860" y2="300" stroke="var(--muted)" stroke-width="2"/><line x1="500" y1="300" x2="500" y2="50" stroke="var(--muted)" stroke-width="2"/>
+        <text id="xl" x="860" y="322" text-anchor="end" font-size="12" fill="var(--muted)">cache size, in keys</text>
+        <text id="yl" x="506" y="44" text-anchor="start" font-size="12" fill="var(--muted)">hit rate</text>
+        <polyline points="500.0,300.0 518.0,230.5 536.0,195.8 554.0,172.6 572.0,155.2 590.0,141.3 608.0,129.8 626.0,119.8 644.0,111.1 662.0,103.4 680.0,96.5 698.0,90.2 716.0,84.4 734.0,79.0 752.0,74.1 770.0,69.4 788.0,65.1 806.0,61.0 824.0,57.1 842.0,53.5 860.0,50.0" fill="none" stroke="var(--coord)" stroke-width="3"/>
+        <circle id="dot" class="mv" cx="0" cy="0" r="9" fill="var(--wait)" stroke="var(--panel)" stroke-width="2" style="transform:translate(500px,300px)"/>
+        <text id="dl" x="680.0" y="350" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-sizing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">key held in the cache</span>
+    <span style="--c:var(--line)">key not cached</span>
+    <span style="--c:var(--wait)">past the knee, or the chosen size</span>
+    <span style="--c:var(--fail)">thrashing</span>
+    <span style="--c:var(--coord)">hit-rate curve</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Redis <code>maxmemory</code>: set it from the working set, then watch evictions and hit rate together. A database buffer pool: the hot pages are its working set. A CDN: a few files get most traffic, so a modest edge cache serves most bytes.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Record real keys and replay them at several sizes to draw the miss-ratio curve. Pick the knee, with room above the working set. The percentages in this lesson come from a simple model, not from a real system.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Below the working set</th><th>At the knee</th><th>Far past it</th></tr>
+      <tr><td>Hit rate</td><td>Low, can collapse to zero</td><td>Most reads hit</td><td>Barely higher</td></tr>
+      <tr><td>Memory</td><td>Too little</td><td>Right</td><td>Wasted</td></tr>
+      <tr><td>Sign</td><td>High evictions, keys evicted before reuse</td><td>Few evictions</td><td>Memory unused or cold keys</td></tr>
+      <tr><td>Action</td><td>Grow it</td><td>Keep it</td><td>Shrink it</td></tr>
+      <tr><td>Interview line</td><td colspan="3">&quot;I size a cache to the working set, not the data, because access is skewed and the hit-rate curve flattens, and I measure the curve from a real key trace.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[40,336,420];
+const P={0: [500.0, 300.0], 2: [536.0, 195.8], 5: [590.0, 141.3], 10: [680.0, 96.5], 20: [860.0, 50.0]}, PC={0: 0, 2: 42, 5: 63, 10: 81, 20: 100};
+const CV=n=>F(R("b",1,n),OK);
+const steps={
+"curve":[
+ {pc:[1, 2],t:"Reads are skewed",b:"The risk cache serves 20 keys in this model. A few live addresses get most of the reads. The long tail is asked about rarely.",w2:"Real access is usually like this: a small head and a long tail, often called Zipf-like.",
+  move:{dot:P[0]},text:{dl:"cache size 0: hit rate 0%"}},
+ {pc:[4, 5],t:"Cache the top 2 keys",b:"A cache that holds only the two hottest keys already serves a large share of reads.",w2:"The first keys you cache are worth the most, because they are the hottest.",fill:{...CV(2),dot:OK},move:{dot:P[2]},text:{dl:`2 keys: ${PC[2]}% of reads hit`}},
+ {pc:[4, 5],t:"Cache 5 keys",b:"Five keys cover more of the head. The hit rate climbs, but each new key adds less than the one before.",w2:"The curve bends. That bend is the working set showing itself.",fill:CV(5),move:{dot:P[5]},text:{dl:`5 keys: ${PC[5]}% of reads hit`}},
+ {pc:[4, 5, 6],t:"Cache 10 keys",b:"Ten keys, half of all keys, serve most reads in this model. hitRate(10) adds the weights 1 + 1/2 + ... + 1/10 and divides by the sum over all 20 keys.",w2:"Near the knee of the curve. This is usually the size to pick.",fill:CV(10),move:{dot:P[10]},text:{dl:`10 keys: ${PC[10]}% of reads hit`}},
+ {pc:[4, 5, 6],t:"Cache everything",b:"Doubling the cache to all 20 keys reaches 100 percent, but the last ten keys add little.",w2:"Past the working set, memory is paid for and the hit rate barely moves.",fill:{...CV(20),dot:WAIT},move:{dot:P[20]},text:{dl:`20 keys: ${PC[20]}%, twice the memory of 10`}}
+],
+"thrash":[
+ {pc:[8, 9, 10, 11, 12],t:"A loop over 6 keys, a cache of 5",b:"A job reads keys 1 to 6 in a loop, again and again. The cache holds 5 keys and evicts the least recently used one.",w2:"The working set is 6 keys. The cache is one key too small.",
+  move:{dot:P[5]},fill:{...CV(5),dot:WAIT},text:{dl:"working set 6, cache 5"}},
+ {pc:[10, 11, 12],t:"The failure that matters: every read misses",b:"Key 6 is read. The check on line 10: is 6 in the cache? No. Line 11: is the cache full, 5 of 5? Yes. So line 12 evicts key 1, the least recently used. The loop then reads key 1, which evicts key 2, which is read next. Every key is evicted just before its reuse.",
+  w2:"This is thrashing. With LRU and a loop one key bigger than the cache, the hit rate is zero, not five sixths.",fill:{...F(R("b",1,6),FAIL),dot:FAIL},move:{dot:[590.0,300]},text:{dl:"LRU, loop of 6, cache of 5: 0% hits"},ban:["one key too small: every read misses",336]},
+ {pc:[16],t:"Fix: measure, then size",b:"Record a day of real keys and replay it against several cache sizes. That gives the miss-ratio curve for your own traffic. Pick the size at its knee, above the working set.",
+  w2:"Size to the measured working set, not to the total data and not to a guess.",fill:{...CV(10),dot:OK},move:{dot:P[10]},text:{dl:"measured knee: pick this size"}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"curve": {
+"label": "Go",
+"pc": [
+"weight(k) = 1 / k                       # key 1 is the hottest",
+"hitRate(s) = sum of weight(1..s) / sum of weight(1..20)",
+"",
+"for s in 2, 5, 10, 20:                  # the curve",
+"  print s, hitRate(s)                   # 42, 63, 81, 100 percent",
+"pick s at the knee: the next key adds little",
+"",
+"function lruHits(trace, size):          # thrashing check",
+"  for each key k in trace:",
+"    if k in cache: hits += 1            # hit: move k to the newest end",
+"    else if size(cache) == size:",
+"      evict the least recently used key",
+"    put k at the newest end",
+"  return hits",
+"",
+"record a day of real keys, replay it at several sizes"
+],
+"real": [
+"func weight(k int) float64 { return 1 / float64(k) }",
+"",
+"func modelHitRate(s int) float64 {",
+"\tvar top, all float64",
+"\tfor k := 1; k <= n; k++ {",
+"\t\tall += weight(k)",
+"\t\tif k <= s {",
+"\t\t\ttop += weight(k)",
+"\t\t}",
+"\t}",
+"\treturn top / all",
+"}",
+"",
+"func lruHits(trace []int, size int) int {",
+"\tvar c []int // c[0] = least recently used",
+"\thits := 0",
+"\tfor _, k := range trace {",
+"\t\tif i := slices.Index(c, k); i >= 0 {",
+"\t\t\thits++",
+"\t\t\tc = append(c[:i], c[i+1:]...)",
+"\t\t} else if len(c) == size {",
+"\t\t\tc = c[1:] // evict the least recently used",
+"\t\t}",
+"\t\tc = append(c, k)",
+"\t}",
+"\treturn hits",
+"}",
+"",
+"for _, s := range []int{2, 5, 10, 20} {",
+"\tfmt.Printf(\"  %2d keys: %3.0f%% of reads hit\\n\", s, 100*modelHitRate(s))",
+"}",
+"h5 := lruHits(loop1to6, 5) // 0 of 600: every read misses",
+"h6 := lruHits(loop1to6, 6) // 594 of 600",
+"hits := lruHits(recordedTrace, s) // replay real keys at each size"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4,
+5,
+6,
+7,
+8,
+9,
+10,
+11,
+12
+],
+"4": [
+29,
+30,
+31
+],
+"5": [
+30
+],
+"6": [
+29
+],
+"8": [
+14
+],
+"9": [
+17
+],
+"10": [
+18,
+19,
+20
+],
+"11": [
+21
+],
+"12": [
+22
+],
+"13": [
+24
+],
+"14": [
+26
+],
+"16": [
+34
+]
+}
+},
+"thrash": {
+"label": "Go",
+"pc": [
+"weight(k) = 1 / k                       # key 1 is the hottest",
+"hitRate(s) = sum of weight(1..s) / sum of weight(1..20)",
+"",
+"for s in 2, 5, 10, 20:                  # the curve",
+"  print s, hitRate(s)                   # 42, 63, 81, 100 percent",
+"pick s at the knee: the next key adds little",
+"",
+"function lruHits(trace, size):          # thrashing check",
+"  for each key k in trace:",
+"    if k in cache: hits += 1            # hit: move k to the newest end",
+"    else if size(cache) == size:",
+"      evict the least recently used key",
+"    put k at the newest end",
+"  return hits",
+"",
+"record a day of real keys, replay it at several sizes"
+],
+"real": [
+"func weight(k int) float64 { return 1 / float64(k) }",
+"",
+"func modelHitRate(s int) float64 {",
+"\tvar top, all float64",
+"\tfor k := 1; k <= n; k++ {",
+"\t\tall += weight(k)",
+"\t\tif k <= s {",
+"\t\t\ttop += weight(k)",
+"\t\t}",
+"\t}",
+"\treturn top / all",
+"}",
+"",
+"func lruHits(trace []int, size int) int {",
+"\tvar c []int // c[0] = least recently used",
+"\thits := 0",
+"\tfor _, k := range trace {",
+"\t\tif i := slices.Index(c, k); i >= 0 {",
+"\t\t\thits++",
+"\t\t\tc = append(c[:i], c[i+1:]...)",
+"\t\t} else if len(c) == size {",
+"\t\t\tc = c[1:] // evict the least recently used",
+"\t\t}",
+"\t\tc = append(c, k)",
+"\t}",
+"\treturn hits",
+"}",
+"",
+"for _, s := range []int{2, 5, 10, 20} {",
+"\tfmt.Printf(\"  %2d keys: %3.0f%% of reads hit\\n\", s, 100*modelHitRate(s))",
+"}",
+"h5 := lruHits(loop1to6, 5) // 0 of 600: every read misses",
+"h6 := lruHits(loop1to6, 6) // 594 of 600",
+"hits := lruHits(recordedTrace, s) // replay real keys at each size"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4,
+5,
+6,
+7,
+8,
+9,
+10,
+11,
+12
+],
+"4": [
+29,
+30,
+31
+],
+"5": [
+30
+],
+"6": [
+29
+],
+"8": [
+14
+],
+"9": [
+17
+],
+"10": [
+18,
+19,
+20
+],
+"11": [
+21
+],
+"12": [
+22
+],
+"13": [
+24
+],
+"14": [
+26
+],
+"16": [
+34
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADR, C4 and fitness functions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>ADR, C4 and fitness functions</h1>
+  <p class="lede">A decision record says the graph is a projection of SQL, never the source of truth. A C4 diagram shows the deployables. A lint in the build fails any Mermaid label with a semicolon, because the renderer breaks on it. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="build" id="tab-build">Decision into the build</button>
+    <button role="tab" aria-selected="false" data-mode="wiki" id="tab-wiki">Rules in a wiki</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">An ADR, a C4 diagram, a fitness function in the build, and a pull request it checks</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-ad">
+          <g class="node" id="n-adr" data-c="c"><rect class="box" id="r-adr" x="20" y="30" width="250" height="140" rx="8"/><text id="t-adrl" x="145.0" y="88" text-anchor="middle" font-size="15">ADR 12</text><text id="t-adrs" x="145.0" y="105" text-anchor="middle" font-size="12" font-weight="400">graph is a projection of SQL</text><text id="t-adrs2" x="145.0" y="122" text-anchor="middle" font-size="12" font-weight="400">rejected: graph as source</text></g>
+          <g class="node" id="n-c4" data-c="o"><rect class="box" id="r-c4" x="330" y="30" width="250" height="120" rx="8"/><text id="t-c4l" x="455.0" y="78" text-anchor="middle" font-size="15">C4 diagram</text><text id="t-c4s" x="455.0" y="95" text-anchor="middle" font-size="12" font-weight="400">Context, Containers,</text><text id="t-c4s2" x="455.0" y="112" text-anchor="middle" font-size="12" font-weight="400">Components, Code</text></g>
+          <g class="node" id="n-ff" data-c="o"><rect class="box" id="r-ff" x="640" y="30" width="240" height="120" rx="8"/><text id="t-ffl" x="760.0" y="78" text-anchor="middle" font-size="15">Fitness function</text><text id="t-ffs" x="760.0" y="95" text-anchor="middle" font-size="12" font-weight="400">lint in the build</text><text id="t-ffs2" x="760.0" y="112" text-anchor="middle" font-size="12" font-weight="400">no ; in a Mermaid label</text></g>
+          <g class="arrow" id="a-ex" data-c="x"><path class="route" d="M270 90 L326 90" marker-end="url(#arr)"/><text id="t-exl" x="298" y="22" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">explains</text></g>
+          <g class="arrow" id="a-ck" data-c="x"><path class="route" d="M580 90 L636 90" marker-end="url(#arr)"/><text id="t-ckl" x="608" y="22" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">checked by</text></g>
+          <g class="node" id="n-pr" data-c="h"><rect class="box" id="r-pr" x="330" y="230" width="250" height="70" rx="8"/><text id="t-prl" x="455.0" y="262" text-anchor="middle" font-size="15">Pull request</text><text id="t-prs" x="455.0" y="278" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-mg" data-c="h"><rect class="box" id="r-mg" x="640" y="200" width="240" height="50" rx="8"/><text id="t-mgl" x="760.0" y="230" text-anchor="middle" font-size="15">Merged</text></g>
+          <g class="node" id="n-bl" data-c="h"><rect class="box" id="r-bl" x="640" y="280" width="240" height="50" rx="8"/><text id="t-bll" x="760.0" y="310" text-anchor="middle" font-size="15">Blocked</text></g>
+          <g class="arrow" id="a-pf" data-c="x"><path class="route" d="M455 230 L455 205 C455 180 700 190 720 154" marker-end="url(#arr)"/><text id="t-pfl" x="560" y="214" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">checked</text></g>
+          <g class="arrow" id="a-tm" data-c="x"><path class="route" d="M580 255 L636 230" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-tb" data-c="x"><path class="route" d="M580 280 L636 300" marker-end="url(#arr)"/></g>
+          <g class="node" id="n-adr2" data-c="h"><rect class="box" id="r-adr2" x="20" y="230" width="250" height="70" rx="8"/><text id="t-adr2l" x="145.0" y="262" text-anchor="middle" font-size="15">ADR 31</text><text id="t-adr2s" x="145.0" y="278" text-anchor="middle" font-size="12" font-weight="400">supersedes ADR 12</text></g>
+          <g class="arrow" id="a-sup" data-c="x"><path class="route" d="M145 230 L145 176" marker-end="url(#arr)"/><text id="t-supl" x="155" y="206" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">supersedes</text></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-adr-c4-fitness/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a record, a diagram or a check</span>
+    <span style="--c:var(--ok)">checked and passing</span>
+    <span style="--c:var(--wait)">unchecked, drifting</span>
+    <span style="--c:var(--fail)">failed or out of date</span>
+    <span style="--c:var(--line)">superseded or not yet made</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a repository</h2>
+      <p>ADRs live next to the code, numbered: <code>docs/adr/0012-graph-is-a-projection.md</code>. Every schema change ships as a numbered migration gated by a runner. A gate fails a unit-test tier over three minutes, or any file over 1,500 lines.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: architecture tests</h2>
+      <p>A lint fails when <code>domain</code> imports <code>infrastructure</code>. ArchUnit (Java) and import linters (Go, Python) do this. Evolutionary architecture: everything may change, but the fitness functions guard what matters.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>ADR</th><th>C4 diagram</th><th>Fitness function</th></tr>
+      <tr><td>Holds</td><td>The why: context, options, decision, consequences</td><td>The picture, one zoom level at a time</td><td>A rule the build runs</td></tr>
+      <tr><td>Changes by</td><td>A new ADR that supersedes</td><td>Redrawing at the same level</td><td>Editing the check</td></tr>
+      <tr><td>Fails when</td><td>Rejected options are missing</td><td>It mixes levels, or drifts</td><td>It lives on a wiki instead</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"ADRs hold the why, C4 holds the picture, and fitness functions keep both true in the build."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+build:[
+ {"t": "Write the decision down", "b": "ADR 12 (architecture decision record) holds the context, the options, the decision and its consequences. The decision: the graph is a projection of SQL, never the source of truth. The ADR check looks for a Rejected section. It finds one: 0 failures.", "pc": [8, 9], "w": "The rejected option is written too, so nobody has to argue it again. The consequence: any graph can be rebuilt from the warehouse.", "m": "decisions recorded: 1"},
+ {"t": "Draw it at one zoom level", "b": "A C4 container diagram shows the deployables: indexer, warehouse, graph sync, graph. It stays at that one level. It is a Mermaid block in a Markdown file, so the build can read it.", "pc": [1, 2], "w": "C4 has four zoom levels: Context, Containers, Components, Code. Pick one per diagram and stay there.", "n": {"c4": "c"}, "a": {"ex": "ok"}, "x": {"c4s": "Containers: indexer, warehouse,", "c4s2": "graph sync, graph"}},
+ {"t": "Put the rule in the build", "b": "A lint in the build reads every Mermaid block. On each line it finds the labels: the text inside [ ], ( ), { } or | |. A label that holds a semicolon fails, because the renderer cuts the line there.", "pc": [3, 4], "w": "A fitness function is a build check that a property still holds.", "n": {"ff": "c"}, "a": {"ck": "ok"}},
+ {"t": "A pull request breaks the rule", "b": "A pull request adds the label [Indexer; fetch and decode]. The build runs every check on every file. The lint reports docs/arch.md line 3: 1 failure, so the pull request is blocked.", "pc": [4, 11, 12], "w": "The rule caught the drift before it reached main, with no reviewer involved.", "n": {"pr": "c", "ff": "f", "bl": "f"}, "a": {"pf": "f", "tb": "f"}, "x": {"prs": "adds a label with ;"}},
+ {"t": "Fixed, then merged", "b": "The author writes [Indexer: fetch and decode]. The build runs the same checks again: 0 failures, so the change merges.", "pc": [11, 12], "w": "Small rule, no broken diagrams since.", "n": {"ff": "c", "bl": "h", "mg": "ok"}, "a": {"pf": "ok", "tb": "x", "tm": "ok"}, "x": {"prs": "label fixed"}},
+ {"t": "A new decision supersedes the old one", "b": "Later the team decides something different. ADR 31 says it supersedes ADR 12. ADR 12 only gets its status changed, its text is never edited, so the history stays readable.", "pc": [14], "w": "Never edit an accepted ADR. Write a new one that points back.", "n": {"adr2": "c", "adr": "o", "pr": "h", "mg": "h"}, "a": {"sup": "c", "pf": "x", "tm": "x"}, "x": {"adrs2": "superseded, kept as written"}, "m": "decisions recorded: 2"}
+],
+wiki:[
+ {"t": "An ADR with no rejected options", "b": "ADR 12 states the decision and its consequence. It has no Rejected section. No check runs, so nobody notices.", "pc": [16, 9], "w": "The decision looks obvious today. It will not in a year.", "n": {"adr": "w"}, "x": {"adrs2": "rejected: none written"}, "m": "rules in the build: 0"},
+ {"t": "A year later, the debate starts again", "b": "A new engineer proposes making the graph the source of truth. Nobody remembers why that was rejected. Two weeks go into the same argument.", "pc": [8], "w": "The rejected options are what stop a debate from repeating.", "n": {"adr": "f"}, "x": {"adrs2": "why not the graph as source?"}},
+ {"t": "A rule on a wiki page", "b": "A wiki page says the domain package must never import the infrastructure package. The build holds no checks: the list of checks is empty.", "pc": [16], "w": "A rule nobody runs is read once and forgotten.", "n": {"ff": "w", "c4": "c"}, "x": {"ffl": "Wiki page", "ffs": "not run by the build", "ffs2": "domain must not import infra", "c4s": "shows domain apart", "c4s2": "from infrastructure"}},
+ {"t": "The forbidden import merges", "b": "A pull request adds import \"example.com/indexer/infra/starrocks\" to domain/swap.go to save time. The build loops over 0 checks, finds 0 failures, and it merges.", "pc": [16, 11, 12], "w": "Rules outside the build drift quietly.", "n": {"pr": "c", "mg": "w"}, "a": {"tm": "w"}, "x": {"prs": "domain imports infra"}},
+ {"t": "The picture now lies", "b": "The diagram still shows domain apart from infrastructure. The code says otherwise. The next reader trusts the picture.", "pc": [7], "w": "A diagram that nothing checks drifts from the code, just like the wiki.", "n": {"c4": "f"}, "x": {"c4s": "picture no longer true", "c4s2": ""}},
+ {"t": "The fix: rejected options, rules in the build", "b": "All 3 checks go into the build. The ADR check fails ADR 12: no rejected options, so the rejected option and its reason are added. The import lint parses the imports of each domain file and fails domain/swap.go on the infra import, so the next forbidden import is blocked.", "pc": [7, 9, 11, 12], "w": "ADRs hold the why, C4 holds the picture, and fitness functions keep both true in the build.", "n": {"adr": "c", "ff": "c", "c4": "c", "pr": "c", "mg": "h", "bl": "f"}, "a": {"ck": "ok", "ex": "ok", "pf": "f", "tm": "x", "tb": "f"}, "x": {"adrs2": "rejected: graph as source, and why", "ffl": "Fitness function", "ffs": "lint in the build", "prs": "next forbidden import", "c4s": "Containers: indexer, warehouse,", "c4s2": "graph sync, graph"}, "m": "rules in the build: 3"}
+]};
+const SCENE={"build": "ad", "wiki": "ad"};
+const CODE={
+ build:{label:"Go",why:"",
+  pc:[
+   "mermaidSemicolons(file):",
+   "  for each line inside a mermaid block:",
+   "    for each label [..] (..) {..} |..| on the line:",
+   "      if the label holds a semicolon: fail     # the renderer breaks on it",
+   "domainImportsInfra(file):",
+   "  if the file is in the domain package:",
+   "    for each import: if it is an infra package: fail",
+   "adrHasRejected(file):",
+   "  if the file is an ADR with no Rejected section: fail",
+   "build(pull request):",
+   "  for each file, for each check in the build: collect failures",
+   "  0 failures: merge. 1 or more: block",
+   "# a new decision",
+   "write ADR 31 that supersedes ADR 12, never edit ADR 12",
+   "# the wiki",
+   "checks in the build = none                     # the rule is only read"],
+  real:[
+   "func mermaidSemicolons(name, md string) []string {",
+   "\tfor i, line := range strings.Split(md, \"\\n\") {",
+   "\t\tswitch {",
+   "\t\tcase strings.HasPrefix(line, \"```mermaid\"):",
+   "\t\t\tin = true",
+   "\t\tcase in:",
+   "\t\t\tfor _, l := range label.FindAllString(line, -1) {",
+   "\t\t\t\tif strings.Contains(l, \";\") {",
+   "\t\t\t\t\tbad = append(bad, fmt.Sprintf(\"%s:%d: label %s has a ;\", name, i+1, l))",
+   "\t\t\t\t}",
+   "\t\t\t}",
+   "\t\t}",
+   "\t}",
+   "\treturn bad",
+   "}",
+   "",
+   "func domainImportsInfra(name, src string) []string {",
+   "\tif !strings.HasPrefix(name, \"domain/\") {",
+   "\t\treturn nil",
+   "\t}",
+   "\tf, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)",
+   "\tif err != nil {",
+   "\t\treturn []string{name + \": \" + err.Error()}",
+   "\t}",
+   "\tfor _, imp := range f.Imports {",
+   "\t\tpath, _ := strconv.Unquote(imp.Path.Value)",
+   "\t\tif strings.Contains(path, \"/infra\") {",
+   "\t\t\tbad = append(bad, fmt.Sprintf(\"%s: domain imports %s\", name, path))",
+   "\t\t}",
+   "\t}",
+   "\treturn bad",
+   "}",
+   "",
+   "func adrHasRejected(name, md string) []string {",
+   "\tif strings.HasPrefix(name, \"docs/adr/\") && !strings.Contains(md, \"## Rejected\") {",
+   "\t\treturn []string{name + \": no rejected options\"}",
+   "\t}",
+   "\treturn nil",
+   "}",
+   "",
+   "func build(files map[string]string, checks []func(string, string) []string) []string {",
+   "\tfor _, name := range sortedNames(files) {",
+   "\t\tfor _, check := range checks {",
+   "\t\t\tbad = append(bad, check(name, files[name])...)",
+   "\t\t}",
+   "\t}",
+   "\treturn bad // empty: merged, else: blocked",
+   "}",
+   "",
+   "all := []func(string, string) []string{mermaidSemicolons, domainImportsInfra, adrHasRejected}",
+   "none := []func(string, string) []string{} // the wiki: the build runs nothing"],
+  map:{"14": [34, 35], "1": [1], "2": [2, 3, 4, 5, 6], "3": [7], "4": [8, 9, 10], "5": [17], "6": [18, 19, 20], "7": [21, 25, 26, 27, 28, 29], "8": [34], "9": [35, 36, 37], "10": [41], "11": [42, 43, 44, 45], "12": [47], "16": [50]}},
+ wiki:{label:"Go",why:"",
+  pc:[
+   "mermaidSemicolons(file):",
+   "  for each line inside a mermaid block:",
+   "    for each label [..] (..) {..} |..| on the line:",
+   "      if the label holds a semicolon: fail     # the renderer breaks on it",
+   "domainImportsInfra(file):",
+   "  if the file is in the domain package:",
+   "    for each import: if it is an infra package: fail",
+   "adrHasRejected(file):",
+   "  if the file is an ADR with no Rejected section: fail",
+   "build(pull request):",
+   "  for each file, for each check in the build: collect failures",
+   "  0 failures: merge. 1 or more: block",
+   "# a new decision",
+   "write ADR 31 that supersedes ADR 12, never edit ADR 12",
+   "# the wiki",
+   "checks in the build = none                     # the rule is only read"],
+  real:[
+   "func mermaidSemicolons(name, md string) []string {",
+   "\tfor i, line := range strings.Split(md, \"\\n\") {",
+   "\t\tswitch {",
+   "\t\tcase strings.HasPrefix(line, \"```mermaid\"):",
+   "\t\t\tin = true",
+   "\t\tcase in:",
+   "\t\t\tfor _, l := range label.FindAllString(line, -1) {",
+   "\t\t\t\tif strings.Contains(l, \";\") {",
+   "\t\t\t\t\tbad = append(bad, fmt.Sprintf(\"%s:%d: label %s has a ;\", name, i+1, l))",
+   "\t\t\t\t}",
+   "\t\t\t}",
+   "\t\t}",
+   "\t}",
+   "\treturn bad",
+   "}",
+   "",
+   "func domainImportsInfra(name, src string) []string {",
+   "\tif !strings.HasPrefix(name, \"domain/\") {",
+   "\t\treturn nil",
+   "\t}",
+   "\tf, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ImportsOnly)",
+   "\tif err != nil {",
+   "\t\treturn []string{name + \": \" + err.Error()}",
+   "\t}",
+   "\tfor _, imp := range f.Imports {",
+   "\t\tpath, _ := strconv.Unquote(imp.Path.Value)",
+   "\t\tif strings.Contains(path, \"/infra\") {",
+   "\t\t\tbad = append(bad, fmt.Sprintf(\"%s: domain imports %s\", name, path))",
+   "\t\t}",
+   "\t}",
+   "\treturn bad",
+   "}",
+   "",
+   "func adrHasRejected(name, md string) []string {",
+   "\tif strings.HasPrefix(name, \"docs/adr/\") && !strings.Contains(md, \"## Rejected\") {",
+   "\t\treturn []string{name + \": no rejected options\"}",
+   "\t}",
+   "\treturn nil",
+   "}",
+   "",
+   "func build(files map[string]string, checks []func(string, string) []string) []string {",
+   "\tfor _, name := range sortedNames(files) {",
+   "\t\tfor _, check := range checks {",
+   "\t\t\tbad = append(bad, check(name, files[name])...)",
+   "\t\t}",
+   "\t}",
+   "\treturn bad // empty: merged, else: blocked",
+   "}",
+   "",
+   "all := []func(string, string) []string{mermaidSemicolons, domainImportsInfra, adrHasRejected}",
+   "none := []func(string, string) []string{} // the wiki: the build runs nothing"],
+  map:{"14": [34, 35], "1": [1], "2": [2, 3, 4, 5, 6], "3": [7], "4": [8, 9, 10], "5": [17], "6": [18, 19, 20], "7": [21, 25, 26, 27, 28, 29], "8": [34], "9": [35, 36, 37], "10": [41], "11": [42, 43, 44, 45], "12": [47], "16": [50]}}};
+let mode="build";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

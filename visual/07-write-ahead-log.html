@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write-ahead log</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Write-ahead log: why a commit survives a crash</h1>
+  <p class="lede">A payment sets wallet 7 from 10 to 2 and commits. One millisecond later the server loses power. The changed table page was still only in memory. Watch the write-ahead log (WAL) bring the payment back. The second tab turns the flush off.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="wal">Commit, crash, replay</button>
+    <button role="tab" aria-selected="false" data-mode="nofsync">The failure: no flush at commit</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Write-ahead log: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">client</span>
+    <span style="--c:var(--wait)">in memory only, lost on power cut</span>
+    <span style="--c:var(--ok)">safe on disk</span>
+    <span style="--c:var(--coord)">replayed from the log</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL: the WAL is both crash recovery and replication, because replicas replay the same log stream. Kafka: the log is the product, built on the same idea. Hardware: the disk's flush latency sets the commit latency.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep <code>fsync</code> on, always: with it off a crash can corrupt the database. PostgreSQL's <code>synchronous_commit = off</code> is the safe way to trade: a crash loses the last moments of commits, but nothing is corrupted. Use it only for data you can afford to lose.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th>Setting</th><th>Client hears "committed"</th><th>After a power cut</th></tr>
+      <tr><td>Default: flush the WAL at commit</td><td>After the log is on disk</td><td>Every committed change is replayed</td></tr>
+      <tr><td><code>synchronous_commit = off</code></td><td>Before the log is flushed</td><td>The last moments of commits are lost, no corruption</td></tr>
+      <tr><td><code>fsync = off</code></td><td>Without any flush</td><td>Lost commits, and the database can be corrupted</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Durable means the change is in the log on disk before the client hears committed, and after a crash the log is replayed."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const sc=(o)=>[B(40,50,200,"client: payment",o.ck||"s",44),F(330,40,550,130,"database memory"),F(20,210,860,140,"disk"),
+ B(350,80,250,o.mem||"page: wallet 7 = 10",o.mk||"n",40),B(620,80,240,o.buf||"log buffer: empty",o.bk||"n",40),
+ T(40,244,"WAL file (append only)"),B(40,256,380,o.wal||"... record 41",o.wk||"n",40),
+ T(480,244,"table pages"),B(480,256,380,o.pg||"wallet 7 = 10",o.pk||"n",40),T(40,330,o.note||"",o.nk||"m","start",15)].concat(o.ex||[]);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-write-ahead-log/main.go</code> keeps a WAL file and table pages as its disk, cuts the power, restarts and replays. It prints every record number and balance quoted here (<code>go run .</code>).";
+const CODE={
+wal:{pc:["wallet 7 = 10 in memory and on disk",
+"update(wallet 7, 2):",
+"  page in memory = 2                       # the disk is untouched",
+"  log buffer += record 42: wallet 7 = 2",
+"commit():",
+"  append the log buffer to the WAL file",
+"  fsync: wait until the disk holds it      # one small sequential write",
+"  answer \"committed\"                       # the page is not written yet",
+"power cut: memory and the log buffer are wiped",
+"restart(disk):",
+"  load the pages from disk                 # wallet 7 = 10",
+"  for each WAL record after the checkpoint:",
+"    committed: redo it, else drop it",
+"checkpoint(): write changed pages, move the checkpoint"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Record is one WAL record: \"wallet 7 set to 2\", and whether it committed.", "type Record struct {", "\tlsn     int", "\twallet  int", "\tbalance int", "\tcommit  bool", "}"],[""],["// Update changes the page in memory and writes a record into the log buffer.", "// Nothing reaches the disk yet.", "func (e *Engine) Update(wallet, balance int) Record {", "\te.pages[wallet] = balance", "\tr := Record{lsn: e.nextLSN, wallet: wallet, balance: balance}", "\te.nextLSN++", "\te.logBuf = append(e.logBuf, r)", "\treturn r", "}"],[""],["// Commit appends the log buffer to the WAL file. With fsync and", "// synchronous_commit on, it waits until the disk holds the record. Only then", "// does it answer \"committed\".", "func (e *Engine) Commit() string {", "\tfor _, r := range e.logBuf {", "\t\tr.commit = true", "\t\te.osCache = append(e.osCache, r) // write(): the OS has it, the disk may not", "\t}", "\te.logBuf = nil", "\tif e.fsync && e.syncCommit {", "\t\te.Flush()", "\t}", "\treturn \"committed\"", "}"],[""],["// Flush is fsync: the OS cache of the WAL file goes to the disk. With", "// synchronous_commit = off, the WAL writer calls it a moment after commit.", "func (e *Engine) Flush() {", "\tif !e.fsync {", "\t\treturn // fsync = off: the write stays in the OS cache", "\t}", "\te.disk.wal = append(e.disk.wal, e.osCache...)", "\te.osCache = nil", "}"],[""],["// PowerCut wipes everything that is not on disk: memory and the OS cache.", "func (e *Engine) PowerCut() *Disk {", "\treturn e.disk", "}"],[""],["// Restart loads the pages from disk and replays the WAL after the", "// checkpoint: committed records are redone, the rest are dropped.", "func Restart(d *Disk) (e *Engine, replayed int) {", "\te = &Engine{disk: d, pages: map[int]int{}, fsync: true, syncCommit: true}", "\tfor id, b := range d.pages {", "\t\te.pages[id] = b", "\t}", "\tfor _, r := range d.wal {", "\t\tif r.lsn > d.checkpoint && r.commit {", "\t\t\te.pages[r.wallet] = r.balance", "\t\t\treplayed++", "\t\t}", "\t\te.nextLSN = r.lsn + 1", "\t}", "\treturn e, replayed", "}"],[""],["// Checkpoint writes the changed pages to disk and records how far the log", "// is applied. WAL before that point can be recycled.", "func (e *Engine) Checkpoint() {", "\tfor id, b := range e.pages {", "\t\te.disk.pages[id] = b", "\t}", "\te.disk.checkpoint = e.disk.wal[len(e.disk.wal)-1].lsn", "}"],[""],["func walOn() {", "\tfmt.Println(\"== fsync on: wallet 7, 10 to 2\")", "\te, _ := Restart(newDisk())", "\tfmt.Printf(\"start: memory %d, page on disk %d\\n\", e.pages[7], e.disk.pages[7])", "", "\tr := e.Update(7, 2)", "\tfmt.Printf(\"UPDATE: page in memory %d, log buffer record %d: wallet %d = %d\\n\", e.pages[7], r.lsn, r.wallet, r.balance)", "", "\tanswer := e.Commit()", "\tlast := e.disk.wal[len(e.disk.wal)-1]", "\tfmt.Printf(\"COMMIT: record %d flushed to the WAL, then %q; page on disk still %d\\n\", last.lsn, answer, e.disk.pages[7])", "", "\td := e.PowerCut()", "\tfmt.Printf(\"power cut: memory wiped, page on disk %d, WAL ends at record %d\\n\", d.pages[7], d.wal[len(d.wal)-1].lsn)", "", "\te, n := Restart(d)", "\tfmt.Printf(\"restart: replayed %d record after checkpoint %d, wallet 7 = %d\\n\", n, d.checkpoint, e.pages[7])", "", "\te.Checkpoint()", "\tfmt.Printf(\"checkpoint: page on disk %d, log applied up to record %d\\n\", d.pages[7], d.checkpoint)", "}"]),
+  map:[["wallet 7 = 10 in memory","e, _ := Restart(newDisk())..start: memory"],["update(wallet 7, 2):","func (e *Engine) Update(","r := e.Update(7, 2)..UPDATE: page in memory"],["page in memory = 2","e.pages[wallet] = balance"],["log buffer += record","r := Record{lsn: e.nextLSN..e.logBuf = append(e.logBuf, r)"],
+   ["commit():","func (e *Engine) Commit()","answer := e.Commit()..COMMIT: record %d"],["append the log buffer","for _, r := range e.logBuf {..e.osCache = append"],["fsync: wait","if e.fsync && e.syncCommit {..e.Flush()","// Flush is fsync..e.osCache = nil"],["answer \"committed\"","return \"committed\""],
+   ["power cut:","// PowerCut wipes..return e.disk","d := e.PowerCut()..power cut: memory wiped"],["restart(disk):","func Restart(d *Disk)","e, n := Restart(d)..restart: replayed"],["load the pages from disk","for id, b := range d.pages {..e.pages[id] = b"],
+   ["for each WAL record","for _, r := range d.wal {"],["committed: redo it","if r.lsn > d.checkpoint && r.commit {..replayed++"],["checkpoint():","// Checkpoint writes..e.disk.checkpoint = ","e.Checkpoint()..checkpoint: page on disk"]]}]},
+nofsync:{pc:["fsync = off                                # never wait for the disk",
+"commit():",
+"  append the log buffer to the WAL file    # it lands in the OS cache",
+"  if fsync and synchronous_commit: flush   # skipped",
+"  answer \"committed\"",
+"power cut: memory and the OS cache are wiped",
+"restart: nothing after record 41 to replay  # wallet 7 = 10",
+"fix one: fsync on                          # wallet 7 = 2 after the cut",
+"fix two: synchronous_commit = off",
+"  answer first, the WAL writer flushes a moment later",
+"  a cut before the flush loses that last commit only"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Engine is the running database: pages in memory, the log buffer, and the", "// operating system's cache of file writes that are not on disk yet.", "type Engine struct {", "\tdisk    *Disk", "\tpages   map[int]int", "\tlogBuf  []Record", "\tosCache []Record", "\tnextLSN int", "\t// fsync = off: never wait for the disk. synchronous_commit = off: answer", "\t// first, and let the WAL writer flush a moment later.", "\tfsync      bool", "\tsyncCommit bool", "}"],[""],["// Commit appends the log buffer to the WAL file. With fsync and", "// synchronous_commit on, it waits until the disk holds the record. Only then", "// does it answer \"committed\".", "func (e *Engine) Commit() string {", "\tfor _, r := range e.logBuf {", "\t\tr.commit = true", "\t\te.osCache = append(e.osCache, r) // write(): the OS has it, the disk may not", "\t}", "\te.logBuf = nil", "\tif e.fsync && e.syncCommit {", "\t\te.Flush()", "\t}", "\treturn \"committed\"", "}"],[""],["// Flush is fsync: the OS cache of the WAL file goes to the disk. With", "// synchronous_commit = off, the WAL writer calls it a moment after commit.", "func (e *Engine) Flush() {", "\tif !e.fsync {", "\t\treturn // fsync = off: the write stays in the OS cache", "\t}", "\te.disk.wal = append(e.disk.wal, e.osCache...)", "\te.osCache = nil", "}"],[""],["// PowerCut wipes everything that is not on disk: memory and the OS cache.", "func (e *Engine) PowerCut() *Disk {", "\treturn e.disk", "}"],[""],["func walOff() {", "\tfmt.Println(\"== fsync off\")", "\te, _ := Restart(newDisk())", "\te.fsync = false", "\te.Update(7, 2)", "\tanswer := e.Commit()", "\tcached := e.osCache[0]", "\tonDisk := e.disk.wal[len(e.disk.wal)-1]", "\tfmt.Printf(\"COMMIT: %q at once; record %d is in the OS cache, the WAL on disk ends at record %d\\n\", answer, cached.lsn, onDisk.lsn)", "", "\td := e.PowerCut()", "\tfmt.Printf(\"power cut: the OS cache is wiped; WAL ends at record %d\\n\", d.wal[len(d.wal)-1].lsn)", "", "\te, n := Restart(d)", "\tfmt.Printf(\"restart: replayed %d, wallet 7 = %d, the client was told %q\\n\", n, e.pages[7], answer)", "", "\t// Fix one: fsync on. The commit waits for one small sequential flush.", "\te, _ = Restart(newDisk())", "\te.Update(7, 2)", "\te.Commit()", "\te, _ = Restart(e.PowerCut())", "\tfmt.Printf(\"fix, fsync on: after the power cut wallet 7 = %d\\n\", e.pages[7])", "", "\t// Fix two: synchronous_commit = off. The answer comes before the flush.", "\te, _ = Restart(newDisk())", "\te.syncCommit = false", "\te.Update(7, 2)", "\te.Commit()", "\te.Flush() // the WAL writer, a moment later", "\te, _ = Restart(e.PowerCut())", "\tfmt.Printf(\"synchronous_commit = off, power cut after the WAL writer: wallet 7 = %d\\n\", e.pages[7])", "", "\te.syncCommit = false // still off after the restart", "\te.Update(7, 5)", "\te.Commit()", "\te, n = Restart(e.PowerCut()) // power cut before the WAL writer ran", "\tfmt.Printf(\"power cut before the WAL writer: replayed %d, wallet 7 = %d: the last commit is lost, the log stays whole\\n\", n, e.pages[7])", "}"]),
+  map:[["fsync = off  ","// fsync = off: never..syncCommit bool","e.fsync = false"],["commit():","func (e *Engine) Commit()","answer := e.Commit()"],["append the log buffer","for _, r := range e.logBuf {..e.osCache = append"],
+   ["if fsync and synchronous_commit","if e.fsync && e.syncCommit {","if !e.fsync {..return // fsync = off"],["answer \"committed\"","return \"committed\"","cached := e.osCache[0]..COMMIT: %q at once"],
+   ["power cut:","// PowerCut wipes..return e.disk","d := e.PowerCut()..power cut: the OS cache"],["restart: nothing","e, n := Restart(d)..restart: replayed"],["fix one","// Fix one: fsync on..fix, fsync on"],
+   ["fix two","// Fix two: synchronous_commit = off..e.Commit()"],["answer first, the WAL writer","e.Flush() // the WAL writer..after the WAL writer"],["a cut before the flush","e.syncCommit = false // still off..power cut before the WAL writer: replayed"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["# postgresql.conf",
+"fsync = off                # the failure: a crash loses commits, can corrupt pages",
+"fsync = on                 # fix one: the default, keep it",
+"synchronous_commit = on    # COMMIT waits for the WAL flush",
+"",
+"-- fix two, per transaction, for data you can afford to lose:",
+"BEGIN;",
+"SET LOCAL synchronous_commit = off;",
+"UPDATE wallet SET balance = 2 WHERE id = 7;",
+"COMMIT;                    -- answers before the flush"],
+  map:[["fsync = off  ","fsync = off"],["commit():","synchronous_commit = on"],["append the log buffer","synchronous_commit = on"],["if fsync and synchronous_commit","fsync = off","synchronous_commit = on"],["answer \"committed\"","synchronous_commit = on"],
+   ["power cut:","fsync = off"],["restart: nothing","fsync = off"],["fix one","fsync = on  "],["fix two","-- fix two..SET LOCAL"],["answer first, the WAL writer","COMMIT;"],["a cut before the flush","SET LOCAL"]]}]}};
+// CODE PANEL END
+const S={
+wal:{name:"wallet 7: 10 to 2",st:[
+ {t:"Start: a payment arrives",pc:["wallet 7 = 10 in memory", "update(wallet 7, 2):"],b:"The client sends UPDATE wallet SET balance = 2 WHERE id = 7. Memory and disk both hold balance 10.",w:"Two files on disk matter: the WAL, which only grows at the end, and the table pages.",d:sc({})},
+ {t:"Change in memory, record in the log buffer",pc:["update(wallet 7, 2):", "page in memory = 2", "log buffer += record"],b:"The engine changes the page in memory to 2. It also writes record 42, 'wallet 7 set to 2', into the log buffer. Nothing has touched the disk yet.",w:"Both are still in memory. A power cut now loses them, and that is fine: nothing was committed.",d:sc({mem:"page: wallet 7 = 2",mk:"w",buf:"record 42: wallet 7 = 2",bk:"w",ex:[A(242,72,346,96,"UPDATE","f")]})},
+ {t:"COMMIT: flush the log",pc:["commit():", "append the log buffer", "fsync: wait", "answer \"committed\""],b:"The client sends COMMIT. The engine appends record 42 to the WAL file and calls fsync, which waits until the disk holds it. Only then does it answer 'committed'. The page on disk still says 10.",w:"One small sequential write per commit. The page itself is not written yet.",d:sc({mem:"page: wallet 7 = 2",mk:"w",buf:"log buffer: flushed",wal:"... record 41, record 42",wk:"c",ex:[A(740,122,330,254,"","c"),T(535,200,"fsync at commit","c"),A(346,82,242,82,"committed","c")],note:"committed: the record is on disk",nk:"c"})},
+ {t:"Power fails",pc:["power cut:"],b:"One millisecond later the power goes. Memory is wiped. The table page on disk still says 10.",w:"The only place the payment still exists is record 42 in the WAL.",d:sc({ck:"s",mem:"memory wiped",mk:"x",buf:"memory wiped",bk:"x",wal:"... record 41, record 42",wk:"c",pg:"wallet 7 = 10 (old)",pk:"x",note:"power cut: page on disk is out of date",nk:"x"})},
+ {t:"Restart: replay the log",pc:["restart(disk):", "load the pages from disk", "for each WAL record", "committed: redo it"],b:"On restart the database loads the pages from disk: wallet 7 = 10. Then it reads the WAL after the last checkpoint, record 41. Record 42 is there and committed, so it is redone: 1 record replayed, and the page says 2.",w:"Committed changes are redone. A record with no commit would be dropped.",d:sc({mem:"page: wallet 7 = 2",mk:"r",wal:"... record 41, record 42",wk:"c",pg:"wallet 7 = 2",pk:"r",ex:[A(230,254,346,108,"","r"),T(300,200,"replay","r")],note:"the payment survived",nk:"c"})},
+ {t:"Checkpoint: pages catch up",pc:["checkpoint():"],b:"In the background a checkpoint writes changed pages to disk, so wallet 7 = 2 there too. It records that the log is applied up to record 42. Older log can be recycled. Replicas read the same log.",w:"The log makes commits fast and safe. Pages go to disk later, in bulk.",d:sc({mem:"page: wallet 7 = 2",wal:"checkpoint after record 42",wk:"c",pg:"wallet 7 = 2",pk:"c",ex:[A(600,122,660,254,"","c"),T(645,200,"checkpoint","c")],note:"replicas stream the same WAL",nk:"m"})}
+]},
+nofsync:{name:"fsync turned off",st:[
+ {t:"Someone turns fsync off",pc:["fsync = off  "],b:"To make commits faster, fsync is switched off. A write to the WAL now goes to the operating system's cache, not to the disk.",w:"Commits get faster because nobody waits for the disk.",d:sc({note:"fsync = off",nk:"w"})},
+ {t:"COMMIT returns at once",pc:["commit():", "append the log buffer", "if fsync and synchronous_commit", "answer \"committed\""],b:"The payment commits. Record 42 goes to the WAL file with a plain write, and the flush is skipped. It sits in the operating system's cache, the WAL on disk still ends at record 41, and the client hears 'committed'.",w:"The promise was made before the record was safe.",d:sc({mem:"page: wallet 7 = 2",mk:"w",buf:"record 42 in OS cache",bk:"w",ex:[A(346,82,242,82,"committed","c")],note:"client told: committed",nk:"f"})},
+ {t:"Power fails: the cache is lost",pc:["power cut:"],b:"The power goes. The OS cache is wiped with the memory. Record 42 never reached the disk: the WAL ends at record 41.",w:"Neither the page nor the log holds the payment.",d:sc({mem:"memory wiped",mk:"x",buf:"OS cache wiped",bk:"x",wal:"... record 41",wk:"x",pg:"wallet 7 = 10",pk:"x",note:"record 42 never reached disk",nk:"x"})},
+ {t:"The failure: a committed payment is gone",pc:["restart: nothing"],b:"On restart there is nothing after the checkpoint to replay: 0 records. Wallet 7 says 10. The client was told the payment was saved. With fsync off, pages can even be half written, and the database corrupted.",w:"Durability was the D in ACID. Turning off the flush turned it off.",d:sc({ck:"x",mem:"page: wallet 7 = 10",mk:"x",wal:"... record 41",wk:"x",pg:"wallet 7 = 10",pk:"x",note:"told committed, but lost",nk:"x"})},
+ {t:"Fix: flush on, or relax safely",pc:["fix one", "fix two", "answer first, the WAL writer", "a cut before the flush"],b:"Keep fsync on: after the same power cut, wallet 7 = 2. If commit latency hurts, PostgreSQL's synchronous_commit = off answers before the flush, and the WAL writer flushes a moment later. A power cut in between loses only that last commit, and the database is never corrupted.",w:"Choose what you can lose on purpose, per kind of data, never by accident.",d:sc({mem:"page: wallet 7 = 2",wal:"... record 41, record 42",wk:"c",pg:"wallet 7 = 2",pk:"c",note:"fsync = on: every commit is on disk first",nk:"c"})}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

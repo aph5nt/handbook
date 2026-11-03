@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sharding and rebalancing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Sharding and rebalancing</h1>
+  <p class="lede">Twelve users live on four shards. The data grows and a fifth shard is added. How many users have to move? It depends on how you hash. Then one user, an exchange hot wallet, gets most of the traffic. Press <b>Next</b> on each tab.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="mod">Modulo hashing</button>
+    <button role="tab" aria-selected="false" data-mode="ring">Consistent hashing</button>
+    <button role="tab" aria-selected="false" data-mode="hot">The hot shard</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">Animated key placement on shards</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <text id="cnt" x="450" y="408" text-anchor="middle" font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700" fill="var(--fg)"></text>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-sharding-and-rebalance/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">shard A</span>
+    <span style="--c:var(--svc)">shard B</span>
+    <span style="--c:var(--wait)">shard C</span>
+    <span style="--c:var(--undo)">shard D</span>
+    <span style="--c:var(--muted)">new shard E</span>
+    <span style="--c:var(--fail)">red ring: this key moved, or this shard is hot</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cassandra, DynamoDB and Redis Cluster place keys on a ring or in hash slots, so adding a node moves a slice. A warehouse partitioned by day of block time is range sharding instead: old days are cold, today is hot, and for append-only data that is fine.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Shard on the key most queries filter by, with an even spread. Check the top values for a hot key before you choose. Use virtual nodes so arcs stay even. Fix a hot key by splitting it, caching it, or coalescing identical reads, as Discord did for big channels.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Modulo: hash mod N</th><th>Consistent hashing ring</th></tr>
+      <tr><td>Add one shard to four</td><td>Most keys move</td><td>About one key in five moves</td></tr>
+      <tr><td>Even spread</td><td>Yes, while N is fixed</td><td>Yes, with virtual nodes</td></tr>
+      <tr><td>Hot key</td><td>Stays hot</td><td>Stays hot: split or cache it</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I shard on the key the queries use, with consistent hashing so a new node moves a slice instead of everything, and I fix a hot key by splitting or caching it, never by adding nodes."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const COL=["var(--coord)","var(--svc)","var(--wait)","var(--undo)","var(--muted)"],R="var(--fail)",NM="ABCDE";
+const H=[19,65,30,68,3,57,10,26,60,69,35,64];
+const RA=[10,50,85,105,135,155,185,230,260,290,320,350];
+const steps={
+mod:[
+ {t:"Twelve users, four shards",b:"Each user id is hashed to a number. The shard is that number modulo 4. User 1 hashes to 19, and 19 mod 4 is 3, so user 1 lives on shard D.",w:"Modulo is simple and spreads keys evenly, as long as the number of shards never changes.",n:4},
+ {t:"An even spread",b:"Applying hash mod 4 to all twelve users gives 3, 3, 3 and 3 users on shards A to D. A read or write computes the same rule and goes straight to the shard, with no lookup table.",w:"This is why hash sharding is popular: even load and no directory to keep.",n:4,counts:true},
+ {t:"Add a fifth shard",b:"The data grew. A fifth shard, E, is added, and the rule becomes hash mod 5. Each user's shard is computed again and compared with mod 4. User 1: 19 mod 4 = 3 (D), 19 mod 5 = 4 (E).",w:"Watch the red rings: those users now belong to a different shard than before.",n:5,prev:4},
+ {t:"The failure that matters: almost everyone moves",b:"10 of 12 users changed shard. E needs only 12 ÷ 5, about 2 of them. All 10 users' data must be copied across the network while the system serves traffic.",w:"With modulo, changing N reshuffles nearly every key. This is why real systems use a ring or fixed hash slots.",n:5,prev:4,counts:true}
+],
+ring:[
+ {t:"Keys and shards on a ring",b:"The hash space is bent into a circle of 360 degrees. Shards A to D sit at 30, 120, 210 and 300. The rule: walk clockwise from the user to the first shard. User 7 sits at 185, so its owner is C at 210.",w:"Ownership is an arc: everything between the previous shard and this one.",nodes:[[30,0],[120,1],[210,2],[300,3]]},
+ {t:"Add shard E",b:"Shard E joins at 170, between B and C. The clockwise rule changes only for users between 120 and 170: users 5 and 6, at 135 and 155. They used to walk on to C and now stop at E.",w:"Only the red-ringed users move. Every other user stays where it was.",nodes:[[30,0],[120,1],[170,4],[210,2],[300,3]],prev:[[30,0],[120,1],[210,2],[300,3]]},
+ {t:"About one in N moves",b:"2 of 12 users moved, both from C. On average, adding one shard to N moves about 1 ÷ (N + 1) of the keys: here 1 ÷ 5 of 12, about 2. Every other user stays where it was.",w:"Rebalancing becomes a small, local copy instead of a reshuffle of everything.",nodes:[[30,0],[120,1],[170,4],[210,2],[300,3]],prev:[[30,0],[120,1],[210,2],[300,3]],counts:true},
+ {t:"Uneven arcs, and virtual nodes",b:"With one point each, the arcs are 90, 90, 40, 90 and 50 degrees: the biggest shard owns 2.25 times the smallest. Placing each shard at two points gives 90, 80, 53, 52 and 85: 1.7 times. Real systems use hundreds of points, called virtual nodes.",w:"Many small arcs per shard average out. When a shard leaves, its load spreads over all the others, not one neighbour.",nodes:[[30,0],[120,1],[170,4],[210,2],[300,3],[70,2],[245,0],[335,4],[197,3],[275,1]],counts:true}
+],
+hot:[
+ {t:"Even traffic",b:"The ordinary users send 400 requests per second, spread over four shards: 100 each. The bars show requests per second on each shard.",w:"Even keys are not the same as even load. Load depends on how often each key is used.",bars:[1,1,1,1]},
+ {t:"One key gets most of the traffic",b:"User 7 is an exchange hot wallet and adds 400 requests per second of its own. One key has one owner: clockwise from 185 is C. Shard C carries 100 + 400 = 500, five times the others.",w:"This is a hot spot. Shard C is overloaded while A, B and D sit idle.",bars:[1,1,5,1],hot:2},
+ {t:"The failure that matters: add a shard",b:"The team adds shard E at 170. The ordinary load drops to 80 per shard. User 7 at 185 still walks to C, so C carries 80 + 400 = 480. Shard C is still red.",w:"Adding nodes never fixes a hot key. The key itself is the unit of placement.",bars:[.8,.8,4.8,.8,.8],hot:2},
+ {t:"Fix: split the hot key",b:"User 7's rows get a suffix, #0 to #3, so they hash to 20, 100, 185 and 280: shards A, B, C and D. Each part gets 400 ÷ 4 = 100, so every shard carries 200. Reads gather the four parts. Hot reads are also cached, and identical reads in flight share one call.",w:"Spread the key, not the cluster. The cost is one extra gather step for that key only.",bars:[2,2,2,2],split:true}
+]};
+const g=()=>$("dyn");
+function el(tag,a,txt){const e=document.createElementNS(NS,tag);for(const k in a)e.setAttribute(k,a[k]);if(txt!==undefined)e.textContent=txt;g().appendChild(e);return e;}
+function owner(a,nodes){let best=null,d=999;for(const[n,c]of nodes){const dd=(n-a+360)%360;if(dd<d){d=dd;best=c;}}return best;}
+function draw(s){
+  g().innerHTML="";$("cnt").textContent="";
+  if(mode==="mod"){
+    const n=s.n,cnt=[0,0,0,0,0];let moved=0;
+    for(let k=0;k<n;k++){const x=30+k*172;el("rect",{x,y:300,width:150,height:56,rx:8,fill:COL[k],class:"box"});el("text",{x:x+75,y:334,fill:"#fff"},"Shard "+NM[k]);}
+    H.forEach((h,k)=>{const x=55+k*72,sh=h%n,mv=s.prev&&(h%s.prev)!==sh;if(mv)moved++;cnt[sh]++;
+      el("line",{x1:x,y1:96,x2:105+sh*172,y2:298,stroke:COL[sh],"stroke-width":mv?3:1.5,opacity:.8});
+      el("circle",{cx:x,cy:76,r:18,fill:COL[sh],stroke:mv?R:"none","stroke-width":5});
+      el("text",{x,y:81,fill:"#fff"},"u"+(k+1));el("text",{x,y:46,fill:"var(--muted)",class:"sm"},"h="+h);});
+    $("cnt").textContent=s.prev?`hash mod ${n}: ${moved} of 12 users moved`:(s.counts?"users per shard: "+cnt.slice(0,n).join(", "):"hash mod "+n);
+  }else if(mode==="ring"){
+    const cx=450,cy=200,r=150,P=a=>[cx+r*Math.sin(a*Math.PI/180),cy-r*Math.cos(a*Math.PI/180)];
+    el("circle",{cx,cy,r,fill:"none",stroke:"var(--line)","stroke-width":6});
+    let moved=0;
+    RA.forEach((a,k)=>{const o=owner(a,s.nodes),mv=s.prev&&owner(a,s.prev)!==o;if(mv)moved++;const[x,y]=P(a);
+      el("circle",{cx:x,cy:y,r:13,fill:COL[o],stroke:mv?R:"var(--panel)","stroke-width":mv?5:2});
+      const[lx,ly]=[cx+(r-34)*Math.sin(a*Math.PI/180),cy-(r-34)*Math.cos(a*Math.PI/180)];el("text",{x:lx,y:ly+5,fill:"var(--fg)",class:"sm"},"u"+(k+1));});
+    s.nodes.forEach(([a,c])=>{const[x,y]=P(a);el("rect",{x:x-17,y:y-17,width:34,height:34,rx:6,fill:COL[c],stroke:"var(--panel)","stroke-width":3});el("text",{x,y:y+5,fill:"#fff"},NM[c]);});
+    el("text",{x:cx,y:cy+5,fill:"var(--muted)"},"clockwise to the next shard");
+    $("cnt").textContent=s.prev?`${moved} of 12 users moved`:(s.nodes.length>5?"virtual nodes: each shard sits at two points":"each user belongs to the next shard clockwise");
+  }else{
+    const b=s.bars,max=5,w=130,gap=(900-b.length*w)/(b.length+1);
+    b.forEach((v,k)=>{const x=gap+k*(w+gap),h=v/max*240,hot=s.hot===k;
+      el("rect",{x,y:340-h,width:w,height:h,rx:6,fill:hot?R:COL[k],class:"box"});
+      el("text",{x:x+w/2,y:330-h,fill:"var(--fg)"},Math.round(v*100)+" req/s"+(hot?" overloaded":""));
+      el("text",{x:x+w/2,y:366,fill:"var(--fg)"},"Shard "+NM[k]);
+      if(hot)el("text",{x:x+w/2,y:388,fill:R,class:"sm"},"u7: exchange hot wallet");
+      if(s.split)el("text",{x:x+w/2,y:388,fill:"var(--muted)",class:"sm"},"u7 part "+k);});
+    $("cnt").textContent="";
+  }
+}
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);const t=$(k+"-t");if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  if(typeof draw==="function")draw(s);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["modulo(h, n): return h mod n", "owner(angle, ring):", "  for each shard point p on the ring:", "    d = (p.at - angle + 360) mod 360    # clockwise distance", "  return the shard of the point with the smallest d", "moved(before, after):", "  count keys where before(key) != after(key)", "arcs(ring): for each degree: arc[owner(degree)] += 1", "load(ring, hot, split):", "  each shard gets ordinary / shards       # 400 / 4 = 100", "  if no hot key: return", "  if not split: shard owner(hot) gets all of it  # +400", "  else for each part: owner(part) gets hot / parts  # +100"], "real": ["func Modulo(h, n int) int { return h % n }", "", "func Owner(a int, ring []Point) int {", "\tbest, dist := -1, 361", "\tfor _, p := range ring {", "\t\td := (p.At - a + 360) % 360", "\t\tif d < dist {", "\t\t\tbest, dist = p.Shard, d", "\t\t}", "\t}", "\treturn best", "}", "", "func Moved(before, after func(k int) int) int {", "\tn := 0", "\tfor k := range hash {", "\t\tif before(k) != after(k) {", "\t\t\tn++", "\t\t}", "\t}", "\treturn n", "}", "", "func Arcs(ring []Point, shards int) []int {", "\tarc := make([]int, shards)", "\tfor a := 0; a < 360; a++ {", "\t\tarc[Owner(a, ring)]++", "\t}", "\treturn arc", "}", "", "func Load(ring []Point, shards int, hot int, split []int) []int {", "\tload := make([]int, shards)", "\tfor s := range load {", "\t\tload[s] = 400 / shards // the ordinary users, spread evenly", "\t}", "\tif hot < 0 {", "\t\treturn load", "\t}", "\tif split == nil {", "\t\tload[Owner(angle[hot], ring)] += 400 // one key, one shard", "\t\treturn load", "\t}", "\tfor _, a := range split {", "\t\tload[Owner(a, ring)] += 400 / len(split) // key#0..key#3 on four shards", "\t}", "\treturn load", "}"], "map": {"1": [1], "2": [3], "3": [5], "4": [6, 7, 8], "5": [11], "6": [14], "7": [16, 17, 18], "8": [24, 25, 26, 27, 28, 29], "9": [32], "10": [33, 34, 35], "11": [37, 38], "12": [40, 41], "13": [44, 45]}}},PCS={"mod": [[1], [1], [1, 6, 7], [6, 7]], "ring": [[2, 3, 4, 5], [2, 4, 5], [6, 7], [8]], "hot": [[9, 10, 11], [10, 12], [10, 12], [10, 13]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

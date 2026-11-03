@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Re-index from genesis</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Re-index from genesis</h1>
+  <p class="lede">A Go indexer walks a chain of 100 days and writes swap facts into StarRocks, one partition per day. A graph sync projects them into DozerDB, and a summary job adds them up. On day 40 a decoder bug is found: days 20 to 40 hold wrong swaps. Press <b>Next</b> and compare patching rows with a full re-index.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="patch">Patch rows in place</button>
+    <button role="tab" aria-selected="false" data-mode="reindex">Reset and re-index</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Day partitions in the warehouse, the graph and the summary</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" fill="var(--fg)">
+        <text x="16" y="76">StarRocks facts</text><text x="16" y="94" font-size="12" font-weight="400" fill="var(--muted)">the truth</text>
+        <text x="16" y="156">DozerDB graph</text><text x="16" y="174" font-size="12" font-weight="400" fill="var(--muted)">a projection</text>
+        <text x="16" y="236">Daily summary</text><text x="16" y="254" font-size="12" font-weight="400" fill="var(--muted)">a reader that sums</text>
+      </g>
+      <g id="rows"></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13" fill="var(--muted)" text-anchor="middle">
+        <text x="173" y="282">day 1</text><text x="303" y="282">day 20</text><text x="443" y="282">day 40</text><text x="866" y="282">day 100</text>
+      </g>
+      <g id="bug"><line x1="450" y1="44" x2="450" y2="266" stroke="var(--fail)" stroke-width="2" stroke-dasharray="6 4"/>
+        <text x="456" y="40" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" fill="var(--fail)">bug found on day 40</text></g>
+      <g id="pills" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-reindex-from-genesis/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">correct rows</span>
+    <span style="--c:var(--fail)">wrong rows</span>
+    <span style="--c:var(--undo)">patched by hand</span>
+    <span style="--c:var(--wait)">rebuilding</span>
+    <span style="--c:var(--line)">empty</span>
+    <span style="--c:var(--coord)">writer or reader stopped</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a chain indexer</h2>
+      <p>A decoder change means the swap tables must be rebuilt from block 1. The rebuild runs on the staging lane while the other lane serves. Writes are keyed by block height and log index, so a replay overwrites and never duplicates.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: any projection</h2>
+      <p>A search index, a cache, a vector store or a graph built from a database. Each one is derived. When the source is fixed, rebuild the derived store from it. Never fix the derived store by hand, because the next rebuild throws the hand fix away.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Patch rows in place</th><th>Reset and re-index</th></tr>
+      <tr><td>Readers downstream</td><td>Already read the bad rows and never rewind</td><td>Stopped, emptied and rebuilt with the facts</td></tr>
+      <tr><td>Future rows</td><td>Still wrong if the code was not fixed first</td><td>Written by the fixed code from block 1</td></tr>
+      <tr><td>Proof</td><td>Hope that every copy was found</td><td>Golden rows and a reconciliation against the chain</td></tr>
+      <tr><td>Cost</td><td>Minutes now, unknown wrong answers forever</td><td>Hours of compute on the idle lane</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"SQL facts are the truth and the graph is a projection. A bug in history is fixed by stopping every writer and reader, dropping, and replaying from block 1 with the fixed code. A fix during a reset is a new reset."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const R=(a,b,s)=>[a,b,s];
+const PL=(idx,sync,sum,mig)=>({idx,sync,sum,mig});
+const base={wh:[R(1,19,"ok"),R(20,40,"ok")],gr:[R(1,19,"ok"),R(20,38,"ok")],sm:[R(1,19,"ok"),R(20,40,"ok")]};
+const known={wh:[R(1,19,"ok"),R(20,40,"bad")],gr:[R(1,19,"ok"),R(20,38,"bad")],sm:[R(1,19,"ok"),R(20,40,"bad")]};
+const steps={
+"patch":[
+ {pc:[7, 6, 4],t:"The walk reaches day 40",b:"The indexer has written days 1 to 40. The graph sync has projected up to day 38. The summary job has added up every day so far.",w:"Days 20 to 40 hold wrong swaps, but nobody knows yet. Everything looks green.",...base,pl:PL("running, decoder v1","running","running","idle"),bug:false},
+ {pc:[1],t:"The bug is found",b:"A check finds that a new exchange's swaps on days 20 to 40 were decoded wrongly. The same wrong rows now sit in all three stores.",w:"Every reader already consumed them. That is the part people forget.",...known,pl:PL("running, decoder v1","running","running","idle"),bug:true},
+ {pc:[2, 3],t:"Someone patches the rows",b:"An engineer runs an UPDATE on days 20 to 40 in StarRocks, while every writer and reader keeps going. The fact rows now look right.",w:"It took minutes and felt responsible. Look at the two rows below it.",wh:[R(1,19,"ok"),R(20,40,"patched")],gr:[R(1,19,"ok"),R(20,38,"bad")],sm:[R(1,19,"ok"),R(20,40,"bad")],pl:PL("running, decoder v1","running","running","idle"),bug:true},
+ {pc:[4, 5, 6, 3],t:"The readers never rewind",b:"The graph sync resumes from its mark: next day = mark + 1 = 39. Days 20 to 38 are at or below the mark, so it never reads them again. Days 41 on are wrong again, because the indexer still runs the old decoder. The summary already added the wrong amounts.",w:"Warehouse and graph now disagree. A fund trace in the graph gives a different answer from a SQL lookup.",wh:[R(1,19,"ok"),R(20,40,"patched"),R(41,45,"bad")],gr:[R(1,19,"ok"),R(20,38,"bad"),R(39,40,"ok"),R(41,43,"bad")],sm:[R(1,19,"ok"),R(20,40,"bad"),R(41,45,"bad")],pl:PL("running, decoder v1","running","running","idle"),bug:true},
+ {pc:[7, 3],t:"The failure that matters",b:"The indexer still runs decoder v1, so days 41 to 45 are wrong again. The hand patch has no code behind it, so the next rebuild will undo it too.",w:"One table looks fixed and three stores are wrong. A partial fix like this once cost both lanes a full graph rebuild anyway.",wh:[R(1,19,"ok"),R(20,40,"patched"),R(41,45,"bad")],gr:[R(1,19,"ok"),R(20,38,"bad"),R(39,40,"ok"),R(41,43,"bad")],sm:[R(1,19,"ok"),R(20,40,"bad"),R(41,45,"bad")],pl:PL("running, decoder v1","running","running","idle"),bug:true,bad:true}
+],
+"reindex":[
+ {pc:[],t:"The bug is found",b:"Same moment: days 20 to 40 are wrong in the facts, the graph and the summary.",w:"This time the first move is in the code, not in the data.",...known,pl:PL("running, decoder v1","running","running","idle"),bug:true},
+ {pc:[1],t:"Fix the code, build once",b:"The decoder is fixed and tested against a sealed fixture of the bad block range, with golden rows. A new image is built once and pinned by digest.",w:"A bug found on a lane becomes a fixture before the fix merges. A green lane alone is not proof.",...known,pl:PL("running, decoder v1","running","running","idle"),bug:true,note:"image v2 built, fixture test green"},
+ {pc:[2, 3],t:"Stop every writer and every reader",b:"On the staging lane, stop the indexer, the graph sync, the summary job and the migration pod. Then a check asks: is any writer or reader still running? Only when the answer is no does anything get emptied.",w:"A reset is all or nothing. A reader left running reads half-empty tables and never comes back for them.",...known,pl:PL("stopped","stopped","stopped","stopped"),bug:true},
+ {pc:[4],t:"Drop the tables",b:"The swap fact tables, the graph layers built from them, and the summary are emptied. Nothing half-right remains.",w:"Dropping whole partitions is fast. Deleting rows one by one is not.",wh:[],gr:[],sm:[],pl:PL("stopped","stopped","stopped","stopped"),bug:false},
+ {pc:[5],t:"Re-walk from block 1",b:"The indexer starts again from block 1 with decoder v2. It writes every day afresh. The other lane keeps serving customers meanwhile.",w:"Keyed writes mean a crash during the walk simply rewrites the same rows.",wh:[R(1,40,"ok"),R(41,60,"build")],gr:[],sm:[],pl:PL("running, decoder v2","stopped","stopped","idle"),bug:false},
+ {pc:[6],t:"Readers follow the facts",b:"The graph sync and the summary job start from the beginning and follow the rebuilt facts, day by day.",w:"The graph is a projection. It is rebuilt from SQL, never repaired on its own.",wh:[R(1,80,"ok"),R(81,100,"build")],gr:[R(1,70,"ok"),R(71,80,"build")],sm:[R(1,75,"ok")],pl:PL("running, decoder v2","running","running","idle"),bug:false},
+ {pc:[7, 8],t:"Prove it, then switch",b:"All three stores reach day 100. Golden rows match, counts reconcile against the chain, the 30-minute health gate passes. The pointer moves to this lane.",w:"If a second fix is needed during the reset, that is a new reset: stop everything again and start from block 1.",wh:[R(1,100,"ok")],gr:[R(1,100,"ok")],sm:[R(1,100,"ok")],pl:PL("running, decoder v2","running","running","idle"),bug:false,note:"pointer moved to this lane"}
+]};
+const fill={ok:"var(--ok)",bad:"var(--fail)",patched:"var(--undo)",build:"var(--wait)"};
+const CX=d=>170+(d-1)*7;
+let mode="patch",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+function row(y,ranges){
+  let out="";const st=new Array(101).fill(null);
+  ranges.forEach(([a,b,s])=>{for(let d=a;d<=b;d++)st[d]=s;});
+  for(let d=1;d<=100;d++)out+=`<rect class="cell" x="${CX(d)}" y="${y}" width="6" height="40" rx="1" fill="${st[d]?fill[st[d]]:"var(--line)"}"/>`;
+  return out;
+}
+const code={"patch": {"label": "Go", "pc": ["on bug found in days 20..40:", "  UPDATE swaps SET amount = fixed WHERE day IN 20..40   # rows only", "  # every writer and reader keeps running", "graph sync loop: for day after mark: copy(day); mark = day", "  # mark is already 38, so days 20..38 are never read again", "summary loop: total[day] = facts[day], once per day   # never re-adds", "indexer loop: facts[day] = decode(day) with decoder v1  # still the bug"], "real": ["// Patch fixes rows in place while every writer and reader keeps running.", "func (l *Lane) Patch(from, to int) {", "\tfor d := from; d <= to; d++ {", "\t\tl.Facts[d] = \"patched\" // an UPDATE, no code change behind it", "\t}", "}", "", "// Follow is a reader: it resumes after its mark and never re-reads.", "func (l *Lane) Follow(store *[days + 1]string, mark *int, to int) {", "\tfor d := *mark + 1; d <= to; d++ {", "\t\tstore[d] = l.Facts[d]", "\t\t*mark = d", "\t}", "}", "", "// Walk is the indexer: it writes facts keyed by day.", "func (l *Lane) Walk(from, to int) {", "\tfor d := from; d <= to; d++ {", "\t\tl.Facts[d] = decode(l.Decoder, d) // Decoder is still 1", "\t}", "}", "", "l.Patch(20, 40)", "l.Walk(41, 45)                        // decoder v1 writes days 41..45 wrong", "l.Follow(&l.Graph, &l.GraphMark, 43)  // resumes at 39, skips 20..38", "l.Follow(&l.Summary, &l.SumMark, 45)  // resumes at 41"], "map": {"1": [23], "2": [2, 3, 4], "3": [24, 25, 26], "4": [9, 10, 11, 12], "5": [10, 25], "6": [9, 10, 11, 12], "7": [17, 18, 19]}}, "reindex": {"label": "Go", "pc": ["fix decoder; test it on a sealed fixture of days 20..40; build image v2", "stop indexer, graph sync, summary job, migrate pod   # all of them", "if any writer or reader still runs: refuse", "drop swap facts, graph layers, summary, and their marks", "indexer: walk from block 1 with decoder v2      # keyed writes overwrite", "graph sync and summary: follow from mark 0", "golden rows and counts match the chain: move the pointer", "a second fix during the reset: back to line 2   # a new reset"], "real": ["// Reset stops everything, drops everything, and re-walks from day 1.", "func (l *Lane) Reset(decoder int) error {", "\tfor _, name := range []string{\"indexer\", \"graph sync\", \"summary\", \"migrate\"} {", "\t\tl.Running[name] = false // stop every writer and every reader", "\t}", "\tfor name, on := range l.Running {", "\t\tif on {", "\t\t\treturn fmt.Errorf(\"%s still running: a reset is all or nothing\", name)", "\t\t}", "\t}", "\tl.Facts, l.Graph, l.Summary = [days + 1]string{}, [days + 1]string{}, [days + 1]string{}", "\tl.GraphMark, l.SumMark = 0, 0 // drop whole tables and marks", "\tl.Decoder = decoder           // image v2, tested on a sealed fixture", "\tl.Walk(1, days)               // re-walk from block 1", "\tl.Follow(&l.Graph, &l.GraphMark, days)", "\tl.Follow(&l.Summary, &l.SumMark, days)", "\treturn nil", "}", "", "if err := l.Reset(2); err != nil { // a second fix calls Reset again", "\tfmt.Println(\"refused:\", err)", "}"], "map": {"1": [13], "2": [3, 4, 5], "3": [6, 7, 8, 9, 10], "4": [11, 12], "5": [13, 14], "6": [15, 16], "7": [17], "8": [20, 21, 22]}}};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],st=steps[mode][i],pcs=st.pc||[];
+  const real=view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("rows").innerHTML=row(60,s.wh)+row(140,s.gr)+row(220,s.sm);
+  $("bug").style.display=s.bug?"":"none";
+  const pills=[["Indexer",s.pl.idx],["Graph sync",s.pl.sync],["Summary job",s.pl.sum],["Migrate pod",s.pl.mig]];
+  $("pills").innerHTML=pills.map(([n,v],k)=>{const x=20+k*220;
+    const col=/v1/.test(v)&&s.bug?"var(--fail)":/running/.test(v)?"var(--ok)":/stopped/.test(v)?"var(--coord)":"var(--line)";
+    const txt=col==="var(--line)"?"var(--fg)":"#fff";
+    return `<rect class="cell" x="${x}" y="302" width="206" height="44" rx="22" fill="${col}"/>
+      <text x="${x+103}" y="320" fill="${txt}">${n}</text><text x="${x+103}" y="338" fill="${txt}" font-weight="400">${v}</text>`;}).join("");
+  const g=$("msgs");g.innerHTML="";
+  if(s.note||s.bad){const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    el.innerHTML=`<text x="450" y="370" text-anchor="middle" fill="${s.bad?"var(--fail)":"var(--coord)"}">${s.bad?"warehouse, graph and summary now disagree":s.note}</text>`;
+    g.appendChild(el);const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,60);}
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

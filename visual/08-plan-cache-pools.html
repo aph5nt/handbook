@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan cache and pools</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Plan cache, parameter sniffing and pools</h1>
+  <p class="lede">One prepared query by <b>pool</b>, called first for a tiny pool and then for the router pool. Then the same service scaled from one pod to fifty. Watch the plan the cache holds, and the heap of the database.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="sniff">Parameter sniffing</button>
+    <button role="tab" aria-selected="false" data-mode="pools">Connection pools fail</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">An app, a plan cache, an executor and two pools; or pods, a pooler and a warehouse front end with its heap</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<g id="g1" class="msg">
+<rect id="app" class="box" data-f="var(--line)" x="30" y="140" width="150" height="60" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="app-t" data-t="App" x="105" y="165" text-anchor="middle" font-size="13" fill="var(--fg)">App</text>
+<text id="app-u" data-t="calls by pool" x="105" y="185" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">calls by pool</text>
+<rect id="cache" class="box" data-f="var(--line)" x="300" y="30" width="300" height="96" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="cache-t" data-t="Plan cache" x="450" y="63" text-anchor="middle" font-size="13" fill="var(--fg)">Plan cache</text>
+<text id="cache-u" data-t="empty" x="450" y="83" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">empty</text>
+<text id="cache-v" data-t="" x="450" y="103" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="ex" class="box" data-f="var(--line)" x="300" y="220" width="300" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="ex-t" data-t="Executor" x="450" y="247" text-anchor="middle" font-size="13" fill="var(--fg)">Executor</text>
+<text id="ex-u" data-t="idle" x="450" y="267" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">idle</text>
+<rect id="pt" class="box" data-f="var(--line)" x="660" y="40" width="210" height="60" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="pt-t" data-t="tiny pool" x="765" y="65" text-anchor="middle" font-size="13" fill="var(--fg)">tiny pool</text>
+<text id="pt-u" data-t="200 swaps" x="765" y="85" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">200 swaps</text>
+<rect id="pr" class="box" data-f="var(--line)" x="660" y="150" width="210" height="60" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="pr-t" data-t="router pool" x="765" y="175" text-anchor="middle" font-size="13" fill="var(--fg)">router pool</text>
+<text id="pr-u" data-t="50 million swaps" x="765" y="195" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">50 million swaps</text>
+<path id="s1" class="msg" d="M180 160 L296 100" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="s2" class="msg" d="M450 126 L450 216" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="s3" class="msg" d="M600 240 L656 92" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="s4" class="msg" d="M600 262 L656 194" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+</g>
+<g id="g2" class="msg">
+<rect id="p0" class="box" data-f="var(--line)" x="30" y="40" width="170" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="p0-t" data-t="pod 1" x="115" y="58" text-anchor="middle" font-size="13" fill="var(--fg)">pod 1</text>
+<text id="p0-u" data-t="" x="115" y="78" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="p1" class="box" data-f="var(--line)" x="30" y="98" width="170" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="p1-t" data-t="pod 2" x="115" y="116" text-anchor="middle" font-size="13" fill="var(--fg)">pod 2</text>
+<text id="p1-u" data-t="" x="115" y="136" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="p2" class="box" data-f="var(--line)" x="30" y="156" width="170" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="p2-t" data-t="pod 3" x="115" y="174" text-anchor="middle" font-size="13" fill="var(--fg)">pod 3</text>
+<text id="p2-u" data-t="" x="115" y="194" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="p3" class="box" data-f="var(--line)" x="30" y="214" width="170" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="p3-t" data-t="…" x="115" y="232" text-anchor="middle" font-size="13" fill="var(--fg)">…</text>
+<text id="p3-u" data-t="" x="115" y="252" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="p4" class="box" data-f="var(--line)" x="30" y="272" width="170" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="p4-t" data-t="pod 50" x="115" y="290" text-anchor="middle" font-size="13" fill="var(--fg)">pod 50</text>
+<text id="p4-u" data-t="" x="115" y="310" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<line id="cl0" class="msg" x1="200" y1="63" x2="618" y2="150" stroke="var(--coord)" stroke-width="2"/>
+<line id="cl1" class="msg" x1="200" y1="121" x2="618" y2="150" stroke="var(--coord)" stroke-width="2"/>
+<line id="cl2" class="msg" x1="200" y1="179" x2="618" y2="150" stroke="var(--coord)" stroke-width="2"/>
+<line id="cl3" class="msg" x1="200" y1="237" x2="618" y2="150" stroke="var(--coord)" stroke-width="2"/>
+<line id="cl4" class="msg" x1="200" y1="295" x2="618" y2="150" stroke="var(--coord)" stroke-width="2"/>
+<g id="g2p" class="msg">
+<rect id="pooler" class="box" data-f="var(--line)" x="330" y="120" width="170" height="60" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="pooler-t" data-t="shared pooler" x="415" y="145" text-anchor="middle" font-size="13" fill="var(--fg)">shared pooler</text>
+<text id="pooler-u" data-t="" x="415" y="165" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+</g>
+<line id="pl0" class="msg" x1="200" y1="63" x2="328" y2="150" stroke="var(--ok)" stroke-width="2"/>
+<line id="pl1" class="msg" x1="200" y1="121" x2="328" y2="150" stroke="var(--ok)" stroke-width="2"/>
+<line id="pl2" class="msg" x1="200" y1="179" x2="328" y2="150" stroke="var(--ok)" stroke-width="2"/>
+<line id="pl3" class="msg" x1="200" y1="237" x2="328" y2="150" stroke="var(--ok)" stroke-width="2"/>
+<line id="pl4" class="msg" x1="200" y1="295" x2="328" y2="150" stroke="var(--ok)" stroke-width="2"/>
+<line id="pdb" class="msg" x1="500" y1="150" x2="618" y2="150" stroke="var(--ok)" stroke-width="4"/>
+<rect id="db" class="box" data-f="var(--line)" x="620" y="40" width="250" height="180" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="db-t" data-t="Warehouse front end" x="745" y="115" text-anchor="middle" font-size="13" fill="var(--fg)">Warehouse front end</text>
+<text id="db-u" data-t="connections: 0" x="745" y="135" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">connections: 0</text>
+<text id="db-v" data-t="prepared statements: 0" x="745" y="155" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">prepared statements: 0</text>
+<text x="620" y="250" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">front end heap</text>
+<rect x="620" y="260" width="250" height="22" rx="4" fill="var(--panel)" stroke="var(--muted)"/>
+<rect id="hf" class="box" data-f="var(--ok)" data-a='{"width":"10"}' x="620" y="260" width="10" height="22" rx="4" fill="var(--ok)"/>
+</g>
+<rect x="20" y="352" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="378" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="377" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-plan-cache-pools/main.go</code> (<code>go run .</code>). The cache is a map keyed by statement text, and the pool numbers are the multiplication the server sees. The pool code runs on database/sql with an in-memory driver.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">in use</span>
+    <span style="--c:var(--ok)">right for the load</span>
+    <span style="--c:var(--wait)">stored, may not fit</span>
+    <span style="--c:var(--fail)">wrong plan or overload</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>The Go indexer's page write: one prepared statement, the parse paid once. A query by pool or by customer where a few values are huge: the plan built for a small value is reused for a big one. Fifty pods with pools of 20 against one StarRocks front end: 1,000 connections and their prepared statements.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Give the planner histograms on skewed columns, or keep a plan per class of value. Size pools by the multiplication: pods times pool near the database's cores times a small factor. Put a shared pooler in front when pods scale, and close prepared statements you no longer use.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Prepared statement</th><th>Recompile every call</th><th>Connection pool</th></tr>
+      <tr><td>Saves</td><td>parse and plan on each call</td><td>nothing: plans fresh each time</td><td>a handshake and login per query</td></tr>
+      <tr><td>Risk</td><td>a plan sniffed for one value</td><td>compile cost on every call</td><td>pods × pool connections</td></tr>
+      <tr><td>Fix for the risk</td><td>histogram, plan per class, hint</td><td>only for rare, skewed queries</td><td>small pools, a shared pooler</td></tr>
+      <tr><td>Interview line</td><td colspan=3>"A cached plan fits the value it was built for, and pods times pool size is the connection count the database really sees."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+sniff:[
+ {"t": "Prepare once", "b": "The app prepares the query by pool once. Parse and plan are paid one time. Then it runs many times with a parameter.", "w": "A prepared statement saves the parse and the plan on every call.", "f": {"app": "c", "cache": "c"}, "on": ["s1"], "x": {"cache-u": "SELECT … WHERE pool = ?", "sql": "PREPARE q … WHERE pool = $1"}, "pc": [1]},
+ {"t": "First call: the tiny pool", "b": "The first call is for the tiny pool. The cache looks up the statement text and finds nothing, so the planner compiles. It sniffs the value: 200 rows, under the 10,000-row limit for a nested loop. The cache stores that plan under the text.", "w": "Parameter sniffing: the plan is built for the first value it sees.", "f": {"app": "c", "cache": "w", "pt": "c"}, "on": ["s1"], "x": {"cache-u": "SELECT … WHERE pool = ?", "cache-v": "nested loop, sniffed at 200 rows", "sql": "EXECUTE q('tiny pool')"}, "pc": [2, 3, 4, 5, 6]},
+ {"t": "Fast, for this value", "b": "The executor runs the nested loop over 200 swaps.", "w": "For this value the plan is perfect.", "f": {"cache": "w", "ex": "ok", "pt": "ok"}, "on": ["s2", "s3"], "x": {"cache-u": "SELECT … WHERE pool = ?", "cache-v": "nested loop, sniffed at 200 rows", "ex-u": "nested loop: milliseconds", "sql": "EXECUTE q('tiny pool')"}, "pc": [7]},
+ {"t": "Next call: the router pool", "b": "The next call is for the router pool: 50,000,000 swaps. The cache looks up the same text and finds the stored plan. The value is never looked at, so there is no compile.", "w": "The cache is keyed by statement text, not by value.", "f": {"app": "c", "cache": "w", "pr": "c"}, "on": ["s1", "s2"], "x": {"cache-u": "SELECT … WHERE pool = ?", "cache-v": "nested loop, sniffed at 200 rows", "ex-u": "reusing the nested loop", "sql": "EXECUTE q('router pool')"}, "pc": [1, 2]},
+ {"t": "Minutes, and nothing changed", "b": "The nested loop built for 200 rows now walks 50,000,000. Compiled for this value, it would have been a hash join, because 50,000,000 is over 10,000.", "w": "Nothing changed but the parameter.", "f": {"cache": "w", "ex": "f", "pr": "f"}, "on": ["s2", "s4"], "x": {"cache-u": "SELECT … WHERE pool = ?", "cache-v": "nested loop, sniffed at 200 rows", "ex-u": "nested loop over 50,000,000 rows", "big": "same SQL, new value, wrong plan", "sql": "EXECUTE q('router pool')"}, "pc": [7]},
+ {"t": "Fix: a plan per class of value", "b": "Key the cache by text plus class of value. The histogram says the router pool is a most-common value, so its class is big and it gets its own plan: a hash join. The tiny pool, class small, keeps the nested loop.", "w": "Recompiling on every call also works, but it trades the problem for compile cost.", "f": {"cache": "ok", "ex": "ok", "pr": "ok"}, "on": ["s2", "s4"], "x": {"cache-u": "small pools: nested loop", "cache-v": "big pools: hash join", "ex-u": "hash join for the router pool", "big": "the histogram shows the skew", "sql": "ANALYZE swaps (histogram on pool)"}, "pc": [8, 9, 10]}
+],
+pools:[
+ {"t": "Why a pool", "b": "A new connection costs a handshake, a login and server memory. A connection pool keeps connections open. A query borrows one and gives it back.", "w": "Reuse saves the handshake on every query.", "f": {"p0": "c", "db": "c"}, "on": ["cl0"], "x": {"p0-u": "1 connection", "p1-u": "", "p2-u": "", "p3-u": "", "p4-u": "", "big": "a pool lends open connections", "db-u": "connections: 1", "db-v": "prepared statements: a few"}, "pc": [1]},
+ {"t": "One pod, a pool of 20", "b": "A prepared statement lives on one connection. The Go driver prepares it again the first time it runs on each new connection. With 20 connections and 3 statements, the server holds 60 copies. The program runs this code on database/sql with a pool of 5 and 10 queries at once: 5 connections, and one Stmt prepared 5 times.", "w": "Pools multiply prepared statements.", "f": {"p0": "c"}, "on": ["cl0"], "a": {"hf": {"width": "30"}}, "x": {"p0-u": "20 connections", "big": "20 connections, 20 copies of each statement", "db-u": "connections: 20", "db-v": "statement copies: 60"}, "pc": [3, 4]},
+ {"t": "Scale to 50 pods", "b": "Traffic grows, and the service scales to 50 pods. Each pod brings its own pool of 20: 50 × 20 = 1,000 connections, and 3,000 statement copies.", "w": "Pods times pool size is the connection count the database really sees: 1,000.", "f": {"p0": "c", "p1": "c", "p2": "c", "p3": "c", "p4": "c", "hf": "w"}, "on": ["cl0", "cl1", "cl2", "cl3", "cl4"], "a": {"hf": {"width": "180"}}, "x": {"p0-u": "20 connections", "p1-u": "20 connections", "p2-u": "20 connections", "p3-u": "", "p4-u": "20 connections", "big": "heap growing", "db-u": "connections: 50 × 20 = 1,000", "db-v": "statement copies: 3,000"}, "pc": [1, 2, 3]},
+ {"t": "The heap fills", "b": "The warehouse front end keeps every connection's prepared statements in its heap. The heap fills, and the front end restarts under load.", "w": "A setting that was safe for one pod fails at 50.", "f": {"p0": "c", "p1": "c", "p2": "c", "p3": "c", "p4": "c", "db": "f", "hf": "f"}, "on": ["cl0", "cl1", "cl2", "cl3", "cl4"], "a": {"hf": {"width": "250"}}, "x": {"p0-u": "20 connections", "p1-u": "20 connections", "p2-u": "20 connections", "p3-u": "", "p4-u": "20 connections", "db-u": "connections: 1,000", "db-v": "heap full: restarting", "big": "the front end restarts under load"}, "pc": [5]},
+ {"t": "Fix: a pool of five and a shared pooler", "b": "Each pod keeps a pool of 5: 50 × 5 = 250 client connections. A shared pooler takes them and holds 16 to the database, 8 cores × 2. Statement copies drop to 48.", "w": "The database sees the pooler, not the pods.", "f": {"p0": "c", "p1": "c", "p2": "c", "p3": "c", "p4": "c", "pooler": "ok", "db": "ok"}, "on": ["g2p", "pdb", "pl0", "pl1", "pl2", "pl3", "pl4"], "a": {"hf": {"width": "40"}}, "x": {"p0-u": "5 connections", "p1-u": "5 connections", "p2-u": "5 connections", "p3-u": "", "p4-u": "5 connections", "pooler-u": "250 in, 16 out", "db-u": "connections: 16", "db-v": "heap: calm", "big": "the database sees the pooler, not 50 pods"}, "pc": [6, 7, 8, 9]},
+ {"t": "Size it on purpose", "b": "Keep pods times pool near the database's useful parallelism: roughly its cores times a small factor. Close prepared statements nobody uses.", "w": "Connection count is a capacity number. Multiply before you scale.", "f": {"pooler": "ok", "db": "ok"}, "on": ["g2p", "pdb", "pl0", "pl1", "pl2", "pl3", "pl4"], "a": {"hf": {"width": "40"}}, "x": {"p0-u": "5 connections", "p1-u": "5 connections", "p2-u": "5 connections", "p3-u": "", "p4-u": "5 connections", "pooler-u": "250 in, 16 out", "db-u": "connections: 16", "db-v": "heap: calm", "big": "pooler out = 8 cores × 2 = 16"}, "pc": [8, 9, 10]}
+]
+};
+const base={"sniff": {"on": ["g1"]}, "pools": {"on": ["g2"]}};
+const code={
+"sniff":{
+ label:"SQL",
+ pc:["execute(text, value):", "  plan = cache.get(text)              # the key is the text, not the value", "  if plan is none:", "    est = estimate(value)             # tiny pool: 200 rows", "    plan = nested loop if est <= 10,000 else hash join", "    cache.put(text, plan)             # sniffed: built for the first value", "  run(plan, value)                    # router pool: 50,000,000 rows", "fix, a plan per class of value:", "  cls = big if value in histogram.most_common else small", "  plan = cache.get(text, cls)         # router pool: hash join"],
+ real:["-- SQL Server: a procedure is compiled for its first value", "CREATE PROCEDURE swaps_by_pool @pool varchar(42) AS", "  SELECT s.tx_hash, p.dex", "  FROM   swaps s JOIN pools p ON p.pool = s.pool", "  WHERE  s.pool = @pool;", "", "EXEC swaps_by_pool 'tiny pool';    -- compiled: Nested Loops, est 200", "EXEC swaps_by_pool 'router pool';  -- reused:   Nested Loops, actual 50,000,000", "", "-- fixes", "--   plan for the heavy value", "  ... WHERE s.pool = @pool OPTION (OPTIMIZE FOR (@pool = 'router pool'));", "--   plan every call, paying the compile each time", "  ... WHERE s.pool = @pool OPTION (RECOMPILE);", "-- PostgreSQL: plan each EXECUTE with its own value", "SET plan_cache_mode = force_custom_plan;"],
+ map:{"1": [7, 8], "2": [7, 8], "3": [7], "4": [7], "5": [7], "6": [7], "7": [8], "8": [10, 11, 12], "9": [12], "10": [12]}},
+"pools":{
+ label:"Go",
+ pc:["connections the database sees = pods x pool size     # 50 x 20 = 1,000", "statement copies = connections x prepared statements  # x 3 = 3,000", "on a connection, the first run of a statement:", "  prepare it there                    # one more copy in the server heap", "if the copies outgrow the heap: the front end restarts", "fix: pool size 5 per pod             # 50 x 5 = 250", "pooler: accept the 250 client connections", "  hold cores x 2 to the database     # 8 x 2 = 16", "  lend one per transaction", "close statements nobody uses"],
+ real:["func countSwaps(ctx context.Context, dsn string, pools []string) error {", "\t// StarRocks speaks the MySQL protocol.", "\tdb, err := sql.Open(\"mysql\", dsn) // dsn points at the pooler", "\tif err != nil {", "\t\treturn err", "\t}", "\t// pods x MaxOpenConns is what the server sees: 50 x 5 = 250.", "\tdb.SetMaxOpenConns(5)", "\tdb.SetMaxIdleConns(5)", "\tdb.SetConnMaxLifetime(30 * time.Minute)", "", "\t// One Stmt object. database/sql prepares it again on each", "\t// connection the first time it runs there.", "\tstmt, err := db.PrepareContext(ctx,", "\t\t\"SELECT count(*) FROM swaps WHERE pool = ?\")", "\tif err != nil {", "\t\treturn err", "\t}", "\tdefer stmt.Close() // frees the copy on every connection", "", "\tvar wg sync.WaitGroup", "\tfor _, pool := range pools {", "\t\twg.Add(1)", "\t\tgo func(pool string) {", "\t\t\tdefer wg.Done()", "\t\t\tvar n int64", "\t\t\tif err := stmt.QueryRowContext(ctx, pool).Scan(&n); err != nil {", "\t\t\t\tfmt.Println(err)", "\t\t\t}", "\t\t}(pool)", "\t}", "\twg.Wait()", "\treturn nil", "}"],
+ map:{"1": [7, 8], "2": [12, 13], "3": [12, 13, 27], "4": [14, 15, 27], "5": [7], "6": [7, 8, 9], "7": [3], "8": [3], "9": [3], "10": [19]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORM pitfalls</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>ORM pitfalls: the queries you cannot see</h1>
+  <p class="lede">A dashboard's code is a simple loop over 100 pools. Under it, the ORM (Object-Relational Mapper) runs queries the code never shows. Watch each hidden cost appear in the database's query log. The second tab finds them in a test and fixes them.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="hidden">Hidden costs</button>
+    <button role="tab" aria-selected="false" data-mode="fix">Find and fix</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">ORM pitfalls: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">your code</span>
+    <span style="--c:var(--wait)">hidden work you did not write</span>
+    <span style="--c:var(--fail)">the cost that hurts</span>
+    <span style="--c:var(--ok)">fixed</span>
+    <span style="--c:var(--line)">plain step</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Django has <code>select_related</code> and <code>prefetch_related</code>. Rails has <code>includes</code>. Entity Framework has <code>Include</code>, and <code>AsNoTracking</code> for read-only queries. Hibernate has fetch joins. Every ORM lazy-loads by default somewhere.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep the ORM for simple create, read, update and delete. Write SQL by hand for reports and hot paths. Log the SQL in development, and put a query-count limit in the tests of every busy page.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th>Pitfall</th><th>What you see in code</th><th>What the database sees</th><th>Fix</th></tr>
+      <tr><td>Lazy loading, N+1</td><td><code>pool.swaps</code> in a loop</td><td>1 + N queries</td><td>Eager load: one join or one <code>IN</code> query</td></tr>
+      <tr><td><code>SELECT *</code></td><td>A whole object</td><td>Every column, big JSON included</td><td>Select only the columns you need</td></tr>
+      <tr><td>Implicit cast</td><td>An id passed as a string</td><td>The column cast, the index skipped</td><td>Pass the column's own type</td></tr>
+      <tr><td>Long transaction</td><td>One unit of work per request</td><td>Locks and a snapshot open during an API call</td><td>Open the transaction around database work only</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"An ORM hides the SQL and with it the round trips, so I log queries per request, load children eagerly and keep transactions around database work only."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const top3=(k)=>[B(20,60,330,"for pool in pools: show(pool.swaps)","s",44),A(350,82,378,82,"","f"),B(380,60,140,"ORM",k||"n",44),A(520,82,558,82,"","f"),F(560,50,320,310,"database: query log")];
+const log=(rows,k)=>rows.map((r,j)=>B(570,94+36*j,300,r,Array.isArray(k)?k[j]:k,30));
+const L101=["SELECT * FROM pools","SELECT * FROM swaps WHERE pool=1","SELECT * FROM swaps WHERE pool=2","SELECT * FROM swaps WHERE pool=3","... 97 more, one per pool"];
+const cols=(ks)=>[T(20,170,"columns returned per swap","f","start",15),...["tx_hash","amount","pool","ts","raw_log (JSON)","decoded (JSON)"].map((c,j)=>B(20+(j%3)*168,185+44*Math.floor(j/3),160,c,ks[j],34))];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-orm-pitfalls/main.go</code> is a tiny fake ORM over a query log. It runs the dashboard for 100 pools, counts every statement, and prints every count, size and time quoted here (<code>go run .</code>). Column sizes are the program's model, not a measurement.";
+const CODE={
+hidden:{pc:["pools = Pool.all()                       # 1 query",
+"for pool in pools:",
+"  pool.swaps                             # first touch: a hidden query",
+"    SELECT * FROM swaps WHERE pool = :id   # every column",
+"100 pools -> 1 + 100 = 101 queries",
+"SELECT *: 6 columns sent, 2 shown",
+"find(pool = 42): a number against a text column",
+"  every row's value is cast -> index skipped",
+"unit of work: BEGIN ... price API 2 s ... COMMIT"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// colBytes are the sizes of the six swaps columns in this model.", "var colBytes = map[string]int{\"id\": 8, \"pool\": 8, \"ts\": 8, \"amount\": 16, \"raw_log\": 2_000, \"decoded\": 1_500}", "", "var allCols = []string{\"id\", \"pool\", \"ts\", \"amount\", \"raw_log\", \"decoded\"}"],[""],["// Swaps is lazy loading: the first read sends a hidden SELECT *.", "func (p *Pool) Swaps() []int {", "\tif !p.loaded {", "\t\tp.log.Run(fmt.Sprintf(\"SELECT * FROM swaps WHERE pool = %d\", p.ID), swapsPerPool, swapsPerPool, allCols)", "\t\tp.swaps = make([]int, swapsPerPool)", "\t\tp.loaded = true", "\t}", "\treturn p.swaps", "}"],[""],["// AllPools is session.query(Pool).all(): one query, swaps not loaded yet.", "func AllPools(l *Log) []*Pool {", "\tl.Run(\"SELECT * FROM pools\", pools, pools, []string{\"id\"})", "\tps := make([]*Pool, pools)", "\tfor i := range ps {", "\t\tps[i] = &Pool{ID: i + 1, log: l}", "\t}", "\treturn ps", "}"],[""],["// FindSwaps is WHERE pool = :id. The pool column is text (VARCHAR) holding '42'.", "// A number against the text column makes MySQL cast every row's value", "// to a number to compare, so the index on pool is skipped.", "func FindSwaps(l *Log, id any) {", "\tswitch v := id.(type) {", "\tcase int:", "\t\tl.Run(fmt.Sprintf(\"SELECT ts, amount FROM swaps WHERE pool = %d\", v), swapsRows, swapsPerPool, []string{\"ts\", \"amount\"})", "\tcase string:", "\t\tl.Run(\"SELECT ts, amount FROM swaps WHERE pool = '\"+v+\"'\", swapsPerPool, swapsPerPool, []string{\"ts\", \"amount\"})", "\t}", "}"],[""],["// Request runs one dashboard request and returns how long the transaction stayed open.", "// apiInside is the ORM unit of work: one transaction around everything.", "func Request(apiInside bool) (openMs int) {", "\tconst writesMs, apiMs = 10, 2_000", "\topen := writesMs // BEGIN, the writes, COMMIT", "\tif apiInside {", "\t\topen += apiMs // the price API call runs inside the transaction", "\t}", "\treturn open", "}"],[""],["func dashboard(l *Log) {", "\tfor _, p := range AllPools(l) {", "\t\t_ = p.Swaps() // looks like a field read", "\t}", "}"],[""],["func hidden() {", "\tfmt.Println(\"== hidden costs\")", "\tl := &Log{}", "\tps := AllPools(l)", "\tfmt.Printf(\"load 100 pools: queries %d\\n\", len(l.queries))", "\tps[0].Swaps()", "\tfmt.Printf(\"first touch of pool.swaps: queries %d, the new one: %s\\n\", len(l.queries), l.queries[1])", "\tl = &Log{}", "\tdashboard(l)", "\tfmt.Printf(\"loop over 100 pools: queries %d\\n\", len(l.queries))", "\tfmt.Printf(\"SELECT *: columns %d, shown 2, bytes per row %d, of which shown %d\\n\", len(allCols), rowBytes(allCols), rowBytes([]string{\"ts\", \"amount\"}))", "\tl = &Log{}", "\tFindSwaps(l, 42)", "\tfmt.Printf(\"pool id 42 as a number against the text column: rows read %d, every value cast, index skipped\\n\", l.rowsRead)", "\tfmt.Printf(\"unit of work around the 2000 ms price API: transaction open %d ms\\n\", Request(true))", "}"]),
+  map:[["pools = Pool.all()","func AllPools(..return ps","ps := AllPools(l)","load 100 pools"],["for pool in pools:","func dashboard(","for _, p := range AllPools(l) {"],
+   ["pool.swaps","func (p *Pool) Swaps()","_ = p.Swaps() // looks like","ps[0].Swaps()","first touch of pool.swaps"],["SELECT * FROM swaps WHERE pool = :id","if !p.loaded {..p.loaded = true"],
+   ["100 pools -> 1 + 100","_ = p.Swaps() // looks like","=dashboard(l)","loop over 100 pools"],["SELECT *: 6 columns","// colBytes are..var allCols","SELECT *: columns %d"],
+   ["find(pool = 42)","func FindSwaps(","case int:..swapsRows","FindSwaps(l, 42)"],["every row's value is cast","case int:..swapsRows","every value cast, index skipped"],
+   ["unit of work: BEGIN","func Request(..return open","unit of work around the 2000 ms"]]}]},
+fix:{pc:["log every SQL statement, count per request",
+"test: assert queries <= 3",
+"  dashboard: 101 > 3 -> fail",
+"eager: pools, then swaps WHERE pool IN (...)   # 2 queries",
+"name the columns: pool, ts, amount",
+"pass '42' as text, the column's own type -> index lookup",
+"call the price API first, then BEGIN, writes, COMMIT"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Log records every statement the ORM sends, as SQL logging would.", "type Log struct {", "\tqueries  []string", "\tbytes    int", "\trowsRead int", "}"],[""],["func (l *Log) Run(sql string, rowsRead, rowsSent int, cols []string) {", "\tl.queries = append(l.queries, sql)", "\tl.rowsRead += rowsRead", "\tl.bytes += rowsSent * rowBytes(cols)", "}"],[""],["// AssertQueries is the query-count test.", "func AssertQueries(l *Log, most int) error {", "\tif len(l.queries) > most {", "\t\treturn fmt.Errorf(\"dashboard made %d queries, want at most %d\", len(l.queries), most)", "\t}", "\treturn nil", "}"],[""],["// PoolsWithSwaps is eager loading with named columns: two queries in all.", "func PoolsWithSwaps(l *Log, cols []string) []*Pool {", "\tps := AllPools(l)", "\tl.Run(\"SELECT \"+strings.Join(cols, \", \")+\" FROM swaps WHERE pool IN (1, 2, ..., 100)\", pools*swapsPerPool, pools*swapsPerPool, cols)", "\tfor _, p := range ps {", "\t\tp.swaps = make([]int, swapsPerPool)", "\t\tp.loaded = true", "\t}", "\treturn ps", "}"],[""],["// FindSwaps is WHERE pool = :id. The pool column is text (VARCHAR) holding '42'.", "// A number against the text column makes MySQL cast every row's value", "// to a number to compare, so the index on pool is skipped.", "func FindSwaps(l *Log, id any) {", "\tswitch v := id.(type) {", "\tcase int:", "\t\tl.Run(fmt.Sprintf(\"SELECT ts, amount FROM swaps WHERE pool = %d\", v), swapsRows, swapsPerPool, []string{\"ts\", \"amount\"})", "\tcase string:", "\t\tl.Run(\"SELECT ts, amount FROM swaps WHERE pool = '\"+v+\"'\", swapsPerPool, swapsPerPool, []string{\"ts\", \"amount\"})", "\t}", "}"],[""],["// Request runs one dashboard request and returns how long the transaction stayed open.", "// apiInside is the ORM unit of work: one transaction around everything.", "func Request(apiInside bool) (openMs int) {", "\tconst writesMs, apiMs = 10, 2_000", "\topen := writesMs // BEGIN, the writes, COMMIT", "\tif apiInside {", "\t\topen += apiMs // the price API call runs inside the transaction", "\t}", "\treturn open", "}"],[""],["func fixed() {", "\tfmt.Println(\"== find and fix\")", "\tl := &Log{}", "\tdashboard(l)", "\tfmt.Printf(\"SQL log: %s; %s; ... %d queries\\n\", l.queries[0], l.queries[1], len(l.queries))", "\tfmt.Printf(\"test, at most 3 queries: %v\\n\", AssertQueries(l, 3))", "\tl = &Log{}", "\tPoolsWithSwaps(l, allCols)", "\terr := AssertQueries(l, 3)", "\tn := len(l.queries)", "\tfmt.Printf(\"eager loading: queries %d, test passes %v\\n\", n, err == nil)", "\tcols := []string{\"pool\", \"ts\", \"amount\"}", "\tfmt.Printf(\"named columns %v: bytes per row %d instead of %d\\n\", cols, rowBytes(cols), rowBytes(allCols))", "\tl = &Log{}", "\tFindSwaps(l, \"42\")", "\tfmt.Printf(\"pool id '42' as text, the column's own type: rows read %d, index used\\n\", l.rowsRead)", "\tfmt.Printf(\"price API first, then a short transaction: open %d ms\\n\", Request(false))", "}"]),
+  map:[["log every SQL statement","// Log records..queries  []string","func (l *Log) Run(..l.bytes +=","=dashboard(l)","SQL log:"],["test: assert queries <= 3","func AssertQueries(","test, at most 3"],
+   ["dashboard: 101 > 3","if len(l.queries) > most {..want at most %d"],["eager: pools, then swaps","func PoolsWithSwaps(","l.Run(\"SELECT \"+strings.Join","PoolsWithSwaps(l, allCols)..test passes"],
+   ["name the columns","cols := []string{\"pool\", \"ts\", \"amount\"}..named columns"],["pass '42' as text","case string:..+v+","FindSwaps(l, \"42\")..index used"],
+   ["call the price API first","func Request(..return open","price API first"]]}]}};
+// CODE PANEL END
+const S={
+hidden:{name:"dashboard, 100 pools",st:[
+ {t:"Start: a loop that looks like one query",pc:["pools = Pool.all()                       # 1 query", "for pool in pools:"],b:"The code loads 100 pools and shows each pool's swaps. Nothing in it says how many queries run.",w:"The ORM decides the SQL. The code only touches objects.",d:top3().concat(log(["SELECT * FROM pools"],"n"))},
+ {t:"Lazy loading: the first touch fires a query",pc:["  pool.swaps                             # first touch: a hidden query", "    SELECT * FROM swaps WHERE pool = :id   # every column"],b:"The first time the code reads pool.swaps, the ORM sends a hidden query for that pool's swaps. The count goes from 1 to 2: SELECT * FROM swaps WHERE pool = 1.",w:"Lazy loading is convenient and invisible. The relation is fetched only when touched.",d:top3("w").concat(log(["SELECT * FROM pools","SELECT * FROM swaps WHERE pool=1"],["n","w"]))},
+ {t:"In a loop: one query per pool",pc:["for pool in pools:", "100 pools -> 1 + 100 = 101 queries"],b:"The loop touches pool.swaps 100 times. The ORM sends 100 hidden queries, plus the first one.",w:"That is N+1: 101 round trips for one page. It has its own lesson, N+1 and batched writes.",d:top3("w").concat(log(L101,["n","w","w","w","x"]),[T(570,300,"101 queries for one page","x","start",15)])},
+ {t:"SELECT star: every column comes back",pc:["    SELECT * FROM swaps WHERE pool = :id   # every column", "SELECT *: 6 columns sent, 2 shown"],b:"Each query asks for all 6 columns. The page shows 2 of them. With the program's column sizes a row is 3,540 bytes, and the page shows 24 of them. The big JSON columns raw_log and decoded travel over the network anyway.",w:"No covering index can serve SELECT *, and the bytes cost time on every query.",d:top3("w").concat(log(L101,["n","w","w","w","w"]),cols(["c","c","w","w","x","x"]),[T(20,300,"2 columns used, 6 sent","x","start",15)])},
+ {t:"Implicit cast: the index is skipped",pc:["find(pool = 42): a number against a text column", "  every row's value is cast -> index skipped"],b:"The pool column is text and holds '42'. The code passes the id as the number 42. MySQL casts every row's value to a number to compare, so the index on pool cannot be used: 1,000,000 rows read.",w:"A full scan where an index lookup was expected. In SQL Server the same happens when a Unicode string meets a plain text column.",d:top3("w").concat(log(["SELECT * ... WHERE pool = 42"],"w"),[B(20,170,500,"WHERE pool = 42   (a number, pool is text)","w",40),A(270,212,270,246,"","x"),B(20,250,500,"every row cast: index skipped, full scan","x",40)])},
+ {t:"The transaction stays open during an API call",pc:["unit of work: BEGIN ... price API 2 s ... COMMIT"],b:"The ORM's unit of work opens one transaction for the whole request. Halfway through, the page calls a price API that takes 2 seconds. The transaction stays open 2,010 ms: 10 ms of writes plus the 2,000 ms call.",w:"Locks and the snapshot stay open for the whole call. Other writers wait, and dead row versions pile up.",d:top3("w").concat(log(["BEGIN","SELECT * FROM pools","... waiting for the price API","COMMIT, 2.1 s later"],["n","n","x","n"]),[B(20,180,500,"transaction open: 2.1 s","x",40),B(140,240,360,"price API call: 2 s","w",40),T(20,320,"database work: a few ms","f","start",15)])}
+]},
+fix:{name:"the same page, tested",st:[
+ {t:"Log the SQL in development",pc:["log every SQL statement, count per request"],b:"Turn on the ORM's SQL logging and count queries per request. The dashboard shows 101.",w:"You cannot fix what the code does not show. The log shows it.",d:top3().concat(log(L101,["n","w","w","w","w"]),[T(20,180,"queries per request: 101","w","start",18)])},
+ {t:"The failure, caught in a test",pc:["test: assert queries <= 3", "  dashboard: 101 > 3 -> fail"],b:"A test asserts that the dashboard makes at most 3 queries. It fails with 101.",w:"Found in a test, not in production. A count that grows with the result size is N+1.",d:top3().concat(log(L101,["n","w","w","w","w"]),[B(20,170,500,"assert queries <= 3:  got 101","x",44),T(20,260,"test fails","x","start",18)])},
+ {t:"Eager loading: two queries",pc:["eager: pools, then swaps WHERE pool IN (...)   # 2 queries"],b:"Ask the ORM to load the swaps with the pools: one query for pools, one IN query for all their swaps. The log shows 2 queries and the test passes.",w:"Two round trips, whatever the number of pools.",d:top3("c").concat(log(["SELECT * FROM pools","SELECT swaps WHERE pool IN (1..100)"],"c"),[B(20,170,500,"assert queries <= 3:  got 2","c",44)])},
+ {t:"Select only the columns you need",pc:["name the columns: pool, ts, amount"],b:"Name the columns the page needs: pool, ts and amount. A row is 32 bytes instead of 3,540. The JSON columns stay in the database.",w:"Fewer bytes per row, and an index on (pool, ts, amount) can now serve the query.",d:top3("c").concat(log(["SELECT id FROM pools","SELECT pool, amount, ts ... IN (...)"],"c"),cols(["n","c","c","c","n","n"]))},
+ {t:"Pass the column's own type",pc:["pass '42' as text, the column's own type -> index lookup"],b:"The pool id goes in as the text '42', the column's own type. The database compares text to text and uses the index: 5 rows read.",w:"Check parameter types in the ORM mapping, especially numbers sent to text columns.",d:top3("c").concat(log(["SELECT ... WHERE pool = '42'"],"c"),[B(20,170,500,"WHERE pool = '42'   (text, like the column)","c",40),A(270,212,270,246,"","c"),B(20,250,500,"index lookup","c",40)])},
+ {t:"Transaction around database work only",pc:["call the price API first, then BEGIN, writes, COMMIT"],b:"Call the price API first, outside any transaction. Then open a short transaction for the writes and commit. It is open for 10 ms.",w:"The transaction now lasts milliseconds, not seconds.",d:top3("c").concat(log(["price API: no transaction","BEGIN","UPDATE ...","COMMIT, 4 ms later"],["n","c","c","c"]),[B(20,180,360,"price API call: 2 s","w",40),B(400,240,120,"tx: 4 ms","c",40)])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

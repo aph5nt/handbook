@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Priority queue</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+svg text{paint-order:stroke}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:8px 0}
+#codetabs button[aria-pressed="true"]{background:var(--coord);color:#fff;border-color:var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Priority queue</h1>
+  <p class="lede">An email worker has 10,000 newsletter emails waiting when a customer asks for a password reset. In a plain queue the reset waits behind every newsletter. Press <b>Next</b> to see a priority queue let it jump ahead, then see starvation and the Kafka way.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="prio">Jump the line</button>
+    <button role="tab" aria-selected="false" data-mode="starve">Starvation and separate queues</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story: <code>handbook/code/04-priority-queue/main.go</code> (<code>go run .</code>). <span id="codenote"></span></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--line)">newsletter email</span>
+    <span style="--c:var(--fail)">urgent email waiting</span>
+    <span style="--c:var(--ok)">sent</span>
+    <span style="--c:var(--svc)">queue</span>
+    <span style="--c:var(--coord)">worker</span>
+    <span style="--c:var(--wait)">in flight</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>RabbitMQ queues declared with <code>x-max-priority</code> and messages with a priority header. Amazon SQS and Kafka have no message priority, so teams use one queue or topic per priority with its own workers.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use a few priority levels, not hundreds. Keep prefetch low, because messages already sent to a worker are not reordered. When high-priority traffic is steady, give low priority its own reserved capacity, or it never runs.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Priority in one queue</th><th>One queue per priority</th></tr>
+      <tr><td>Supported by</td><td>RabbitMQ</td><td>Every broker, including Kafka and SQS</td></tr>
+      <tr><td>Urgent message</td><td>Jumps ahead in the queue</td><td>Has its own workers</td></tr>
+      <tr><td>Starvation risk</td><td>Yes, with steady urgent traffic</td><td>No, capacity is reserved</td></tr>
+      <tr><td>Cost</td><td>One setting</td><td>More queues and workers to run</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A priority queue lets an urgent message jump the line. On Kafka or SQS, or when urgent traffic is steady, I use a separate queue per priority with its own workers so nothing starves."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const C={idle:["var(--line)","var(--fg)"],busy:["var(--wait)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],main:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],undo:["var(--undo)","#fff"],off:["none","var(--muted)"]};
+const col=st=>st==="idle"?"var(--muted)":(C[st]||[ "var(--fg)"])[0];
+function box(x,y,w,h,st,label,sub){const [f,t]=C[st]||C.idle;const cx=x+w/2,cy=y+h/2;
+  return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="5 4"/><text x="${cx}" y="${sub?cy-3:cy+6}" font-size="16" font-weight="700" fill="${t}">${label}</text>`+(sub?`<text x="${cx}" y="${cy+17}" font-size="13" fill="${t}">${sub}</text>`:"");}
+function arrow(x1,y1,x2,y2,label,st,dash){const c=st?col(st):"var(--fg)";
+  return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`+(label?`<rect x="${(x1+x2)/2-String(label).length*4.1-6}" y="${(y1+y2)/2-11}" width="${String(label).length*8.2+12}" height="22" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="1"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+5}" font-size="14" font-weight="700" fill="${c}">${label}</text>`:"")+`</g>`;}
+function chip(x,y,w,label,st){const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="${x}" y="${y}" width="${w}" height="26" rx="13" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="4 3"/><text x="${x+w/2}" y="${y+18}" font-size="13" font-weight="700" fill="${t}">${label}</text></g>`;}
+function note(y,txt,st){if(!txt)return"";const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="60" y="${y}" width="780" height="32" rx="16" fill="${f}"/><text x="450" y="${y+22}" font-size="15" font-weight="700" fill="${t}">${txt}</text></g>`;}
+function gdraw(s,base){let h="";const N=Object.assign({},base||{},s.nd||{});
+  for(const k in N){const n=N[k];if(n)h+=box(n[0],n[1],n[2],n[3],n[4],n[5],n[6]);}
+  (s.ar||[]).forEach(a=>h+=arrow(...a));(s.ch||[]).forEach(c=>h+=chip(...c));
+  if(s.n)h+=note(s.n[2]||352,s.n[0],s.n[1]);return h;}
+function seq(A,s){const n=A.length,gap=860/n,X={};A.forEach((a,k)=>X[a[0]]=20+gap*k+gap/2);
+  const w=Math.min(gap-14,180);let h="";
+  A.forEach(a=>{const x=X[a[0]];h+=box(x-w/2,14,w,52,(s.ac&&s.ac[a[0]])||a[2]||"main",a[1],a[3]);
+    h+=`<line x1="${x}" y1="66" x2="${x}" y2="330" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  let y=98;(s.m||[]).forEach(m=>{
+    if(m[0]==="x"){h+=`<g class="msg"><rect x="20" y="${y-15}" width="860" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${y+4}" fill="var(--fail)" font-weight="700" font-size="14">${m[1]}</text></g>`;y+=34;return;}
+    const [f,t,l,st,d]=m;
+    if(f===t)h+=chip(X[f]-Math.min(gap/2-4,110),y-13,Math.min(gap-8,220),l,st||"idle");
+    else{const x1=X[f],x2=X[t],dir=x2>x1?1:-1;h+=arrow(x1+4*dir,y,x2-6*dir,y,l,st||"main",d);}
+    y+=34;});
+  for(const k in (s.st||{})){const [st,txt]=s.st[k];h+=chip(X[k]-w/2,340,w,txt,st);}
+  if(s.n)h+=note(380,s.n[0],s.n[1]);return h;}
+
+const code={"prio": {"label": "Go", "pc": ["queue declared with x-max-priority 10", "publish(email, priority):", "  if the queue has no priority: priority = 0     # plain first in, first out", "  insert email in order of (priority high first, then arrival)", "worker loop, 3 emails a second:", "  take prefetch emails into its own buffer       # already out of the queue", "  email = head of the queue", "  send(email); ack(email)"], "real": ["// container/heap stands in for a RabbitMQ priority queue.", "type Email struct {", "\tKind     string", "\tPriority int", "\tseq      int", "}", "", "func (q PQ) Less(i, j int) bool {", "\tif q[i].Priority != q[j].Priority {", "\t\treturn q[i].Priority > q[j].Priority // higher first", "\t}", "\treturn q[i].seq < q[j].seq // same priority: first in, first out", "}", "", "add := func(kind string, p int) {", "\tif !prio {", "\t\tp = 0 // a plain queue ignores priority", "\t}", "\tseq++", "\theap.Push(q, Email{kind, p, seq})", "}", "", "// prefetched emails already left the queue: never reordered", "for i := 0; i < prefetch; i++ {", "\theap.Pop(q)", "}", "e := heap.Pop(q).(Email) // send, then ack"], "map": {"1": [2], "2": [15], "3": [16, 17, 18], "4": [8, 9, 10, 11, 12], "5": [27], "6": [24, 25, 26], "7": [27], "8": [27]}}, "starve": {"label": "Go", "pc": ["one priority queue, steady urgent traffic:", "  each second: 3 urgent emails arrive", "  each second: the worker sends 3, highest priority first", "  newsletters are reached only when no urgent email waits   # never", "fix: one queue per priority", "  emails-urgent -> urgent worker, sized for the peak", "  emails-bulk   -> bulk worker, sized for its deadline", "  alert on each queue's depth and oldest age"], "real": ["// one queue: urgent always wins the Less check", "for sec := 0; sec < 3600; sec++ {", "\tfor k := 0; k < perSecond; k++ {", "\t\theap.Push(q, Email{\"code\", 9, seq})", "\t}", "\tfor k := 0; k < perSecond; k++ {", "\t\tif heap.Pop(q).(Email).Kind == \"news\" {", "\t\t\tnewsSent++ // stays 0", "\t\t}", "\t}", "}", "", "// fix: two queues, each with its own worker", "for sec := 0; sec < 3600; sec++ {", "\turgent += perSecond", "\tn := min(urgent, perSecond) // urgent worker", "\turgent -= n", "\tm := min(bulk, perSecond) // bulk worker, never blocked", "\tbulk -= m", "\tbulkSent += m", "}", "depth := map[string]int{\"urgent\": urgent, \"bulk\": bulk} // alert on each queue"], "map": {"1": [1], "2": [3, 4], "3": [7], "4": [8], "5": [13], "6": [16, 17], "7": [18, 19, 20], "8": [22]}}};
+const steps={
+"prio":[
+ {pc:[5, 7, 8],t:"A long line of newsletters",b:"The email queue holds 10,000 newsletter emails. One worker sends 3 emails a second. Each time it takes the head of the queue.",w:"A plain queue is first in, first out.",q:[["news","idle"],["news","idle"],["news","idle"],["news","idle"],["news","idle"],["+9,995","idle"]],w1:["Email worker","sending news"]},
+ {pc:[2, 3, 4],t:"A password reset arrives",b:"A customer asks for a password reset. The queue has no priority, so publish sets every priority to 0. The reset is inserted after all 10,000 newsletters, as email 10,001.",w:"The customer is waiting at the login page.",q:[["news","idle"],["news","idle"],["news","idle"],["news","idle"],["+9,996","idle"],["reset","fail"]],w1:["Email worker","sending news"]},
+ {pc:[3, 4, 7],t:"The failure: it waits behind 10,000",b:"First in, first out means 10,000 newsletters go first. At 3 a second that is about 56 minutes before the reset goes out.",w:"The customer gave up long ago.",q:[["news","idle"],["news","idle"],["news","idle"],["news","idle"],["+9,996","idle"],["reset","fail"]],w1:["Email worker","news, news, news"],n:["The reset waits an hour behind newsletters","fail"]},
+ {pc:[1, 2, 4],t:"Give it a priority",b:"The queue is declared with x-max-priority 10. The reset is published with priority 9, newsletters with 1. The order check compares priority first: 9 beats 1, so the reset becomes the head.",w:"Within each priority, order is still first in, first out.",q:[["reset","fail"],["news","idle"],["news","idle"],["news","idle"],["news","idle"],["+9,996","idle"]],w1:["Email worker","next: reset"]},
+ {pc:[6, 7, 8],t:"Sent first",b:"The worker takes the head: the reset, as email 1, within a second. One caveat from the run: with prefetch 50, the worker already holds 50 newsletters, so the reset is email 51. Keep prefetch low.",w:"One caveat: emails already prefetched to the worker are not reordered. Keep prefetch low on a priority queue.",q:[["news","idle"],["news","idle"],["news","idle"],["news","idle"],["+9,996","idle"]],w1:["Email worker","reset sent","ok"],sent:"reset sent",n:["Reset sent in seconds","ok"]}
+],
+"starve":[
+ {pc:[2, 3],t:"Steady urgent traffic",b:"A marketing push makes login codes and resets arrive at 3 a second, priority 9. The worker also sends 3 a second.",w:"There is always an urgent email at the front.",q:[["reset","fail"],["code","fail"],["reset","fail"],["news","idle"],["news","idle"],["+9,995","idle"]],w1:["Email worker","urgent, urgent"]},
+ {pc:[4],t:"The failure: starvation",b:"Each time, the order check finds a priority 9 email at the head. Over one hour the run sends 0 newsletters. Strict priority serves low priority only when high priority is empty.",w:"Strict priority means low priority runs only when high priority is empty.",q:[["code","fail"],["reset","fail"],["code","fail"],["news","idle"],["news","idle"],["+9,995","idle"]],w1:["Email worker","still urgent"],n:["Newsletters starve for days","fail"]},
+ {pc:[5, 6, 7],t:"One queue per priority",b:"Split into two queues: emails-urgent and emails-bulk. Each has its own worker. The bulk worker never compares against an urgent email, so nothing can jump it.",w:"Priority becomes reserved capacity, not a place in line.",q:[["reset","fail"],["code","fail"]],q2:[["news","idle"],["news","idle"],["news","idle"],["+9,997","idle"]],w1:["Urgent worker","resets, codes","ok"],w2:["Bulk worker","newsletters","ok"]},
+ {pc:[6, 7],t:"Both make progress",b:"Over one hour the run sends 10,800 urgent emails with 0 waiting, and all 10,000 newsletters. Priority became reserved capacity, not a place in line.",w:"This is also how you do priority on Kafka or SQS, which have no message priority.",q:[["code","fail"]],q2:[["news","idle"],["news","idle"],["+9,990","idle"]],w1:["Urgent worker","in seconds","ok"],w2:["Bulk worker","steady","ok"],n:["Nothing starves","ok"]},
+ {pc:[8],t:"Size by the promise",b:"Give the urgent queue enough workers for its peak. Give bulk enough for its deadline.",w:"Each queue's size and age is a separate alert.",q:[],q2:[["news","idle"],["+9,000","idle"]],w1:["Urgent worker","idle, waiting","ok"],w2:["Bulk worker","on schedule","ok"]}
+]};
+function row(y,lab,cells){let h=`<text x="20" y="${y+30}" text-anchor="start" font-size="14" font-weight="700" fill="var(--muted)">${lab}</text>`;
+  h+=`<rect x="130" y="${y}" width="440" height="56" rx="8" fill="var(--panel)" stroke="var(--svc)" stroke-width="2"/>`;
+  cells.forEach((c,k)=>{const [f,t]=C[c[1]];h+=`<g class="msg"><rect x="${140+k*71}" y="${y+10}" width="64" height="36" rx="6" fill="${f}"/><text x="${172+k*71}" y="${y+33}" font-size="13" font-weight="700" fill="${t}">${c[0]}</text></g>`;});
+  return h;}
+function draw(s){let h=row(80,s.q2?"urgent":"emails",s.q);
+  h+=arrow(570,108,660,108,"","main");h+=box(660,74,220,68,s.w1[2]||"main",s.w1[0],s.w1[1]);
+  if(s.q2){h+=row(220,"bulk",s.q2);h+=arrow(570,248,660,248,"","main");h+=box(660,214,220,68,s.w2[2]||"main",s.w2[0],s.w2[1]);}
+  if(s.n)h+=note(370,s.n[0],s.n[1]);return h;}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+function render(){
+  const L=steps[mode],s=L[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${L.length}`;
+  $("scene").innerHTML=draw(s,mode);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("scene").querySelectorAll(".msg")].forEach((el,k)=>reduce?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),70*k+30));
+  $("prev").disabled=i===0;$("next").disabled=i===L.length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"){$("codecard").style.display="none";return;}
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codenote").textContent=c.note||"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

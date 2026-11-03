@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Constraints</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Constraints: rules the database checks on every write</h1>
+  <p class="lede">An app stores orders and order lines. A bug deletes order 77 and leaves its three lines behind. Watch the orphans reach the revenue report, then watch each constraint refuse a bad write. The last tab shows a warehouse that does not enforce foreign keys at all.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="orphan">No foreign key: orphans</button>
+    <button role="tab" aria-selected="false" data-mode="rules">Each constraint at work</button>
+    <button role="tab" aria-selected="false" data-mode="dw">Warehouse: check it yourself</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Constraints: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">key</span>
+    <span style="--c:var(--undo)">foreign key: points at a parent</span>
+    <span style="--c:var(--ok)">write accepted, or check passed</span>
+    <span style="--c:var(--line)">plain value</span>
+    <span style="--c:var(--wait)">being checked now</span>
+    <span style="--c:var(--fail)">bad write, or orphan</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>An app database: orders and lines with a foreign key and RESTRICT. A wallet: <code>CHECK (balance &gt;= 0)</code> as the last guard behind the conditional <code>UPDATE</code>. A warehouse such as StarRocks: foreign keys are not enforced, so an orphan count runs after every load.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Put the rule in the schema when every writer must obey it. Use RESTRICT by default. Use CASCADE only for small, owned children, and delete large sets in batches on purpose. In a warehouse, check orphans with a <code>LEFT JOIN</code> to the parent <code>WHERE parent.key IS NULL</code>.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th>Rule</th><th>What it refuses</th><th>Example</th></tr>
+      <tr><td><code>NOT NULL</code></td><td>A missing value</td><td>A line with no order id</td></tr>
+      <tr><td><code>UNIQUE</code></td><td>A second row with the same value</td><td>Two users with one e-mail</td></tr>
+      <tr><td><code>CHECK</code></td><td>A row that breaks a rule</td><td><code>amount &lt; 0</code></td></tr>
+      <tr><td><code>FOREIGN KEY</code></td><td>A link to a parent that does not exist</td><td>A line for order 99</td></tr>
+      <tr><td><code>ON DELETE</code></td><td>RESTRICT refuses, CASCADE deletes children, SET NULL clears the link</td><td>Deleting order 77</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A constraint is a rule the database checks on every write, so a forgotten code path cannot break it."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const ord=(rows)=>[F(20,50,250,200,"orders"),T(30,86,"order_id (PK)"),...rows.map((r,j)=>B(30,94+44*j,230,r[0],r[1],34))];
+const LN=[["77","40"],["77","25"],["77","35"],["78","50"]];
+const lines=(ks,ok)=>[F(330,50,550,250,"order_lines"),T(340,86,"line_id"),T(460,86,"order_id (FK)"),T(640,86,"amount"),...LN.map((r,j)=>{const k=ks[j];return[B(340,94+44*j,110,"L"+(j+1),k==="g"?"g":"r",34),B(460,94+44*j,170,(ok&&ok[j])||r[0],k,34),B(640,94+44*j,120,r[1],k==="g"?"g":"n",34)];}).flat()];
+const arr=(on)=>LN.map((r,j)=>on[j]?A(458,111+44*j,262,r[0]==="77"?111:155,"",on[j]):null).filter(Boolean);
+const wr=(lab,k,res,rk)=>[B(40,290,520,lab,k,40),T(580,316,res,rk,"start",16)];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The SQL and Python are the real code: <code>handbook/code/07-constraints/main.py</code> builds these tables in SQLite (with <code>PRAGMA foreign_keys = ON</code>, or off for the warehouse), runs each write and prints the refusals and counts quoted here (<code>python3 main.py</code>).";
+const CODE={
+orphan:{pc:["orders: 77, 78      lines: L1 L2 L3 -> 77, L4 -> 78",
+"schema: order_lines.order_id names an order, no rule",
+"delete order 77                      # nothing checks its lines",
+"orphans = lines whose order is gone  # L1, L2, L3",
+"revenue = sum(every line)            # 150, should be 50",
+"fix: order_id REFERENCES orders ON DELETE RESTRICT",
+"delete order 77 -> refused, lines exist"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- order_lines names its order, but nothing checks it", "CREATE TABLE orders (order_id INT PRIMARY KEY);", "CREATE TABLE order_lines (line_id TEXT, order_id INT, amount INT);"],[""],["INSERT INTO orders VALUES (77), (78);", "INSERT INTO order_lines VALUES ('L1', 77, 40), ('L2', 77, 25), ('L3', 77, 35), ('L4', 78, 50);"],[""],["DELETE_77 = \"DELETE FROM orders WHERE order_id = 77;\""],[""],["-- lines whose order is gone", "SELECT l.line_id FROM order_lines l", "LEFT JOIN orders o ON o.order_id = l.order_id", "WHERE o.order_id IS NULL;"],[""],["-- the revenue report sums every line", "SELECT SUM(amount) FROM order_lines;"],[""],["-- every rule in the schema, checked on every write", "CREATE TABLE orders (order_id INT PRIMARY KEY);", "CREATE TABLE order_lines (", "  line_id  TEXT,", "  order_id INT NOT NULL REFERENCES orders ON DELETE RESTRICT,", "  amount   INT CHECK (amount >= 0)", ");"],[""],["def try_write(db, sql):", "    try:", "        db.execute(sql)", "        return \"accepted\"", "    except sqlite3.IntegrityError as e:", "        return f\"refused: {e}\""],[""],["    db = connect(NO_FK)", "    print(f\"no foreign key, delete order 77: {try_write(db, DELETE_77)}\")", "    print(f\"orphans: {[r[0] for r in db.execute(ORPHANS)]}\")", "    print(f\"revenue: {db.execute(REVENUE).fetchone()[0]} (order 78 alone is 50)\")"],["    print(f\"RESTRICT, delete order 77: {try_write(db, DELETE_77)}\")"]),
+  map:[["orders: 77","INSERT INTO orders VALUES (77)","INSERT INTO order_lines VALUES ('L1'"],["schema:","order_lines names its order..amount INT);"],
+   ["delete order 77  ","DELETE_77 = ","no foreign key, delete order 77"],["orphans =","lines whose order is gone..;","orphans: {"],["revenue =","the revenue report sums..;","revenue: {"],
+   ["fix: order_id","every rule in the schema","order_id INT NOT NULL REFERENCES orders ON DELETE RESTRICT"],["refused, lines exist","RESTRICT, delete order 77","except sqlite3.IntegrityError..refused: {e}"]]}]},
+rules:{pc:["insert line, order_id NULL     -> NOT NULL refuses",
+"insert line, amount -5         -> CHECK (amount >= 0) refuses",
+"insert line, order 99          -> FOREIGN KEY: no such order, refuses",
+"delete order 77, RESTRICT      -> refused, lines exist",
+"delete order 77, CASCADE       -> its 3 lines deleted too",
+"delete order 77, SET NULL      -> lines stay, order_id = NULL",
+"CASCADE on 2,000,000 lines: one statement, every lock held",
+"fix: delete lines in batches of 10,000, then the parent"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- every rule in the schema, checked on every write", "CREATE TABLE orders (order_id INT PRIMARY KEY);", "CREATE TABLE order_lines (", "  line_id  TEXT,", "  order_id INT NOT NULL REFERENCES orders ON DELETE RESTRICT,", "  amount   INT CHECK (amount >= 0)", ");"],[""],["-- CASCADE: deleting an order deletes its lines too", "CREATE TABLE orders (order_id INT PRIMARY KEY);", "CREATE TABLE order_lines (line_id TEXT, order_id INT REFERENCES orders ON DELETE CASCADE, amount INT);"],[""],["-- SET NULL: the lines stay, the link is cleared", "CREATE TABLE orders (order_id INT PRIMARY KEY);", "CREATE TABLE order_lines (line_id TEXT, order_id INT REFERENCES orders ON DELETE SET NULL, amount INT);"],[""],["BAD_INSERTS = [", "    (\"no order id\", \"INSERT INTO order_lines VALUES ('L5', NULL, 10);\"),", "    (\"amount -5\", \"INSERT INTO order_lines VALUES ('L6', 78, -5);\"),", "    (\"order 99\", \"INSERT INTO order_lines VALUES ('L7', 99, 10);\"),", "]"],[""],["-- one batch of lines, its own short transaction", "DELETE FROM order_lines WHERE rowid IN (", "  SELECT rowid FROM order_lines WHERE order_id = ? LIMIT ?", ");"],[""],["def try_write(db, sql):", "    try:", "        db.execute(sql)", "        return \"accepted\"", "    except sqlite3.IntegrityError as e:", "        return f\"refused: {e}\""],[""],["def delete_in_batches(db, order_id, size):", "    \"\"\"Delete the children in small transactions first, then the parent.\"\"\"", "    statements = 0", "    while True:", "        n = db.execute(DELETE_BATCH, (order_id, size)).rowcount", "        statements += 1", "        if n == 0:", "            break", "    db.execute(\"DELETE FROM orders WHERE order_id = ?\", (order_id,))", "    return statements"],[""],["    for label, sql in BAD_INSERTS:", "        print(f\"insert line with {label}: {try_write(db, sql)}\")", "    print(f\"RESTRICT, delete order 77: {try_write(db, DELETE_77)}\")", "    db = connect(WITH_CASCADE)", "    print(f\"CASCADE, delete order 77: {try_write(db, DELETE_77)}, lines left {lines(db)}\")", "    db = connect(WITH_SET_NULL)", "    print(f\"SET NULL, delete order 77: {try_write(db, DELETE_77)}, lines {lines(db)}\")", "    print()", "", "    big = sqlite3.connect(\":memory:\", isolation_level=None)", "    big.execute(\"PRAGMA foreign_keys = ON\")", "    big.executescript(WITH_CASCADE)", "    big.execute(\"INSERT INTO orders VALUES (5)\")", "    big.executemany(\"INSERT INTO order_lines VALUES (?, 5, 1)\", ((str(k),) for k in range(2_000_000)))", "    before = big.total_changes", "    big.execute(\"DELETE FROM orders WHERE order_id = 5\")", "    print(f\"CASCADE on a big parent: one statement deleted {big.total_changes - before - 1:,} lines and 1 order\")", "    big.execute(\"INSERT INTO orders VALUES (6)\")", "    big.executemany(\"INSERT INTO order_lines VALUES (?, 6, 1)\", ((str(k),) for k in range(2_000_000)))", "    statements = delete_in_batches(big, 6, 10_000)", "    print(f\"fix, batches of 10,000: {statements} statements, the last finds 0, then the order\")"]),
+  map:[["order_id NULL","=order_id INT NOT NULL REFERENCES orders ON DELETE RESTRICT,","no order id","except sqlite3.IntegrityError..refused: {e}","insert line with {label}"],
+   ["amount -5","amount   INT CHECK (amount >= 0)","(\"amount -5\"","except sqlite3.IntegrityError..refused: {e}","insert line with {label}"],
+   ["order 99","=order_id INT NOT NULL REFERENCES orders ON DELETE RESTRICT,","(\"order 99\"","except sqlite3.IntegrityError..refused: {e}","insert line with {label}"],
+   ["delete order 77, RESTRICT","=order_id INT NOT NULL REFERENCES orders ON DELETE RESTRICT,","RESTRICT, delete order 77"],
+   ["delete order 77, CASCADE","CASCADE: deleting an order..ON DELETE CASCADE, amount","CASCADE, delete order 77"],
+   ["delete order 77, SET NULL","SET NULL: the lines stay..ON DELETE SET NULL, amount","SET NULL, delete order 77"],
+   ["CASCADE on 2,000,000","VALUES (?, 5, 1)","DELETE FROM orders WHERE order_id = 5","CASCADE on a big parent"],
+   ["fix: delete lines","one batch of lines..);","def delete_in_batches..return statements","statements = delete_in_batches(big, 6, 10_000)","fix, batches of 10,000"]]}]},
+dw:{pc:["warehouse: tx_hash declared as a key, never checked",
+"load transfers 0xab12, 0xcd34, 0xee01, 0xee01   # 0xee01 has no transaction",
+"orphans = transfers LEFT JOIN transactions, keep partner IS NULL",
+"if orphans > 0: mark the load failed, alert",
+"fix: load transactions first, rerun -> orphans = 0"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- the key is declared, but foreign_keys is off: nothing is checked", "CREATE TABLE transactions (tx_hash TEXT PRIMARY KEY);", "CREATE TABLE transfers (tx_hash TEXT REFERENCES transactions, amount INT);"],[""],["-- the data check after every load", "SELECT COUNT(*) FROM transfers t", "LEFT JOIN transactions x ON x.tx_hash = t.tx_hash", "WHERE x.tx_hash IS NULL;"],[""],["def check_load(dw):", "    \"\"\"The data check: any orphan fails the load.\"\"\"", "    n = dw.execute(ORPHAN_CHECK).fetchone()[0]", "    return n, (\"failed, alert sent\" if n > 0 else \"ok\")"],[""],["    dw.executescript(WAREHOUSE)", "    dw.execute(\"INSERT INTO transactions VALUES ('0xab12'), ('0xcd34')\")", "    load = [(\"0xab12\", 5), (\"0xcd34\", 7), (\"0xee01\", 3), (\"0xee01\", 4)]", "    dw.executemany(\"INSERT INTO transfers VALUES (?, ?)\", load)", "    n, status = check_load(dw)", "    print(f\"warehouse load with 0xee01 missing: accepted, orphan check = {n}, load {status}\")", "    dw.execute(\"INSERT INTO transactions VALUES ('0xee01')\")", "    n, status = check_load(dw)", "    print(f\"after loading the transaction first: orphan check = {n}, load {status}\")"]),
+  map:[["warehouse:","the key is declared..amount INT);","dw.executescript(WAREHOUSE)"],["load transfers","load = [(","INSERT INTO transfers VALUES (?, ?)"],
+   ["orphans = transfers","the data check after every load..;"],["if orphans > 0","def check_load..return n,","warehouse load with 0xee01 missing"],
+   ["fix: load transactions","INSERT INTO transactions VALUES ('0xee01')","after loading the transaction first"]]}]}};
+// CODE PANEL END
+const S={
+orphan:{name:"orders and order_lines, no foreign key",st:[
+ {t:"Start: an order and its lines",pc:["orders: 77", "schema:"],b:"Order 77 has three lines. Order 78 has one. order_lines.order_id names the order, but no constraint checks it.",w:"The link exists only because every piece of code is careful. Nothing in the database enforces it.",d:ord([["77","r"],["78","r"]]).concat(lines(["u","u","u","u"]),arr(["u","u","u","u"]))},
+ {t:"A bug deletes order 77",pc:["delete order 77  "],b:"A cleanup job deletes order 77. It forgets the lines. The database has no rule, so the delete succeeds.",w:"Every code path that deletes orders must remember the lines. One forgot.",d:ord([["77: deleted","g"],["78","r"]]).concat(lines(["u","u","u","u"]),arr([0,0,0,"u"]),wr("DELETE FROM orders WHERE order_id = 77","c","accepted","c"))},
+ {t:"Three orphans",pc:["orphans ="],b:"A LEFT JOIN from the lines to orders finds the lines with no partner. The program prints L1, L2 and L3: they still say order 77, and no such order exists.",w:"An orphan is a child row whose parent is gone.",d:ord([["77: deleted","g"],["78","r"]]).concat(lines(["x","x","x","u"]),arr([0,0,0,"u"]),[T(340,330,"3 lines point at nobody","x","start",16)])},
+ {t:"The failure: the report counts them",pc:["revenue ="],b:"Months later the revenue report sums order_lines. It adds 100 from the three orphan lines of an order that no longer exists. The program prints revenue 150, where order 78 alone is 50.",w:"Bad data spreads quietly into every report built on it.",d:ord([["77: deleted","g"],["78","r"]]).concat(lines(["x","x","x","c"]),[T(340,330,"revenue = 150, should be 50","x","start",16)])},
+ {t:"Fix: a foreign key with RESTRICT",pc:["fix: order_id", "refused, lines exist"],b:"Add FOREIGN KEY (order_id) REFERENCES orders ON DELETE RESTRICT. Replay the buggy delete. The database checks the lines before it deletes the order. The program prints: refused, FOREIGN KEY constraint failed.",w:"The rule now lives in the schema. Every client is checked, including the one with the bug.",d:ord([["77","r"],["78","r"]]).concat(lines(["u","u","u","u"]),arr(["u","u","u","u"]),wr("DELETE FROM orders WHERE order_id = 77","x","refused: lines exist","x"))}
+]},
+rules:{name:"order_lines with constraints",st:[
+ {t:"NOT NULL refuses a missing value",pc:["order_id NULL"],b:"A line arrives with no order id. order_id is NOT NULL, so the insert is refused. SQLite prints: NOT NULL constraint failed: order_lines.order_id.",w:"NOT NULL: the column must hold a value.",d:ord([["77","r"],["78","r"]]).concat([B(340,94,520,"INSERT line: order_id = NULL","w",40),T(340,170,"refused: order_id cannot be NULL","x","start",16)])},
+ {t:"CHECK refuses a broken rule",pc:["amount -5"],b:"A line arrives with amount -5. CHECK (amount >= 0) is false for it, so the insert is refused. SQLite prints: CHECK constraint failed: amount >= 0.",w:"CHECK: a rule on each row, tested on every insert and update.",d:ord([["77","r"],["78","r"]]).concat([B(340,94,520,"INSERT line: order 78, amount -5","w",40),T(340,170,"refused: CHECK (amount >= 0)","x","start",16)])},
+ {t:"FOREIGN KEY refuses a missing parent",pc:["order 99"],b:"A line arrives for order 99. The database looks up 99 in orders, finds nothing, and refuses the insert. SQLite prints: FOREIGN KEY constraint failed.",w:"Referential integrity: every link points at a row that exists.",d:ord([["77","r"],["78","r"]]).concat([B(340,94,520,"INSERT line: order 99, amount 10","w",40),A(338,114,262,140,"","x",1),T(340,170,"refused: no order 99","x","start",16)])},
+ {t:"ON DELETE RESTRICT: refuse",pc:["delete order 77, RESTRICT"],b:"Delete order 77 while it has lines. The database finds three lines that point at it, and RESTRICT refuses the delete.",w:"The safe default. Children must be dealt with on purpose first.",d:ord([["77","r"],["78","r"]]).concat(lines(["u","u","u","u"]),arr(["u","u","u","u"]),wr("DELETE order 77, ON DELETE RESTRICT","w","refused","x"))},
+ {t:"ON DELETE CASCADE: take the children too",pc:["delete order 77, CASCADE"],b:"With CASCADE, deleting order 77 also deletes L1, L2 and L3 in the same transaction. The program prints the lines left: only L4, for order 78.",w:"Good for small children the parent owns. No orphans are possible.",d:ord([["77: deleted","g"],["78","r"]]).concat(lines(["g","g","g","u"]),arr([0,0,0,"u"]),wr("DELETE order 77, ON DELETE CASCADE","w","3 lines deleted too","c"))},
+ {t:"ON DELETE SET NULL: clear the link",pc:["delete order 77, SET NULL"],b:"With SET NULL, the lines stay, and their order_id becomes NULL. The program prints L1, L2 and L3 pointing at NULL. This needs order_id to allow NULL.",w:"Use it when the child can live without a parent, such as a ticket whose agent left.",d:ord([["77: deleted","g"],["78","r"]]).concat(lines(["n","n","n","u"],["NULL","NULL","NULL"]),arr([0,0,0,"u"]),wr("DELETE order 77, ON DELETE SET NULL","w","3 links cleared","c"))},
+ {t:"The trap: CASCADE on a big parent",pc:["CASCADE on 2,000,000", "fix: delete lines"],b:"The program gives one order 2,000,000 lines and deletes it with CASCADE. It prints: one statement deleted 2,000,000 lines and 1 order. That is one transaction, holding its locks until it ends.",w:"Other writers on those rows wait for the whole delete. Fix: RESTRICT, and delete children in batches on purpose. The program deletes the same 2,000,000 lines in 201 short statements of 10,000, the last one finding none, then the order.",d:[B(40,80,300,"DELETE order 5","w",44),A(342,102,456,102,"","x"),B(460,80,400,"2,000,000 lines deleted, locks held","x",44),T(40,200,"one transaction: every lock held until it commits","x","start",16),T(40,230,"fix: 201 statements of up to 10,000 lines, then the order","c","start",16)]}
+]},
+dw:{name:"StarRocks: transfers and transactions",st:[
+ {t:"A warehouse does not enforce foreign keys",pc:["warehouse:"],b:"In StarRocks a foreign key can be declared to help the planner, but no write is checked against it. The program plays the warehouse with SQLite and foreign_keys off: the key is declared and never checked.",w:"The safety net of the app database is gone. The pipeline must check.",d:[F(20,50,330,200,"transactions"),B(30,94,310,"0xab12","r"),B(30,138,310,"0xcd34","r"),F(400,50,480,250,"transfers"),T(410,86,"tx_hash (FK, not enforced)"),B(410,94,200,"0xab12","u"),B(410,138,200,"0xcd34","u"),A(408,111,342,111,"","u"),A(408,155,342,155,"","u")]},
+ {t:"A bad load is accepted",pc:["load transfers"],b:"A pipeline bug loads two transfers whose transaction 0xee01 was never loaded. The warehouse accepts them.",w:"Silently. No error, no warning.",d:[F(20,50,330,200,"transactions"),B(30,94,310,"0xab12","r"),B(30,138,310,"0xcd34","r"),F(400,50,480,250,"transfers"),T(410,86,"tx_hash (FK, not enforced)"),B(410,94,200,"0xab12","u"),B(410,138,200,"0xcd34","u"),B(410,182,200,"0xee01","x"),B(410,226,200,"0xee01","x"),A(408,111,342,111,"","u"),A(408,155,342,155,"","u")]},
+ {t:"The orphan check finds them",pc:["orphans = transfers"],b:"After the load, run: SELECT COUNT(*) FROM transfers t LEFT JOIN transactions x ON x.tx_hash = t.tx_hash WHERE x.tx_hash IS NULL. It returns 2.",w:"LEFT JOIN keeps every transfer. The ones with no partner come back with NULL, and that is the orphan list.",d:[F(20,50,330,200,"transactions"),B(30,94,310,"0xab12","r"),B(30,138,310,"0xcd34","r"),F(400,50,480,250,"transfers"),B(410,94,200,"0xab12","c"),B(410,138,200,"0xcd34","c"),B(410,182,200,"0xee01","w"),B(410,226,200,"0xee01","w"),T(630,210,"partner: NULL","w"),T(630,250,"partner: NULL","w"),T(20,340,"orphan count = 2","w","start",18)]},
+ {t:"The check fails the load",pc:["if orphans > 0"],b:"The data check runs after every load. A count above zero marks the load failed and alerts. The program prints: orphan check = 2, load failed, alert sent.",w:"The check does in the pipeline what the foreign key does in an app database.",d:[B(40,80,360,"load page 412","c",44),A(402,102,476,102,"","f"),B(480,80,380,"orphan check: 2 found","x",44),A(670,126,670,196,"","x"),B(480,200,380,"load marked failed, alert sent","x",44)]},
+ {t:"Fix the pipeline, rerun: zero orphans",pc:["fix: load transactions"],b:"The bug is fixed so transactions load before transfers. The page is loaded again. The orphan check returns 0, and the program prints load ok.",w:"Constraints you cannot enforce become checks you run on purpose.",d:[F(20,50,330,200,"transactions"),B(30,94,310,"0xab12","r"),B(30,138,310,"0xcd34","r"),B(30,182,310,"0xee01","c"),F(400,50,480,250,"transfers"),B(410,94,200,"0xab12","u"),B(410,138,200,"0xcd34","u"),B(410,182,200,"0xee01","u"),B(410,226,200,"0xee01","u"),A(408,199,342,199,"","u"),A(408,243,342,203,"","u"),T(20,340,"orphan count = 0","c","start",18)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

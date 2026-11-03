@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attention and the transformer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Attention: each token weighs every earlier token</h1>
+  <p class="lede">In "the swap moved tokens, and it was large", the model must know that "it" means the swap. Press <b>Next</b> and watch "it" ask a question of every earlier token and pick the swap. The second tab shows why a twice-as-long prompt costs about four times the attention work.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="attend">How &quot;it&quot; finds the swap</button>
+    <button role="tab" aria-selected="false" data-mode="cost">The failure: the square cost</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">The token it looking back at earlier tokens with attention weights, then the cost of attention growing with context length</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-attention-transformer/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--undo)">query: what I look for</span>
+    <span style="--c:var(--coord)">key: what I offer</span>
+    <span style="--c:var(--svc)">value: what I pass on</span>
+    <span style="--c:var(--wait)">attention weight</span>
+    <span style="--c:var(--fail)">work that grows with the square</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every modern LLM (large language model) is a transformer. Long prompts slow the first token because prefill does all the comparisons. The KV cache in a serving stack such as vLLM stores the keys and values so decode does not redo them.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep prompts lean: trimmed tool output costs less attention work, not only fewer tokens. Use a model and server built for long context only when the task truly needs it. Read layers, heads and context length on a model card as numbers from this design.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Prefill (the prompt)</th><th>Decode (one new token)</th></tr>
+      <tr><td>Attention work</td><td>Every token against every earlier token</td><td>One new token against all earlier ones</td></tr>
+      <tr><td>Grows with context</td><td>About with the square</td><td>In a straight line</td></tr>
+      <tr><td>Keys and values</td><td>Computed and stored in the KV cache</td><td>Read from the KV cache</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Attention lets each token weigh every earlier token, and a transformer stacks that dozens of times to predict the next one."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={attend:{
+ pc:["for each token t: x = embedding(t) + position(t)",
+"for each layer:",
+"  q, k, v = x * Wq, x * Wk, x * Wv     # query, key, value",
+"  for the token \"it\":",
+"    for each earlier token j:",
+"      score[j] = dot(q_it, k_j) / sqrt(d)",
+"    weight = softmax(score)            # e^score / sum, adds up to 1",
+"    new_it = sum(weight[j] * v_j)      # the weighted mix",
+"  x = feed_forward(x)                  # rework each token alone",
+"next_token = predict(x of the last token)",
+"keep every k and v in the KV cache   # decode reuses them"],
+ real:["QUERY_IT = [1.0, 1.0]            # what \"it\" looks for",
+"KEYS = {\"the\": [0.0, -0.6], \"swap\": [1.9, 1.5], \"moved\": [0.3, 0.2],",
+"        \"tokens\": [0.2, 0.0], \"and\": [-1.0, -0.6], \"it\": [0.0, -0.6]}",
+"VALUES = {\"the\": [0.0, 0.1], \"swap\": [1.0, 0.9], \"moved\": [0.3, 0.2],",
+"          \"tokens\": [0.2, 0.3], \"and\": [0.0, 0.0], \"it\": [0.1, 0.0]}",
+"",
+"def dot(a, b):",
+"    return sum(x * y for x, y in zip(a, b))",
+"",
+"def softmax(scores):",
+"    top = max(scores)",
+"    exps = [math.exp(s - top) for s in scores]",
+"    total = sum(exps)",
+"    return [e / total for e in exps]",
+"",
+"def attend(query, keys, values):",
+"    d = len(query)",
+"    scores = [dot(query, k) / math.sqrt(d) for k in keys]",
+"    weights = softmax(scores)                    # add up to 1",
+"    mixed = [sum(w * v[i] for w, v in zip(weights, values))",
+"             for i in range(d)]",
+"    return scores, weights, mixed",
+"",
+"scores, weights, mixed = attend(QUERY_IT, keys, values)",
+"# swap: score +2.40, weight 72%",
+"# new vector for it = [0.77, 0.70]",
+"# (layers, feed-forward and the next-token head are not in this toy)"],
+ map:{1:[2,3,4,5],3:[1,2,3,4,5],4:[24],5:[18],6:[7,8,17,18],7:[10,11,12,13,14,19],8:[20,21,26],9:[27],10:[27],11:[27]}},
+cost:{
+ pc:["prefill(prompt of n tokens):",
+"  for i in 1..n:                       # every token",
+"    for j in 1..i:                     # itself and every earlier token",
+"      compare(q_i, k_j)",
+"  comparisons = n * (n + 1) / 2        # grows with the square of n",
+"if prompt is bloated:",
+"  trim tool results to needed columns  # keep n small",
+"decode(token n + 1):",
+"  for j in 1..n + 1:                   # one row only",
+"    compare(q_new, cached k_j)"],
+ real:["for n in (8, 16, 32):",
+"    comparisons = n * (n + 1) // 2   # itself and every earlier one",
+"    print(f\"  {n:2d} tokens: {comparisons} comparisons per layer\")",
+"# 8 tokens: 36   16 tokens: 136   32 tokens: 528",
+"",
+"# the fix lives before the call: trim tool output so n stays small",
+"",
+"# decode: token 9 after 8 cached keys",
+"print(\"  decode, token 9 after 8 cached: 9 comparisons (one row, keys from the KV cache)\")"],
+ map:{1:[1],2:[2],3:[2],4:[2],5:[2,3,4],6:[1],7:[6],8:[8],9:[9],10:[9]}}};
+// end code
+const W=["the","swap","moved","tokens","and","it"];
+const WT=[.04,.72,.09,.08,.02,.04];
+const steps={
+"attend":[
+ {t:"Each token becomes a vector",b:"Each token starts as a vector of numbers, its embedding, plus a mark for its position in the sentence. In the program each vector has 2 numbers. A real model uses thousands.",w:"The model never sees words. It sees one vector per token.",vec:1,pc:[1]},
+ {t:"Query, key and value",b:"In each layer every token makes three vectors. The query says what it looks for. The key says what it offers. The value is what it passes on. Here the query of \"it\" is [1.0, 1.0] and the key of \"swap\" is [1.9, 1.5].",w:"The token \"it\" looks for the thing it refers to.",vec:1,qkv:1,pc:[3]},
+ {t:"Compare the query with every key",b:"\"it\" compares its query with the key of every earlier token: score = query · key / √2, the dot product divided by the square root of the vector size. swap scores 2.40, moved 0.35, tokens 0.14, the -0.42, and -1.13.",w:"Each comparison is one number. \"swap\" matches best.",vec:1,qkv:1,lines:1,pc:[4, 5, 6]},
+ {t:"Turn scores into weights",b:"Softmax turns the scores into weights that add up to 1: each weight is e to the score, divided by the sum over all tokens. swap gets 72%, moved 9%, tokens 8%, the 4%, it 4%, and 2%.",w:"The highest score wins the most weight, but every token keeps a little. This is what attention means: how much each earlier token counts.",vec:1,lines:1,wt:1,pc:[7]},
+ {t:"Mix the values",b:"\"it\" takes a weighted mix of the earlier values: 0.72 times swap's value plus the small shares of the rest. Its new vector is [0.77, 0.70], close to swap's value [1.0, 0.9].",w:"After attention, \"it\" knows what it is about.",vec:1,lines:1,wt:1,mix:1,pc:[8]},
+ {t:"Stack dozens of layers",b:"A small feed-forward network reworks each token on its own. Then the next layer runs attention again. A transformer stacks dozens of these layers.",w:"Each layer builds on the last, so meaning is tracked across a whole page.",stack:1,pc:[2, 9]},
+ {t:"Predict the next token",b:"The last layer predicts the next token: \"large\". The keys and values of earlier tokens are kept in the KV cache, so they are not computed again.",w:"The KV cache stores exactly these keys and values.",stack:1,next:1,pc:[10, 11]}
+],
+"cost":[
+ {t:"8 tokens: 36 comparisons",b:"In prefill every token is compared with itself and every earlier token. The count is n × (n + 1) / 2. With 8 tokens that is 8 × 9 / 2 = 36 comparisons. Each square is one.",w:"The triangle is the attention work for one layer.",n:8,pc:[2, 3, 4, 5]},
+ {t:"16 tokens: 136 comparisons",b:"Double the context to 16 tokens: 16 × 17 / 2 = 136 squares. 136 / 36 is 3.8, about four times as many.",w:"Twice the context, about four times the attention work.",n:16,bad:1,pc:[5]},
+ {t:"The failure: a bloated prompt",b:"An agent pastes every tool result in full. The prompt doubles, then doubles again: 8, 16, 32 tokens give 36, 136, 528 comparisons per layer. The first token comes slower and slower.",w:"The work grows with the square of the context length, in every layer.",bars:[["1x context",1],["2x context",4],["4x context",16]],bad:1,pc:[5, 6]},
+ {t:"The fix: keep it lean",b:"The agent trims tool results to the columns it needs. The prompt is short again, and so is the triangle.",w:"Keep contexts lean. Use long-context models only when the task needs them.",n:8,ok:1,pc:[7]},
+ {t:"Decode adds one row",b:"After prefill, token 9 needs only one new row: its query against the 8 cached keys and its own, 9 comparisons. The KV cache saves redoing the 36-square triangle.",w:"Prefill pays the square once. Decode pays a straight line per token.",n:8,row:1,pc:[8, 9, 10]}
+]};
+function scene(s){
+  let h="";
+  if(s.vec){W.forEach((w,k)=>{const x=40+k*140,isIt=k===5;
+    h+=R(x,40,110,46,isIt?"var(--undo)":"var(--line)",w,isIt?"#fff":"var(--fg)",16);
+    h+=T(x+55,104,"vector + pos "+(k+1),"var(--muted)",11,"middle");
+    if(s.qkv){if(isIt)h+=R(x+30,240,50,30,"var(--undo)","Q","#fff",14);else{h+=R(x+15,240,36,30,"var(--coord)","K","#fff",13)+R(x+59,240,36,30,"var(--svc)","V","#fff",13);}}
+    if(s.lines&&!isIt){const wt=WT[k];h+=`<path d="M${40+5*140+55} 230 Q ${(x+55+755)/2} 150 ${x+55} 120" fill="none" stroke="var(--wait)" stroke-width="${s.wt?2+wt*18:2}" opacity="${s.wt?.4+wt*.6:.6}"/>`;
+      if(s.wt)h+=`<rect x="${x+33}" y="124" width="44" height="20" rx="4" fill="var(--panel)" stroke="var(--line)"/>`+T(x+55,139,Math.round(wt*100)+"%","var(--fg)",14,"middle",1);}
+  });
+    if(s.lines)h+=R(735,230,130,30,"var(--undo)","it asks","#fff",13);
+    if(s.mix)h+=R(560,290,320,46,"var(--ok)","new it = 72% swap + 28% the rest","#fff",14);
+    return h;}
+  if(s.stack){for(let k=0;k<5;k++){const y=250-k*48;h+=R(200,y,360,38,k===4?"var(--coord)":"var(--line)",k===4?"Layer N (dozens)":`Layer ${k+1}: attention, then feed-forward`,k===4?"#fff":"var(--fg)",13);}
+    h+=T(380,340,"input: the swap moved tokens and it",null,15,"middle",1)+A(380,322,380,292,"var(--fg)");
+    if(s.next){h+=A(560,77,640,77,"var(--ok)");h+=R(645,53,180,48,"var(--ok)","next: large","#fff",16);h+=R(645,170,220,48,"var(--svc)","KV cache: keys, values","#fff",13);}
+    return h;}
+  if(s.bars){h+=T(30,40,"Attention work in prefill (relative)",null,16,"start",1);s.bars.forEach(([l,v],k)=>{const y=70+k*80;h+=T(30,y+30,l,null,15,"start",1)+R(180,y,v*38,46,k?"var(--fail)":"var(--ok)","");h+=T(190+v*38,y+30,v+"x","var(--fg)",16,"start",1);});return h;}
+  const n=s.n,c=Math.min(18,280/n);
+  for(let r=0;r<n;r++)for(let q=0;q<=r;q++){const last=s.row&&r===n-1;h+=`<rect x="${40+q*c}" y="${30+r*c}" width="${c-2}" height="${c-2}" fill="${last?"var(--undo)":s.bad?"var(--fail)":s.ok?"var(--ok)":"var(--wait)"}" opacity="${s.row&&!last?.35:1}"/>`;}
+  if(s.row){const r=n;for(let q=0;q<=r;q++)h+=`<rect x="${40+q*c}" y="${30+r*c}" width="${c-2}" height="${c-2}" fill="var(--undo)"/>`;}
+  const cnt=n*(n+1)/2;
+  h+=T(420,80,`${n} tokens`,null,20,"start",1)+T(420,116,`${cnt} comparisons per layer`,s.bad?"var(--fail)":"var(--fg)",18,"start",1);
+  h+=T(420,150,"rows: each token  columns: earlier tokens","var(--muted)",13);
+  if(s.row)h+=T(420,190,"new token: one row only, keys from the KV cache","var(--undo)",14,"start",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

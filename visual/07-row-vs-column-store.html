@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Row store or column store</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Row store or column store: which reads are cheap</h1>
+  <p class="lede">The same table, stored two ways. A row store keeps each row together. A column store keeps each column in its own file. Watch what each one reads for one row by key, and for a total over a year. The last tab shows the mistake of feeding a column store one row at a time.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="key">One row by key</button>
+    <button role="tab" aria-selected="false" data-mode="sum">Total per day for a year</button>
+    <button role="tab" aria-selected="false" data-mode="ins">Single-row inserts</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Row store or column store: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">read, and needed</span>
+    <span style="--c:var(--wait)">read, or touched</span>
+    <span style="--c:var(--line)">stored, not read</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>An app keeps PostgreSQL, a row store, for orders and balances, and copies them out for reports. The indexer writes to StarRocks, a column store, in batches: one page of blocks per load. Lookups by address are served by the graph database, not the warehouse.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>OLTP (Online Transaction Processing): many small reads and writes by key, so a row store. OLAP (Online Analytical Processing): few large scans over a few columns of many rows, so a column store. Copy data from one to the other. Never run one's work on the other.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Row store</th><th>Column store</th></tr>
+      <tr><td>Stores</td><td>All columns of a row together</td><td>Each column in its own file</td></tr>
+      <tr><td>One row by key</td><td>One read</td><td>One read per column, then stitch</td></tr>
+      <tr><td>Sum one column over many rows</td><td>Reads every column of every row</td><td>Reads only the named columns</td></tr>
+      <tr><td>Compression</td><td>Modest: mixed types side by side</td><td>Strong: one type, similar values</td></tr>
+      <tr><td>Writes</td><td>Single rows are cheap</td><td>Batches only; single rows make tiny segments</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Row store for many small reads and writes by key, column store for scans over a few columns of many rows."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const grid=(hd,vals,kf,lt,rt)=>{const o=[F(20,50,410,250,lt||"row store: PostgreSQL"),F(470,50,410,250,rt||"column store: StarRocks")];
+ hd.forEach((h,c)=>{o.push(T(30+80*c,88,h));o.push(T(480+80*c,88,h));o.push(F(476+80*c,96,80,196,"","n"));});
+ vals.forEach((_,r)=>o.push(F(26,97+38*r,402,36,"","n")));
+ vals.forEach((row,r)=>row.forEach((v,c)=>{const [a,b]=kf(r,c);o.push(B(30+80*c,100+38*r,72,v,a,30),B(480+80*c,100+38*r,72,v,b,30));}));
+ return o;};
+const WH=["address","balance","nonce","updated","label"],WV=[["0xa1","12","4","1 Oct","-"],["0xb2","0","9","2 Oct","-"],["0xc3","75","2","2 Oct","dex"],["0xd4","3","1","3 Oct","-"],["0xe5","40","7","3 Oct","-"]];
+const TH=["id","day","from","to","amount"],TV=[["1","1 Oct","a","b","10"],["2","1 Oct","b","c","20"],["3","2 Oct","a","c","30"],["4","2 Oct","c","d","15"],["5","3 Oct","d","a","25"]];
+const N=()=>["n","n"];
+const seg=(n,k)=>Array.from({length:n},(_,j)=>B(40+38*(j%22),110+40*Math.floor(j/22),30,"",k,30));
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-row-vs-column-store/main.go</code> stores the same rows both ways, counts the places each layout reads and writes, and runs the segment pile-up minute by minute. It prints every number quoted here (<code>go run .</code>).";
+const CODE={
+key:{pc:["row store get(key): one piece holds every column",
+"column store get(key): for each column file, read the value at key's position",
+"  stitch the values back into a row",
+"insert, row store: append one piece",
+"insert, column store: append to every column file"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Get reads one row: one piece holds every column.", "func (s *RowStore) Get(key string) []string {", "\ts.places++", "\treturn s.rows[s.index[key]]", "}"],[""],["// Get reads one row: one place per column file, then stitches them.", "func (s *ColumnStore) Get(key string) []string {", "\tr, row := s.index[key], []string{}", "\tfor c := range s.files {", "\t\ts.places++", "\t\trow = append(row, s.files[c][r])", "\t}", "\treturn row", "}"],[""],["// Insert appends one piece.", "func (s *RowStore) Insert(row []string) {", "\ts.index[row[0]] = len(s.rows)", "\ts.rows = append(s.rows, row)", "\ts.places++", "}"],[""],["// Insert appends to every column file.", "func (s *ColumnStore) Insert(row []string) {", "\ts.index[row[0]] = len(s.files[0])", "\tfor c, v := range row {", "\t\ts.files[c] = append(s.files[c], v)", "\t\ts.places++", "\t}", "}"],[""],["func wallets() {", "\trows := [][]string{{\"0xa1\", \"12\", \"4\", \"1 Oct\", \"-\"}, {\"0xb2\", \"0\", \"9\", \"2 Oct\", \"-\"},", "\t\t{\"0xc3\", \"75\", \"2\", \"2 Oct\", \"dex\"}, {\"0xd4\", \"3\", \"1\", \"3 Oct\", \"-\"}}", "\trs, cs := NewRowStore(rows), NewColumnStore(5, rows)", "\trow := rs.Get(\"0xc3\")", "\tfmt.Printf(\"row store: balance of 0xc3 = %s, places read %d\\n\", row[1], rs.places)", "\trow = cs.Get(\"0xc3\")", "\tfmt.Printf(\"column store: balance of 0xc3 = %s, places read %d, then stitched\\n\", row[1], cs.places)", "\trs.places, cs.places = 0, 0", "\trs.Insert([]string{\"0xe5\", \"40\", \"7\", \"3 Oct\", \"-\"}) // a new wallet", "\tcs.Insert([]string{\"0xe5\", \"40\", \"7\", \"3 Oct\", \"-\"})", "\tfmt.Printf(\"new wallet: row store %d append, column store %d appends\\n\", rs.places, cs.places)", "}"]),
+  map:[["row store get(key)","// Get reads one row: one piece..return s.rows[s.index[key]]","row := rs.Get(..row store: balance of 0xc3"],
+   ["column store get(key)","// Get reads one row: one place..s.places++","row = cs.Get(..column store: balance of 0xc3"],["stitch the values","row = append(row, s.files[c][r])","return row"],
+   ["insert, row store","// Insert appends one piece..s.places++","rs.Insert([]string{","new wallet: row store"],["insert, column store","// Insert appends to every..s.places++","cs.Insert([]string{","new wallet: row store"]]}]},
+sum:{pc:["SELECT day, SUM(amount) FROM transfers GROUP BY day",
+"row store: for each row, read the whole row      # every column",
+"column store: open the day file and the amount file only",
+"  sums[day] += amount",
+"compress a column file: equal neighbours -> value x count",
+"report on the app database: the scan holds disk and memory, app reads wait",
+"copy to the warehouse, report on the column store"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// SumByDay on a row store: every row is read whole.", "func (s *RowStore) SumByDay(day, amount int) (map[string]int, int) {", "\tsums, read := map[string]int{}, 0", "\tfor _, row := range s.rows {", "\t\tread += len(row) // the whole piece comes off disk", "\t\tn, _ := strconv.Atoi(row[amount])", "\t\tsums[row[day]] += n", "\t}", "\treturn sums, read", "}"],[""],["// SumByDay on a column store: only the two named files are opened.", "func (s *ColumnStore) SumByDay(day, amount int) (map[string]int, int) {", "\tsums, read := map[string]int{}, 0", "\tfor r := range s.files[day] {", "\t\tread += 2 // one value from each file", "\t\tn, _ := strconv.Atoi(s.files[amount][r])", "\t\tsums[s.files[day][r]] += n", "\t}", "\treturn sums, read", "}"],[""],["// runs compresses a column file: equal neighbours become one value and a count.", "func runs(file []string) string {", "\tout := []string{}", "\tfor i := 0; i < len(file); {", "\t\tj := i", "\t\tfor j < len(file) && file[j] == file[i] {", "\t\t\tj++", "\t\t}", "\t\tout = append(out, fmt.Sprintf(\"%s x%d\", file[i], j-i))", "\t\ti = j", "\t}", "\treturn strings.Join(out, \", \")", "}"],[""],["func transfers() {", "\trows := [][]string{{\"1\", \"1 Oct\", \"a\", \"b\", \"10\"}, {\"2\", \"1 Oct\", \"b\", \"c\", \"20\"},", "\t\t{\"3\", \"2 Oct\", \"a\", \"c\", \"30\"}, {\"4\", \"2 Oct\", \"c\", \"d\", \"15\"}, {\"5\", \"3 Oct\", \"d\", \"a\", \"25\"}}", "\trs, cs := NewRowStore(rows), NewColumnStore(5, rows)", "\tsums, read := rs.SumByDay(1, 4)", "\tfmt.Printf(\"row store: SUM(amount) by day %v, values read %d, %d of 5 columns\\n\", sums, read, read/len(rows))", "\tsums, read = cs.SumByDay(1, 4)", "\tfmt.Printf(\"column store: SUM(amount) by day %v, values read %d, %d of 5 columns\\n\", sums, read, read/len(rows))", "\tfmt.Printf(\"day file compressed: %s\\n\", runs(cs.files[1]))", "}"]),
+  map:[["SELECT day, SUM(amount)","sums, read := rs.SumByDay(1, 4)","sums, read = cs.SumByDay(1, 4)"],["row store: for each row","// SumByDay on a row store..read += len(row)","row store: SUM(amount)"],
+   ["column store: open the day file","// SumByDay on a column store..read += 2","column store: SUM(amount)"],["sums[day] += amount","sums[row[day]] += n","sums[s.files[day][r]] += n"],
+   ["compress a column file","// runs compresses..return strings.Join","day file compressed"],["report on the app database","read += len(row)"],["copy to the warehouse","sums, read = cs.SumByDay(1, 4)","column store: SUM(amount)"]]}]},
+ins:{pc:["each INSERT of one row writes its own segment",
+"every minute: segments += loads",
+"compaction, once a minute: merge up to 10 segments into 1",
+"segments over 1000 versions: new loads refused",
+"batch: one load per page of blocks, one segment per page"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// segments runs minutes of loads. Each load makes one segment; compaction", "// merges at most mergePerMinute segments into one, once a minute.", "func segments(minutes, loadsPerMinute int) int {", "\tconst mergePerMinute = 10", "\tseg := 0", "\tfor m := 1; m <= minutes; m++ {", "\t\tseg += loadsPerMinute", "\t\tif seg > 1 {", "\t\t\tk := min(seg, mergePerMinute)", "\t\t\tseg = seg - k + 1", "\t\t}", "\t}", "\treturn seg", "}"],[""],["func loads() {", "\tconst maxVersions = 1000 // StarRocks refuses new loads above this per tablet", "\tsegs := [][]string{}", "\tfor _, tx := range []string{\"t1\", \"t2\", \"t3\", \"t4\", \"t5\"} {", "\t\tsegs = append(segs, []string{tx}) // each INSERT writes its own segment", "\t}", "\tfmt.Printf(\"one row per insert: %d inserts, %d segments\\n\", 5, len(segs))", "\tfmt.Printf(\"one row per insert: 44 rows a minute, minute 1: %d segments\\n\", segments(1, 44))", "\tfmt.Printf(\"one row per insert: minute 2: %d segments\\n\", segments(2, 44))", "\tfor m := 1; ; m++ {", "\t\tif n := segments(m, 44); n > maxVersions {", "\t\t\tfmt.Printf(\"one row per insert: minute %d: %d segments, over %d: new loads refused\\n\", m, n, maxVersions)", "\t\t\tbreak", "\t\t}", "\t}", "\tfmt.Printf(\"one batch per page: 2 pages a minute, minute 20: %d segment for 40 pages\\n\", segments(20, 2))", "}"]),
+  map:[["each INSERT of one row","segs := [][]string{}..one row per insert: %d inserts"],["every minute: segments += loads","seg += loadsPerMinute","minute 1: %d segments","minute 2: %d segments"],
+   ["compaction, once a minute","const mergePerMinute = 10","if seg > 1 {..seg = seg - k + 1"],["segments over 1000","const maxVersions","if n := segments(m, 44); n > maxVersions {..break"],["batch: one load per page","one batch per page"]]}]}};
+// CODE PANEL END
+const S={
+key:{name:"table wallets",st:[
+ {t:"Start: one table, two layouts",pc:["row store get(key)", "column store get(key)"],b:"The wallets table, five columns standing for fifty. Left: each row is stored as one piece. Right: each column is its own file.",w:"The data is the same. Only the layout on disk differs.",d:grid(WH,WV,N)},
+ {t:"Row store: one read",pc:["row store get(key)"],b:"The wallet app asks for the balance of 0xc3. An index points at its row. The row store reads one piece and has every column.",w:"One place read, in about a millisecond. This is what row stores are for.",d:grid(WH,WV,(r,c)=>[r===2?"c":"n","n"]).concat([T(30,330,"1 place read","c","start",16)])},
+ {t:"Column store: one read per column",pc:["column store get(key)", "stitch the values"],b:"The column store must find 0xc3's position in each column file and read each one, then stitch the row back together.",w:"Five places for five columns. Fifty places for a fifty-column table.",d:grid(WH,WV,(r,c)=>[r===2?"c":"n",r===2?"w":"n"]).concat([T(30,330,"1 place read","c","start",16),T(480,330,"5 places read, then stitched","w","start",16)])},
+ {t:"A new wallet: one write or five",pc:["insert, row store", "insert, column store"],b:"A new wallet is created. The row store appends one piece. The column store must append to every column file.",w:"Small single-row writes suit a row store.",d:grid(WH,WV,(r,c)=>[r===4?"c":"n",r===4?"w":"n"]).concat([T(30,330,"1 append","c","start",16),T(480,330,"5 appends","w","start",16)])},
+ {t:"Verdict: row store for 'give me this row'",pc:["row store get(key)", "insert, row store"],b:"Lookups and small writes by key are OLTP (Online Transaction Processing) work. A row store does them in one place.",w:"Row store for many small reads and writes by key.",d:grid(WH,WV,(r,c)=>[r===2?"c":"n","n"]).concat([T(30,330,"OLTP: fits","c","start",16),T(480,330,"OLTP: works, but costs more","w","start",16)])}
+]},
+sum:{name:"table transfers",st:[
+ {t:"Start: a year of transfers",pc:["SELECT day, SUM(amount)"],b:"An analyst asks: SUM(amount) per day for a year. The query names two columns, day and amount.",w:"This is OLAP (Online Analytical Processing): a large scan and an aggregate.",d:grid(TH,TV,N)},
+ {t:"Row store: reads every column",pc:["row store: for each row", "sums[day] += amount"],b:"Rows are stored whole, so to get day and amount the row store reads every row with all its columns. Five rows of five columns: 25 values read.",w:"Fifty columns read to use two. Most of the bytes are wasted.",d:grid(TH,TV,(r,c)=>[c===1||c===4?"c":"w","n"]).concat([T(30,330,"5 of 5 columns read","w","start",16)])},
+ {t:"Column store: reads two files",pc:["column store: open the day file", "sums[day] += amount"],b:"The column store opens only the day file and the amount file. The other files are never touched. Five rows of two columns: 10 values read.",w:"A query on a column store reads only the columns it names.",d:grid(TH,TV,(r,c)=>[c===1||c===4?"c":"w",c===1||c===4?"c":"n"]).concat([T(30,330,"5 of 5 columns read","w","start",16),T(480,330,"2 of 5 columns read","c","start",16)])},
+ {t:"Same type, similar values: it compresses",pc:["compress a column file"],b:"The day file holds runs of the same day. The amount file holds numbers only. Both compress well, so even the two files are small.",w:"Fewer bytes from disk again. Row pieces mix types and compress less.",d:grid(TH,TV,(r,c)=>["n",c===1||c===4?"c":"n"]).concat([T(480,330,"day: 1 Oct x2, 2 Oct x2, 3 Oct x1","c","start",15)])},
+ {t:"The failure: the report on the app database",pc:["report on the app database", "row store: for each row"],b:"Someone runs the year report on PostgreSQL, the app's own database. The scan fills the disk and memory. The app's small reads queue behind it.",w:"One OLAP scan on the OLTP database slows the whole app.",d:[B(40,60,380,"year report: full scan","x",44),A(230,106,230,176,"","x"),B(40,180,380,"PostgreSQL: disk and memory busy","x",44),...[0,1,2,3].map(j=>B(480,60+56*j,380,"app read: balance of 0x"+["a1","b2","c3","d4"][j]+", waiting","w",40)),...[0,1,2,3].map(j=>A(478,80+56*j,424,202,"","w",1))]},
+ {t:"Fix: copy, then report on the copy",pc:["copy to the warehouse", "column store: open the day file"],b:"Copy the transfers from the app store to the warehouse in batches. Run the year report on the column store. The app keeps its row store to itself.",w:"Each engine does the work its layout is built for.",d:[B(40,60,380,"PostgreSQL: app reads by key","c",44),A(424,82,476,82,"copy","u"),B(480,60,380,"StarRocks: year report","c",44),T(40,160,"app reads: fast again","c","start",16),T(480,160,"report reads 2 of 5 columns","c","start",16)]}
+]},
+ins:{name:"StarRocks segments",st:[
+ {t:"One row per insert",pc:["each INSERT of one row"],b:"An indexer writes each transfer with its own INSERT into StarRocks. Every insert makes a new segment: a small set of column files.",w:"A column store wants big pieces. A single row is the smallest piece possible.",d:[T(40,80,"segments on disk","f","start",16)].concat(seg(5,"w"),[T(40,330,"5 inserts, 5 tiny segments","w","start",16)])},
+ {t:"Segments pile up",pc:["every minute: segments += loads", "compaction, once a minute"],b:"The program sends 44 single-row inserts a minute: 44 new segments. Compaction merges 10 of them into 1, so after minute 1 there are 35.",w:"Each segment has its own files and its own metadata.",d:[T(40,80,"segments on disk","f","start",16)].concat(seg(35,"w"),[T(40,330,"35 tiny segments, and climbing","w","start",16)])},
+ {t:"The failure: compaction falls behind",pc:["every minute: segments += loads", "compaction, once a minute", "segments over 1000"],b:"Each minute 44 segments arrive and compaction removes only 9. After minute 2 there are 70. At minute 29 there are 1015, over the StarRocks limit of 1000 versions, so new loads are refused. Queries must open every tiny segment.",w:"Writes slow down, reads slow down, and the version count can hit a hard limit that refuses new loads.",d:[T(40,80,"segments on disk","f","start",16)].concat(seg(70,"x"),[T(40,330,"compaction cannot keep up","x","start",16)])},
+ {t:"Fix: one batch per page of blocks",pc:["batch: one load per page", "every minute: segments += loads"],b:"The indexer collects one page of blocks and loads all its rows in one batch. One page, one segment.",w:"Write to a column store in batches. Big pieces are what it is built for.",d:[T(40,80,"segments on disk","f","start",16),B(40,110,400,"page 1: 1 segment, thousands of rows","c",34),B(40,150,400,"page 2: 1 segment, thousands of rows","c",34),T(40,330,"2 loads, 2 segments","c","start",16)]},
+ {t:"Compaction keeps up",pc:["compaction, once a minute", "batch: one load per page"],b:"Now 2 segments arrive a minute, and compaction merges them at once. After minute 20, 40 pages sit in 1 segment. Queries open a few files.",w:"The same data, the same engine. Only the write size changed.",d:[T(40,80,"segments on disk","f","start",16),B(40,110,820,"merged: pages 1 to 40, one large segment","c",40),T(40,330,"few segments, fast reads","c","start",16)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

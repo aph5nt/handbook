@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Microservices and the distributed monolith</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Microservices and the distributed monolith</h1>
+  <p class="lede">The indexer, the graph sync and the price oracle deploy on their own, each with its own data. Elsewhere, five services share one schema. Both look like microservices on a deploy board. Only one is. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="real" id="tab-real">Real microservices</button>
+    <button role="tab" aria-selected="false" data-mode="fake" id="tab-fake">Distributed monolith</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Three services with their own stores, and five services sharing one schema</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-real">
+          <g class="node" id="n-ix" data-c="c"><rect class="box" id="r-ix" x="40" y="40" width="200" height="56" rx="8"/><text id="t-ixl" x="140.0" y="64" text-anchor="middle" font-size="15">Indexer</text><text id="t-ixs" x="140.0" y="82" text-anchor="middle" font-size="12" font-weight="400">v1</text></g>
+          <g class="node" id="n-gs" data-c="c"><rect class="box" id="r-gs" x="350" y="40" width="200" height="56" rx="8"/><text id="t-gsl" x="450.0" y="64" text-anchor="middle" font-size="15">Graph sync</text><text id="t-gss" x="450.0" y="82" text-anchor="middle" font-size="12" font-weight="400">v1</text></g>
+          <g class="node" id="n-po" data-c="c"><rect class="box" id="r-po" x="660" y="40" width="200" height="56" rx="8"/><text id="t-pol" x="760.0" y="64" text-anchor="middle" font-size="15">Price oracle</text><text id="t-pos" x="760.0" y="82" text-anchor="middle" font-size="12" font-weight="400">v1</text></g>
+          <g class="node" id="n-gs2" data-c="h"><rect class="box" id="r-gs2" x="350" y="112" width="200" height="44" rx="8"/><text id="t-gs2l" x="450.0" y="139" text-anchor="middle" font-size="15">Graph sync, copy 2</text></g>
+          <g class="node" id="n-ixd" data-c="v"><rect class="box" id="r-ixd" x="40" y="200" width="200" height="56" rx="8"/><text id="t-ixdl" x="140.0" y="233" text-anchor="middle" font-size="15">own tables</text></g>
+          <g class="node" id="n-gsd" data-c="v"><rect class="box" id="r-gsd" x="350" y="200" width="200" height="56" rx="8"/><text id="t-gsdl" x="450.0" y="233" text-anchor="middle" font-size="15">own graph</text></g>
+          <g class="node" id="n-pod" data-c="v"><rect class="box" id="r-pod" x="660" y="200" width="200" height="56" rx="8"/><text id="t-podl" x="760.0" y="233" text-anchor="middle" font-size="15">own prices</text></g>
+          <g class="arrow" id="a-r1" data-c="m"><path class="route" d="M140 96 L140 196" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-r2" data-c="m"><path class="route" d="M300 96 C300 150 330 170 380 196" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-r3" data-c="m"><path class="route" d="M760 96 L760 196" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-ev" data-c="x"><path class="route" d="M240 68 L346 68" marker-end="url(#arr)"/><text id="t-evl" x="295" y="30" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">rows + checkpoint</text></g>
+          <g class="arrow" id="a-api" data-c="x"><path class="route" d="M550 68 L656 68" marker-end="url(#arr)"/><text id="t-apil" x="603" y="30" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">price API</text></g>
+          <g class="node" id="n-trace" data-c="h"><rect class="box" id="r-trace" x="40" y="282" width="820" height="44" rx="8"/><text id="t-tracel" x="450.0" y="309" text-anchor="middle" font-size="14">trace: indexer ok, graph sync ok, price API slow</text></g>
+        </g>
+        <g class="scene" id="scene-fake">
+          <g class="node" id="n-s1" data-c="c"><rect class="box" id="r-s1" x="30" y="40" width="150" height="56" rx="8"/><text id="t-s1l" x="105.0" y="73" text-anchor="middle" font-size="15">Service 1</text></g>
+          <g class="node" id="n-s2" data-c="c"><rect class="box" id="r-s2" x="202" y="40" width="150" height="56" rx="8"/><text id="t-s2l" x="277.0" y="73" text-anchor="middle" font-size="15">Service 2</text></g>
+          <g class="node" id="n-s3" data-c="c"><rect class="box" id="r-s3" x="374" y="40" width="150" height="56" rx="8"/><text id="t-s3l" x="449.0" y="73" text-anchor="middle" font-size="15">Service 3</text></g>
+          <g class="node" id="n-s4" data-c="c"><rect class="box" id="r-s4" x="546" y="40" width="150" height="56" rx="8"/><text id="t-s4l" x="621.0" y="73" text-anchor="middle" font-size="15">Service 4</text></g>
+          <g class="node" id="n-s5" data-c="c"><rect class="box" id="r-s5" x="718" y="40" width="150" height="56" rx="8"/><text id="t-s5l" x="793.0" y="73" text-anchor="middle" font-size="15">Service 5</text></g>
+          <g class="arrow" id="a-c1" data-c="x"><path class="route" d="M352 68 L370 68" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-c2" data-c="x"><path class="route" d="M524 68 L542 68" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-c3" data-c="x"><path class="route" d="M696 68 L714 68" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-c4" data-c="x"><path class="route" d="M868 68 L886 68" marker-end="url(#arr)"/></g>
+          <text id="t-chain" x="450" y="26" text-anchor="middle" font-size="14" font-weight="400" fill="var(--muted)"></text>
+          <g class="node" id="n-sh" data-c="m"><rect class="box" id="r-sh" x="200" y="230" width="500" height="60" rx="8"/><text id="t-shl" x="450.0" y="256" text-anchor="middle" font-size="15">ONE shared schema</text><text id="t-shs" x="450.0" y="274" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="arrow" id="a-d1" data-c="m"><path class="route" d="M105 96 L250 226" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-d2" data-c="m"><path class="route" d="M277 96 L350 226" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-d3" data-c="m"><path class="route" d="M449 96 L450 226" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-d4" data-c="m"><path class="route" d="M621 96 L550 226" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-d5" data-c="m"><path class="route" d="M793 96 L650 226" marker-end="url(#arr)"/></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-microservices/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a service</span>
+    <span style="--c:var(--svc)">data owned by one service</span>
+    <span style="--c:var(--ok)">a published contract in use</span>
+    <span style="--c:var(--wait)">waiting or deploying</span>
+    <span style="--c:var(--fail)">broken or timed out</span>
+    <span style="--c:var(--undo)">being moved under one owner</span>
+    <span style="--c:var(--muted)">shared or plain data access</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: indexer, graph sync, oracle</h2>
+      <p>The graph sync was a separate service from day one. It ran at a different pace and on a different box. Each of the five services has its own release. A shared read replica would still couple them to the schema, so readers get a published view or events.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: SOA and tracing</h2>
+      <p>SOA (service-oriented architecture) is the older cousin: coarse services on a shared bus with one company model. That bus became the new monolith. After any split, tracing comes first, or nobody finds the failing hop.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Real microservices</th><th>Distributed monolith</th><th>Modular monolith</th></tr>
+      <tr><td>Data</td><td>One owner per store</td><td>One shared schema</td><td>One schema per module</td></tr>
+      <tr><td>Deploy</td><td>Each alone</td><td>All together</td><td>One deploy</td></tr>
+      <tr><td>Calls</td><td>API or events</td><td>Synchronous chains</td><td>In-process functions</td></tr>
+      <tr><td>A column rename</td><td>One release</td><td>Five releases, one window</td><td>One release</td></tr>
+      <tr><td>You pay</td><td>Operations complexity</td><td>Operations and coupling</td><td>Little</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Microservices trade code complexity for operations complexity, and a shared database makes them a distributed monolith."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+real:[
+ {"t": "Three services, each owns its data", "b": "Each store has one user. The indexer uses its rows, the graph sync its graph, the price oracle its prices. The check counts tables with more than one user: 0.", "w": "Owning the data is what makes a service independent. Everything else follows from it.", "m": "shared tables: 0", "pc": [1]},
+ {"t": "They talk by events and by an API", "b": "The indexer writes rows and moves a checkpoint. The graph sync reads them from its own position. It asks the price oracle for prices through a published API. No service opens another one's store.", "w": "A published contract is the only thing the services share.", "a": {"ev": "ok", "api": "ok"}, "pc": [1]},
+ {"t": "Tuesday: the graph sync ships alone", "b": "The graph sync team releases v2. releasesNeeded starts with the graph sync. It walks the tables the graph sync uses: only the graph. The graph has one user, the graph sync. So 1 release. The indexer and the price oracle are not rebuilt, retested or stopped.", "w": "The test of a real microservice: can you deploy one alone on a Tuesday?", "n": {"gs": "w"}, "x": {"gss": "deploying v2"}, "m": "releases needed: 1", "pc": [2, 3, 4, 5]},
+ {"t": "It scales alone too", "b": "The graph sync runs at a different pace from the indexer, on a different box. scale adds one copy of the graph sync only: 2 copies. The indexer keeps 1.", "w": "Split a module out when its load, pace or team differs. Not before.", "n": {"gs": "ok", "gs2": "c"}, "x": {"gss": "v2 live"}, "m": "graph sync copies: 2, indexer: 1", "pc": [6]},
+ {"t": "A slow hop, and how you find it", "b": "One graph sync page reads rows in 120 ms, waits 2400 ms on the price API, and writes the graph in 300 ms. That is 2820 ms. The timeout is 2000 ms, so the page times out. The trace lists the three spans and picks the one with the most ms: the price API, 2400 ms.", "w": "After a split, observability breaks first. Without the trace, each team says its own service is fine.", "n": {"po": "w", "gs": "f", "trace": "w"}, "a": {"api": "f"}, "m": "failing hop: price API, 2400 ms", "pc": [12]}
+],
+fake:[
+ {"t": "Five services, one shared schema", "b": "Five services deploy on their own. Three tables, orders, accounts and items, are each used by all five. The check counts the users of each table: 5.", "w": "They look like microservices on the deploy board. The schema says otherwise.", "m": "owners per table: 5", "pc": [1, 4]},
+ {"t": "One request, five waiting calls", "b": "A request enters Service 1. Each hop does 20 ms of its own work, then calls the next and waits. request adds them up: 5 x 20 = 100 ms, under the 2000 ms timeout. But all five must be up: 0.999^5 = 0.9950.", "w": "A chain of synchronous calls is only as available as its weakest hop.", "a": {"c1": "c", "c2": "c", "c3": "c", "c4": "c"}, "x": {"chain": "synchronous call chain: 1 to 2 to 3 to 4 to 5"}, "m": "100 ms, availability 0.9950", "pc": [7, 8, 9, 10, 11]},
+ {"t": "Service 5 is slow, so all five wait", "b": "Service 5 now takes 3000 ms. request adds 4 x 20 + 3000 = 3080 ms. Services 1 to 4 hold their requests open all that time. 3080 is over 2000, so the customer sees a timeout.", "w": "Network calls replaced function calls, and the ways to fail multiplied.", "n": {"s1": "w", "s2": "w", "s3": "w", "s4": "w", "s5": "f"}, "m": "3080 ms, timeout 2000 ms", "pc": [8, 9, 10]},
+ {"t": "Rename one column", "b": "A team renames one column of orders. releasesNeeded walks orders. Its users are all five services. Every one of them breaks at the same moment.", "w": "A shared schema couples every service to every change.", "n": {"s1": "f", "s2": "f", "s3": "f", "s4": "f", "s5": "f", "sh": "f"}, "a": {"d1": "f", "d2": "f", "d3": "f", "d4": "f", "d5": "f", "c1": "x", "c2": "x", "c3": "x", "c4": "x"}, "x": {"chain": "", "shs": "a team renames one column"}, "pc": [3, 4]},
+ {"t": "A release train", "b": "releasesNeeded returns 5. All five services must ship with the schema change, in one window. One late team holds back the other four.", "w": "You pay for microservices and get none of their benefit. This is the distributed monolith.", "n": {"s1": "w", "s2": "w", "s3": "w", "s4": "w", "s5": "w"}, "m": "releases needed: 5, in one window", "pc": [5]},
+ {"t": "The fix: one owner per table", "b": "fix gives each table one owner: orders to Service 1, accounts to Service 2, items to Service 3. The others reach them through an API or events. releasesNeeded for a rename now returns 1. If that is too much work, merge back into a modular monolith.", "w": "Either fix is honest. Five deploys on one schema is not.", "n": {"s1": "c", "s2": "c", "s3": "c", "s4": "c", "s5": "c", "sh": "u"}, "a": {"d1": "u", "d2": "u", "d3": "u", "d4": "u", "d5": "u"}, "x": {"shl": "tables split by owner", "shs": "each table has one owner"}, "m": "owners per table: 1, releases needed: 1", "pc": [14, 5]}
+]};
+const SCENE={"real": "real", "fake": "fake"};
+const CODE={
+ real:{label:"Go",why:"",
+  pc:[
+   "# each service: the tables it uses, the service it calls, its own work",
+   "releasesNeeded(s):",
+   "  ship = { s }",
+   "  for each table t that s uses: ship += every user of t",
+   "  return the size of ship                   # 1 means s ships alone",
+   "scale(s): add one copy of s only",
+   "request(start):",
+   "  for each hop on the call chain: total += its own work",
+   "    a hop that calls the next holds its request open",
+   "  ok = total <= timeout                     # 2000 ms",
+   "chain availability = 0.999 ^ hops           # every hop must be up",
+   "slowestHop(trace) = the span with the most ms",
+   "# the fix",
+   "fix: each table gets one owner, the others use its API or events"],
+  real:[
+   "func (sys *System) releasesNeeded(s string) int {",
+   "\tship := map[string]bool{s: true}",
+   "\tfor _, users := range sys.tables {",
+   "\t\tif contains(users, s) { // every user of a table s uses ships with s",
+   "\t\t\tfor _, u := range users {",
+   "\t\t\t\tship[u] = true",
+   "\t\t\t}",
+   "\t\t}",
+   "\t}",
+   "\treturn len(ship)",
+   "}",
+   "",
+   "func (sys *System) scale(s string) { sys.replicas[s]++ }",
+   "",
+   "func (sys *System) request(start string, timeoutMs int) (int, []string, bool) {",
+   "\ttotal, waiting := 0, []string{}",
+   "\tfor cur := start; cur != \"\"; cur = sys.calls[cur] {",
+   "\t\ttotal += sys.work[cur]",
+   "\t\tif sys.calls[cur] != \"\" {",
+   "\t\t\twaiting = append(waiting, cur) // holds its request open",
+   "\t\t}",
+   "\t}",
+   "\treturn total, waiting, total <= timeoutMs",
+   "}",
+   "",
+   "func slowestHop(trace []Span) Span {",
+   "\tworst := trace[0]",
+   "\tfor _, s := range trace[1:] {",
+   "\t\tif s.ms > worst.ms {",
+   "\t\t\tworst = s",
+   "\t\t}",
+   "\t}",
+   "\treturn worst",
+   "}",
+   "",
+   "func (sys *System) fix(owner map[string]string) {",
+   "\tfor t := range sys.tables {",
+   "\t\tsys.tables[t] = []string{owner[t]}",
+   "\t}",
+   "}",
+   "",
+   "// in main: every hop must be up",
+   "fmt.Printf(\"  chain availability: 0.999^5 = %.4f\\n\", math.Pow(0.999, 5))"],
+  map:{"1": [3, 17, 18], "11": [43], "2": [1], "3": [2], "4": [3, 4, 5, 6, 7, 8, 9], "5": [10], "6": [13], "7": [15, 16], "8": [17, 18], "9": [19, 20, 21], "10": [23], "12": [26, 27, 28, 29, 30, 31, 32, 33], "14": [36, 37, 38, 39, 40]}},
+ fake:{label:"Go",why:"",
+  pc:[
+   "# each service: the tables it uses, the service it calls, its own work",
+   "releasesNeeded(s):",
+   "  ship = { s }",
+   "  for each table t that s uses: ship += every user of t",
+   "  return the size of ship                   # 1 means s ships alone",
+   "scale(s): add one copy of s only",
+   "request(start):",
+   "  for each hop on the call chain: total += its own work",
+   "    a hop that calls the next holds its request open",
+   "  ok = total <= timeout                     # 2000 ms",
+   "chain availability = 0.999 ^ hops           # every hop must be up",
+   "slowestHop(trace) = the span with the most ms",
+   "# the fix",
+   "fix: each table gets one owner, the others use its API or events"],
+  real:[
+   "func (sys *System) releasesNeeded(s string) int {",
+   "\tship := map[string]bool{s: true}",
+   "\tfor _, users := range sys.tables {",
+   "\t\tif contains(users, s) { // every user of a table s uses ships with s",
+   "\t\t\tfor _, u := range users {",
+   "\t\t\t\tship[u] = true",
+   "\t\t\t}",
+   "\t\t}",
+   "\t}",
+   "\treturn len(ship)",
+   "}",
+   "",
+   "func (sys *System) scale(s string) { sys.replicas[s]++ }",
+   "",
+   "func (sys *System) request(start string, timeoutMs int) (int, []string, bool) {",
+   "\ttotal, waiting := 0, []string{}",
+   "\tfor cur := start; cur != \"\"; cur = sys.calls[cur] {",
+   "\t\ttotal += sys.work[cur]",
+   "\t\tif sys.calls[cur] != \"\" {",
+   "\t\t\twaiting = append(waiting, cur) // holds its request open",
+   "\t\t}",
+   "\t}",
+   "\treturn total, waiting, total <= timeoutMs",
+   "}",
+   "",
+   "func slowestHop(trace []Span) Span {",
+   "\tworst := trace[0]",
+   "\tfor _, s := range trace[1:] {",
+   "\t\tif s.ms > worst.ms {",
+   "\t\t\tworst = s",
+   "\t\t}",
+   "\t}",
+   "\treturn worst",
+   "}",
+   "",
+   "func (sys *System) fix(owner map[string]string) {",
+   "\tfor t := range sys.tables {",
+   "\t\tsys.tables[t] = []string{owner[t]}",
+   "\t}",
+   "}",
+   "",
+   "// in main: every hop must be up",
+   "fmt.Printf(\"  chain availability: 0.999^5 = %.4f\\n\", math.Pow(0.999, 5))"],
+  map:{"1": [3, 17, 18], "11": [43], "2": [1], "3": [2], "4": [3, 4, 5, 6, 7, 8, 9], "5": [10], "6": [13], "7": [15, 16], "8": [17, 18], "9": [19, 20, 21], "10": [23], "12": [26, 27, 28, 29, 30, 31, 32, 33], "14": [36, 37, 38, 39, 40]}}};
+let mode="real";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

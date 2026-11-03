@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Coherence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache coherence: keeping copies in agreement</h1>
+  <p class="lede">Three instances of the swap service keep one pool's fee in memory. An operator changes it twice in a row. Press <b>Next</b> and watch pushed values arrive out of order. Then switch tabs and send drop messages instead.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="update">Update: push the value</button>
+    <button role="tab" aria-selected="false" data-mode="invalidate">Invalidate: drop the key</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A writer and three service instances, with the fee each one holds</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="a-w" class="box" x="10" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-w" data-on="a-w" x="105" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Writer</text>
+        <line x1="105" y1="68" x2="105" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-w" class="box" x="7.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-w" data-on="c-w" x="105.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-a" class="box" x="240" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-a" data-on="a-a" x="335" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Instance A</text>
+        <line x1="335" y1="68" x2="335" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-a" class="box" x="237.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-a" data-on="c-a" x="335.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-b" class="box" x="470" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-b" data-on="a-b" x="565" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Instance B</text>
+        <line x1="565" y1="68" x2="565" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-b" class="box" x="467.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-b" data-on="c-b" x="565.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-c" class="box" x="700" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-c" data-on="a-c" x="795" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Instance C</text>
+        <line x1="795" y1="68" x2="795" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-c" class="box" x="697.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-c" data-on="c-c" x="795.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-coherence/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">current value</span>
+    <span style="--c:var(--wait)">in doubt, or stale until the TTL</span>
+    <span style="--c:var(--fail)">stuck on an old value</span>
+    <span style="--c:var(--undo)">drop message</span>
+    <span style="--c:var(--line)">dropped, reload on next read</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Local caches across many instances, kept close with Redis publish-subscribe. CPU cores keep their caches coherent in hardware with MESI (Modified, Exclusive, Shared, Invalid), an invalidation protocol. Kafka keeps one key's updates in order, which makes pushing values safe.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Prefer invalidation: a drop message is safe in any order. If you push values, version them and ignore older ones. Always keep a short TTL underneath, for the message that gets lost.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Update on write</th><th>Invalidate on write</th></tr>
+      <tr><td>Message carries</td><td>The new value</td><td>Only drop this key</td></tr>
+      <tr><td>Out of order</td><td>Can leave an old value, unless versioned</td><td>Safe</td></tr>
+      <tr><td>Lost message</td><td>Stale until the next update</td><td>Stale until the TTL</td></tr>
+      <tr><td>Cost</td><td>No reload</td><td>One reload per copy</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Coherence keeps copies in agreement, and I prefer invalidation over pushing values, because a drop message is safe in any order, while pushed values need versions.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[160,290,700];
+const Wx=105,Ax=335,Bx=565,Cx=795;
+const ALL=(c,t)=>({fill:{"c-a":c,"c-b":c,"c-c":c},text:{"t-c-a":t,"t-c-b":t,"t-c-c":t}});
+const S0=ALL(OK,"fee 0.25, v1");
+const steps={
+"update":[
+ {pc:[1],t:"Three copies of one fee",b:"Three instances of the swap service keep the fee of one exchange pool in memory: 0.25, version 1. The writer owns the true value.",w2:"Coherence means all three end up holding the same value.",
+  fill:{...S0.fill,"c-w":COORD},text:{...S0.text,"t-c-w":"fee 0.25, v1"}},
+ {pc:[3, 4, 7],t:"Update on write: push the new value",b:"An operator sets the fee to 0.3. The writer pushes the new value, version 2, to every instance.",w2:"Update on write sends the value itself, so no instance has to reload.",
+  ...ALL(OK,"fee 0.3, v2"),text:{...ALL(OK,"fee 0.3, v2").text,"t-c-w":"fee 0.3, v2"},a:[[Wx,100,Ax-2,100,"0.3 v2"],[Wx,120,Bx-2,120,"0.3 v2"],[Wx,140,Cx-2,140,"0.3 v2"]]},
+ {pc:[3, 4, 7],t:"A second change, right away",b:"A moment later the operator sets 0.5, version 3. The writer pushes again. A and C apply 0.5. On the way to B, the messages swap places: version 3 arrives first, version 2 arrives late.",
+  w2:"Networks and queues reorder messages. Nothing promised B the order.",fill:{"c-a":OK,"c-c":OK,"c-b":WAIT},text:{"t-c-w":"fee 0.5, v3","t-c-a":"fee 0.5, v3","t-c-c":"fee 0.5, v3","t-c-b":"fee 0.5, v3"},
+  a:[[Wx,180,Ax-2,180,"0.5 v3"],[Wx,200,Bx-2,200,"0.5 v3"],[Wx,220,Cx-2,220,"0.5 v3"],[Wx,250,Bx-2,250,"0.3 v2, late",WAIT]]},
+ {pc:[4, 7],t:"The failure that matters: B ends on the old value",b:"Line 5 is switched off, so B applies whatever comes last. The late version 2 overwrites version 3. B now holds 0.3. A and C hold 0.5. Nothing errors, and B keeps 0.3 until the next change.",
+  w2:"Pushed values applied in arrival order can leave a copy on an old value for good.",fill:{"c-b":FAIL},text:{"t-c-b":"fee 0.3, wrong"},ban:["B disagrees, silently",290]},
+ {pc:[4, 5, 6],t:"Fix: version every value",b:"Each instance keeps the version with the value. The check on line 5: is version 2 at most my version 3? Yes. So B ignores the late message and keeps 0.5.",w2:"Apply an update only if its version is newer than the one you hold.",
+  fill:{"c-b":OK},text:{"t-c-b":"fee 0.5, v3, v2 ignored"},a:[[Wx,250,Bx-2,250,"0.3 v2, late: ignored",MUTED,true]]}
+],
+"invalidate":[
+ {pc:[9, 10],t:"Same three copies",b:"The three instances hold fee 0.25. This time the writer sends a drop message, not the value.",w2:"Invalidate on write: tell each copy to forget, and let it reload from the source.",fill:{...S0.fill,"c-w":COORD},text:{...S0.text,"t-c-w":"fee 0.25, v1"}},
+ {pc:[9, 10, 11],t:"Two changes, two drop messages",b:"The operator sets 0.3, then 0.5. The writer sends drop fee twice. On the way to B they swap places, but both say the same thing.",
+  w2:"A drop message carries no value, so its order does not matter.",...ALL(LINE,"dropped"),text:{...ALL(LINE,"dropped").text,"t-c-w":"fee 0.5, v3"},
+  a:[[Wx,100,Ax-2,100,"drop fee",UNDO,true],[Wx,120,Bx-2,120,"drop fee",UNDO,true],[Wx,140,Cx-2,140,"drop fee",UNDO,true],[Wx,170,Bx-2,170,"drop fee (late)",UNDO,true]]},
+ {pc:[12, 13, 14, 15],t:"Each copy reloads the true value",b:"On their next read, the check on line 13 finds no fee in A, B or C. Each one reads the source and gets 0.5.",w2:"Every copy agrees, whatever order the messages came in.",...ALL(OK,"fee 0.5"),
+  a:[[Bx,210,Wx+2,210,"reload"],[Wx,240,Bx-2,240,"0.5",OK]]},
+ {pc:[10, 11],t:"A lost message",b:"The next change, to 0.6, sends drop fee again. The message to C is lost. C keeps 0.5.",w2:"Invalidation is safe in any order, but not against loss. The TTL is the safety net.",
+  fill:{"c-a":LINE,"c-b":LINE,"c-c":WAIT},text:{"t-c-w":"fee 0.6, v4","t-c-a":"dropped","t-c-b":"dropped","t-c-c":"fee 0.5, until TTL"},a:[[Wx,100,Ax-2,100,"drop fee",UNDO,true],[Wx,120,Bx-2,120,"drop fee",UNDO,true],[Wx,140,Cx-60,140,"lost",FAIL,true]]},
+ {pc:[12, 13, 14],t:"The TTL bounds the disagreement",b:"C's copy has a TTL of 30 seconds. At second 30 the check on line 13 says the TTL ran out, so C reloads 0.6. The copies agree again.",w2:"Invalidation plus a short TTL: correct in any order, and wrong for at most one TTL if a message is lost.",
+  ...ALL(OK,"fee 0.6"),a:[[Cx,200,Wx+2,200,"TTL ended: reload"],[Wx,230,Cx-2,230,"0.6",OK]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"update": {
+"label": "Go",
+"pc": [
+"each instance holds: fee, version, expires",
+"",
+"update on write: the writer sends (fee, version) to all",
+"on update(fee, version):",
+"  if version <= my version:            # the fix: version check",
+"    ignore it                          # an old message came late",
+"  my fee, my version = fee, version",
+"",
+"invalidate on write: the writer sends \"drop fee\" to all",
+"on drop:",
+"  forget fee                           # any order says the same thing",
+"on read(now):",
+"  if no fee or now >= expires:         # a miss, or the TTL ran out",
+"    fee = source.read(); expires = now + 30s",
+"  return fee"
+],
+"real": [
+"// update on write: the message carries the value",
+"func (in *Instance) ApplyUpdate(fee float64, version int) {",
+"\tif in.checkVersion && version <= in.c.version {",
+"\t\treturn // older than what I hold: ignore it",
+"\t}",
+"\tin.c = copyOf{fee, version, true, 0}",
+"}",
+"",
+"// invalidate on write: forget, reload on the next read",
+"func (in *Instance) Drop() { in.c.has = false }",
+"",
+"func (in *Instance) Read(source float64, now, ttl int) float64 {",
+"\tif !in.c.has || (ttl > 0 && now >= in.c.expires) {",
+"\t\tin.c = copyOf{source, 0, true, now + ttl} // reload",
+"\t}",
+"\treturn in.c.fee",
+"}",
+"",
+"// B gets version 3 first, version 2 late",
+"f[1].ApplyUpdate(0.5, 3) // B is f[1]",
+"f[1].ApplyUpdate(0.3, 2) // ignored when checkVersion is on"
+],
+"map": {
+"1": [
+6
+],
+"3": [
+1,
+2
+],
+"4": [
+2
+],
+"5": [
+3
+],
+"6": [
+4
+],
+"7": [
+6
+],
+"9": [
+9
+],
+"10": [
+10
+],
+"11": [
+10
+],
+"12": [
+12
+],
+"13": [
+13
+],
+"14": [
+14
+],
+"15": [
+16
+]
+}
+},
+"invalidate": {
+"label": "Go",
+"pc": [
+"each instance holds: fee, version, expires",
+"",
+"update on write: the writer sends (fee, version) to all",
+"on update(fee, version):",
+"  if version <= my version:            # the fix: version check",
+"    ignore it                          # an old message came late",
+"  my fee, my version = fee, version",
+"",
+"invalidate on write: the writer sends \"drop fee\" to all",
+"on drop:",
+"  forget fee                           # any order says the same thing",
+"on read(now):",
+"  if no fee or now >= expires:         # a miss, or the TTL ran out",
+"    fee = source.read(); expires = now + 30s",
+"  return fee"
+],
+"real": [
+"// update on write: the message carries the value",
+"func (in *Instance) ApplyUpdate(fee float64, version int) {",
+"\tif in.checkVersion && version <= in.c.version {",
+"\t\treturn // older than what I hold: ignore it",
+"\t}",
+"\tin.c = copyOf{fee, version, true, 0}",
+"}",
+"",
+"// invalidate on write: forget, reload on the next read",
+"func (in *Instance) Drop() { in.c.has = false }",
+"",
+"func (in *Instance) Read(source float64, now, ttl int) float64 {",
+"\tif !in.c.has || (ttl > 0 && now >= in.c.expires) {",
+"\t\tin.c = copyOf{source, 0, true, now + ttl} // reload",
+"\t}",
+"\treturn in.c.fee",
+"}",
+"",
+"// B gets version 3 first, version 2 late",
+"f[1].ApplyUpdate(0.5, 3) // B is f[1]",
+"f[1].ApplyUpdate(0.3, 2) // ignored when checkVersion is on"
+],
+"map": {
+"1": [
+6
+],
+"3": [
+1,
+2
+],
+"4": [
+2
+],
+"5": [
+3
+],
+"6": [
+4
+],
+"7": [
+6
+],
+"9": [
+9
+],
+"10": [
+10
+],
+"11": [
+10
+],
+"12": [
+12
+],
+"13": [
+13
+],
+"14": [
+14
+],
+"15": [
+16
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

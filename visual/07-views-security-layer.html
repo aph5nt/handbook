@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Views as a security layer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Views: the read-only door you grant</h1>
+  <p class="lede">A partner needs to read transfers, but not the internal columns. Watch a view become the only door they get. The second tab sets a view beside a materialized view. The third shows what goes wrong when views are stacked on views.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="door">A view as the door</button>
+    <button role="tab" aria-selected="false" data-mode="mv">View or materialized view</button>
+    <button role="tab" aria-selected="false" data-mode="stack">The failure: stacked views</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Views as a security layer: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">the reader</span>
+    <span style="--c:var(--ok)">visible through the view, or current</span>
+    <span style="--c:var(--undo)">internal: never granted</span>
+    <span style="--c:var(--wait)">stored copy, or extra cost</span>
+    <span style="--c:var(--fail)">the problem</span>
+    <span style="--c:var(--line)">plain column or row</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Outside readers and reporting tools get <code>SELECT</code> on views, never on base tables. A view is also a stable contract: the base table can change its internals while the view's columns stay the same. In PostgreSQL, a view that filters rows for security is created <code>WITH (security_barrier)</code>.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>One layer: a view reads base tables only, never another view. A migration that touches a stacked view flattens it. Need speed instead of a door? That is a materialized view: a stored copy that needs its own grants and refreshes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>View</th><th>Materialized view</th></tr>
+      <tr><td>Stores</td><td>Nothing: a saved query</td><td>The result: a saved copy</td></tr>
+      <tr><td>Freshness</td><td>Always current</td><td>As of the last refresh</td></tr>
+      <tr><td>Read cost</td><td>Runs the query on every read</td><td>Reads the stored rows</td></tr>
+      <tr><td>Job</td><td>Security layer and contract</td><td>Speed</td></tr>
+      <tr><td>Grants</td><td>The reader gets the view, not the table</td><td>A separate object with its own grants</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A view is a saved query and the read-only door I grant, a materialized view is a saved result for speed, and a view reads base tables only."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const COLS=[["tx_hash",0],["from_address",0],["to_address",0],["amount",0],["block_ts",0],["ingest_node",1],["risk_note",1]];
+const ROWS=[["robinhood  0xa1",0],["robinhood  0xa2",0],["base  0xb1",1]];
+const base=(ck,rk,extra)=>[F(480,50,400,310,"base table transfers"),T(490,84,"columns"),T(690,84,"rows")].concat(COLS.map(([c,i],j)=>B(490,92+36*j,180,c,ck(i,j),30)),(extra||ROWS).map(([r,i],j)=>B(690,92+36*j,180,r,rk(i,j),30)));
+const partner=[B(20,150,150,"partner","s",60)];
+const vdoor=(k)=>[B(210,140,230,"view transfers_public",k||"c",50),T(325,215,"5 columns, chain = robinhood","f","middle")];
+const pub=(i)=>i?"u":"c",pubR=(i)=>i?"n":"c";
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. SQLite has views but no users and no GRANT, so <code>handbook/code/07-views-security-layer/main.py</code> keeps a grants table and checks every column the engine reads with an authorizer callback. It prints every result quoted here (<code>python3 main.py</code>). The PostgreSQL tab shows the same steps with real roles, GRANT, MATERIALIZED VIEW and security_barrier, which SQLite does not have.";
+const CODE={
+door:{pc:["transfers: 5 public columns + ingest_node, risk_note; rows for robinhood and base",
+"grant(partner, transfers): partner reads every column of every chain",
+"view transfers_public = 5 columns where chain = robinhood     # a saved query, stores nothing",
+"grant(partner, transfers_public) only",
+"  on each column read: allow if the table, or the view around it, is granted",
+"read the view: the engine runs its query on transfers now       # 0xa3 shows at once",
+"change transfers behind the view: its 5 columns stay the same"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- five public columns, two internal ones, rows for two chains", "CREATE TABLE transfers (chain TEXT, tx_hash TEXT, from_address TEXT,", "  to_address TEXT, amount INT, block_ts TEXT, ingest_node TEXT, risk_note TEXT);", "CREATE INDEX transfers_day ON transfers (block_ts);", "INSERT INTO transfers VALUES", "  ('robinhood', '0xa1', '0xf1', '0xt1', 120, '2026-10-01', 'node-3', 'watch list'),", "  ('robinhood', '0xa2', '0xf2', '0xt2', 80, '2026-10-02', 'node-3', ''),", "  ('base', '0xb1', '0xf3', '0xt3', 45, '2026-10-02', 'node-7', 'under review');", "CREATE TABLE grants (grantee TEXT, object TEXT);"],[""],["-- the quick way: the partner may read the base table", "INSERT INTO grants VALUES ('partner', 'transfers');"],[""],["-- a saved query: five public columns, one chain", "CREATE VIEW transfers_public AS", "SELECT tx_hash, from_address, to_address, amount, block_ts", "FROM transfers WHERE chain = 'robinhood';"],[""],["-- the view is the only door: no grant on transfers", "DELETE FROM grants WHERE grantee = 'partner';", "INSERT INTO grants VALUES ('partner', 'transfers_public');"],[""],["def as_partner(db):", "    # read the grants once, then check every column the engine reads", "    granted = {o for (o,) in db.execute(\"SELECT object FROM grants WHERE grantee = 'partner'\")}", "", "    def check(action, table, column, schema, inside_view):", "        if action != sqlite3.SQLITE_READ:", "            return sqlite3.SQLITE_OK", "        if table in granted or inside_view in granted:", "            return sqlite3.SQLITE_OK", "        return sqlite3.SQLITE_DENY", "", "    db.set_authorizer(check)"],[""],["-- the indexer writes a new robinhood transfer", "INSERT INTO transfers VALUES", "  ('robinhood', '0xa3', '0xf4', '0xt4', 60, '2026-10-02', 'node-3', '');"],[""],["-- the team renames an internal column and adds one", "ALTER TABLE transfers RENAME COLUMN ingest_node TO source_node;", "ALTER TABLE transfers ADD COLUMN gas_used INT;"]),
+  map:[["transfers: 5 public","five public columns, two..CREATE TABLE grants"],["grant(partner, transfers):","the quick way..('partner', 'transfers');"],
+   ["view transfers_public =","a saved query..FROM transfers WHERE chain = 'robinhood';"],["grant(partner, transfers_public)","the view is the only door..'transfers_public');"],
+   ["on each column read","def as_partner..return sqlite3.SQLITE_DENY"],["read the view:","the indexer writes..('robinhood', '0xa3'"],["change transfers","the team renames..ADD COLUMN gas_used INT;"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- real roles instead of a grants table",
+"CREATE TABLE transfers (chain text, tx_hash text, from_address text,",
+"  to_address text, amount numeric, block_ts timestamptz,",
+"  ingest_node text, risk_note text);",
+"",
+"-- the failure: all or nothing",
+"GRANT SELECT ON transfers TO partner;",
+"",
+"CREATE VIEW transfers_public AS",
+"SELECT tx_hash, from_address, to_address, amount, block_ts",
+"FROM transfers WHERE chain = 'robinhood';",
+"",
+"REVOKE ALL ON transfers FROM partner;",
+"GRANT SELECT ON transfers_public TO partner;",
+"-- partner: SELECT risk_note FROM transfers;",
+"-- ERROR:  permission denied for table transfers",
+"",
+"ALTER TABLE transfers RENAME COLUMN ingest_node TO source_node;",
+"ALTER TABLE transfers ADD COLUMN gas_used bigint;"],
+  map:[["transfers: 5 public","CREATE TABLE transfers..risk_note text);"],["grant(partner, transfers):","GRANT SELECT ON transfers TO"],["view transfers_public =","CREATE VIEW transfers_public..'robinhood';"],
+   ["grant(partner, transfers_public)","REVOKE ALL","GRANT SELECT ON transfers_public"],["on each column read","partner: SELECT risk_note","permission denied"],
+   ["read the view:","CREATE VIEW transfers_public..'robinhood';"],["change transfers","RENAME COLUMN","ADD COLUMN gas_used"]]}]},
+mv:{pc:["view read: the plan searches transfers itself          # stores nothing",
+"stored copy: daily_volume_mv = run the query once, keep the rows",
+"new row 0xa3 lands in transfers",
+"read 2026-10-02: the view says 140, the stored copy 80 until refresh",
+"copy built from every column, then granted -> partner reads risk_note"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- a saved query: five public columns, one chain", "CREATE VIEW transfers_public AS", "SELECT tx_hash, from_address, to_address, amount, block_ts", "FROM transfers WHERE chain = 'robinhood';"],[""],["-- the view runs its query on this read", "SELECT SUM(amount) FROM transfers_public WHERE block_ts = '2026-10-02';"],[""],["-- SQLite has no materialized view: a table filled from the query is the same thing", "DROP TABLE IF EXISTS daily_volume_mv;", "CREATE TABLE daily_volume_mv AS", "SELECT block_ts AS day, SUM(amount) AS volume", "FROM transfers WHERE chain = 'robinhood' GROUP BY block_ts;"],[""],["-- the stored copy answers from its own rows", "SELECT volume FROM daily_volume_mv WHERE day = '2026-10-02';"],[""],["-- the indexer writes a new robinhood transfer", "INSERT INTO transfers VALUES", "  ('robinhood', '0xa3', '0xf4', '0xt4', 60, '2026-10-02', 'node-3', '');"],[""],["    print(\"2026-10-02 volume, view:\", db.execute(DAY_FROM_VIEW).fetchone()[0],", "          \" stored copy:\", db.execute(DAY_FROM_MV).fetchone()[0])", "    db.executescript(BUILD_MV)", "    print(\"after refresh, stored copy:\", db.execute(DAY_FROM_MV).fetchone()[0])"],[""],["-- a copy built from every column, then granted for speed", "CREATE TABLE transfers_mv AS SELECT * FROM transfers WHERE chain = 'robinhood';", "INSERT INTO grants VALUES ('partner', 'transfers_mv');"]),
+  map:[["view read:","a saved query..FROM transfers WHERE chain = 'robinhood';","the view runs its query..SELECT SUM(amount)"],["stored copy:","SQLite has no materialized view..GROUP BY block_ts;","the stored copy answers..SELECT volume FROM"],
+   ["new row 0xa3","the indexer writes..('robinhood', '0xa3'"],["read 2026-10-02","2026-10-02 volume, view:..after refresh, stored copy"],["copy built from every column","a copy built from every column..'transfers_mv');"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- the plain view runs its query on each read",
+"SELECT SUM(amount) FROM transfers_public WHERE block_ts::date = '2026-10-02';",
+"",
+"CREATE MATERIALIZED VIEW daily_volume_mv AS",
+"SELECT block_ts::date AS day, SUM(amount) AS volume",
+"FROM transfers WHERE chain = 'robinhood' GROUP BY 1;",
+"CREATE UNIQUE INDEX ON daily_volume_mv (day);",
+"",
+"-- the copy is stale until this runs",
+"REFRESH MATERIALIZED VIEW CONCURRENTLY daily_volume_mv;",
+"",
+"-- a copy has its own grants, apart from transfers",
+"GRANT SELECT ON daily_volume_mv TO partner;"],
+  map:[["view read:","plain view runs..'2026-10-02';"],["stored copy:","CREATE MATERIALIZED VIEW..GROUP BY 1;"],["new row 0xa3","SELECT SUM(amount)","CREATE MATERIALIZED VIEW"],
+   ["read 2026-10-02","the copy is stale..CONCURRENTLY"],["copy built from every column","a copy has its own grants..TO partner;"]]}]},
+stack:{pc:["view_c reads view_b, view_b reads view_a, view_a reads transfers",
+"read view_c for 2026-10-02: DISTINCT and GROUP BY stop the filter -> SCAN transfers",
+"view_a drops a column -> view_c fails: no such column: amount",
+"reader's function in WHERE: which rows is it shown before the view filters?",
+"flatten: one view on the base table -> SEARCH transfers USING INDEX"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- one view per team, each reading the one below", "CREATE VIEW view_a AS SELECT DISTINCT chain, tx_hash, amount, block_ts AS day FROM transfers;", "CREATE VIEW view_b AS SELECT chain, day, SUM(amount) AS volume FROM view_a GROUP BY chain, day;", "CREATE VIEW view_c AS SELECT day, volume FROM view_b WHERE chain = 'robinhood';"],[""],["-- today's volume through three layers", "SELECT volume FROM view_c WHERE day = '2026-10-02';"],[""],["def plan(db, sql):", "    return [row[3] for row in db.execute(\"EXPLAIN QUERY PLAN \" + sql)]"],[""],["-- view_a's team drops a column they no longer need", "DROP VIEW view_a;", "CREATE VIEW view_a AS SELECT DISTINCT chain, tx_hash, block_ts AS day FROM transfers;"],[""],["-- the reader's own function in the WHERE clause records every row it is shown", "SELECT tx_hash FROM transfers_public WHERE peek(tx_hash);"],[""],["-- one layer, base tables only, filter and columns written out", "CREATE VIEW daily_volume AS", "SELECT block_ts AS day, SUM(amount) AS volume", "FROM transfers WHERE chain = 'robinhood' GROUP BY block_ts;"],[""],["-- today's volume through one layer", "SELECT volume FROM daily_volume WHERE day = '2026-10-02';"]),
+  map:[["view_c reads view_b","one view per team..CREATE VIEW view_c"],["read view_c for","three layers..FROM view_c WHERE","def plan..EXPLAIN QUERY PLAN"],
+   ["view_a drops a column","view_a's team drops..block_ts AS day FROM transfers;"],["reader's function","the reader's own function..WHERE peek(tx_hash);"],
+   ["flatten:","one layer, base tables only..GROUP BY block_ts;","through one layer..FROM daily_volume WHERE"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- the stack each team added",
+"CREATE VIEW view_a AS SELECT DISTINCT chain, tx_hash, amount, block_ts::date AS day FROM transfers;",
+"CREATE VIEW view_b AS SELECT chain, day, SUM(amount) AS volume FROM view_a GROUP BY chain, day;",
+"CREATE VIEW view_c AS SELECT day, volume FROM view_b WHERE chain = 'robinhood';",
+"",
+"-- a cheap function the reader wrote, not LEAKPROOF",
+"CREATE FUNCTION peek(t text) RETURNS boolean COST 0.0000001 LANGUAGE plpgsql",
+"  AS $$ BEGIN RAISE NOTICE 'saw %', t; RETURN true; END $$;",
+"SELECT tx_hash FROM transfers_public WHERE peek(tx_hash);",
+"",
+"-- fix: one layer on the base table, and the filter runs first",
+"CREATE VIEW transfers_public WITH (security_barrier) AS",
+"SELECT tx_hash, from_address, to_address, amount, block_ts",
+"FROM transfers WHERE chain = 'robinhood';"],
+  map:[["view_c reads view_b","the stack each team added..view_c AS"],["read view_c for","view_c AS","view_b AS","view_a AS"],["view_a drops a column","view_a AS"],
+   ["reader's function","a cheap function..WHERE peek(tx_hash);"],["flatten:","fix: one layer..'robinhood';"]]}]}};
+// CODE PANEL END
+const S={
+door:{name:"partner reads transfers",st:[
+ {t:"Start: a table with internal columns",pc:["transfers: 5 public"],b:"transfers holds five public columns and two internal ones: ingest_node and risk_note. It holds rows for two chains.",w:"The partner should see robinhood transfers and the five public columns. Nothing else.",d:partner.concat(base(i=>i?"u":"n",()=>"n"))},
+ {t:"The failure: grant the base table",pc:["grant(partner, transfers):"],b:"The quick way: GRANT SELECT ON transfers TO partner. The partner's read returns risk_note 'watch list' and 'under review', and the base row 0xb1 as well.",w:"A grant on the base table is all or nothing. The internal notes leak.",d:partner.concat(base(i=>i?"x":"n",()=>"n"),[A(172,180,486,180,"SELECT on transfers","x")])},
+ {t:"CREATE VIEW: pick columns and rows",pc:["view transfers_public ="],b:"CREATE VIEW transfers_public AS SELECT the five public columns FROM transfers WHERE chain = 'robinhood'.",w:"The view is a saved query. It stores nothing.",d:partner.concat(vdoor(),base(pub,pubR),[A(442,165,486,165,"","c")])},
+ {t:"Grant the view, not the table",pc:["grant(partner, transfers_public)", "on each column read"],b:"GRANT SELECT ON transfers_public TO partner, and no grant on transfers. Each column read is checked: allowed only if its table or the view around it is granted. The view gives 5 columns and 2 rows, 0xa1 and 0xa2. A direct read of risk_note is refused: access to transfers.risk_note is prohibited.",w:"The view is now the only door. The internal columns are never reachable.",d:partner.concat(vdoor(),base(pub,pubR),[A(172,170,206,170,"","c"),A(442,165,486,165,"","c"),A(150,212,486,340,"","u",1),T(20,300,"no grant on transfers: refused","u","start",15)])},
+ {t:"Always current",pc:["read the view:"],b:"The indexer writes a new robinhood transfer, 0xa3. The partner's next read through the view returns 0xa1, 0xa2 and 0xa3.",w:"The engine expands the view into a query on the base table on every read. Nothing to refresh.",d:partner.concat(vdoor(),base(pub,pubR,ROWS.concat([["robinhood  0xa3",2]])).map(it=>it[5]==="robinhood  0xa3"?["b",it[1],it[2],it[3],it[4],it[5],"c"]:it),[A(172,170,206,170,"","c"),A(442,165,486,165,"","c"),T(690,240,"new row, visible at once","c")])},
+ {t:"The view is a contract",pc:["change transfers"],b:"The team renames ingest_node to source_node and adds gas_used to transfers. The view still has 5 columns and 3 rows. The partner's queries keep working.",w:"Readers depend on the view, so the base table is free to change behind it.",d:partner.concat(vdoor(),base((i,j)=>j===5?"w":pub(i),pubR,ROWS),[T(490,352,"renamed, plus one new column","w"),A(172,170,206,170,"","c"),A(442,165,486,165,"","c"),T(20,300,"partner: no change needed","c","start",15)])}
+]},
+mv:{name:"same table, two kinds of view",st:[
+ {t:"A view stores nothing",pc:["view read:"],b:"transfers_public runs its query against transfers on every read. The query plan of a read through it says: SEARCH transfers USING INDEX transfers_day.",w:"Always current. The cost is paid on each read.",d:partner.concat([B(210,90,230,"view","c",50),A(442,115,486,115,"","c"),T(325,160,"runs its query on each read","f","middle")],base(pub,pubR))},
+ {t:"A materialized view stores the result",pc:["stored copy:"],b:"daily_volume_mv stores its result like a table. A read touches only the stored rows: the plan says SCAN daily_volume_mv, and transfers is not read.",w:"Fast to read. It is a copy, not a door.",d:partner.concat([B(210,90,230,"view","c",50),A(442,115,486,115,"","c"),T(325,160,"runs its query on each read","f","middle"),B(210,240,230,"materialized view: stored","w",50),A(486,265,442,265,"","w"),T(325,310,"refreshed now and then","f","middle")],base(pub,pubR))},
+ {t:"A new row lands",pc:["new row 0xa3"],b:"A new robinhood transfer, 0xa3, is written to the base table.",w:"Which of the two will show it?",d:partner.concat([B(210,90,230,"view","c",50),B(210,240,230,"materialized view: stored","w",50)],base(pub,pubR,ROWS.concat([["robinhood  0xa3",0]]))) },
+ {t:"The failure: the copy is stale",pc:["read 2026-10-02"],b:"Volume on 2 October: the view says 140, with 0xa3. The materialized view says 80 until its next refresh, then 140. A dashboard on it shows old numbers as if they were current.",w:"Staleness is the price of the stored copy. Show 'data as of' next to it.",d:partner.concat([B(210,90,230,"view: sees 0xa3","c",50),A(442,115,486,115,"","c"),B(210,240,230,"materialized: no 0xa3 yet","x",50)],base(pub,pubR,ROWS.concat([["robinhood  0xa3",0]])))},
+ {t:"A copy needs its own grants",pc:["copy built from every column"],b:"The materialized view holds data itself. Built from all columns and granted, it returns risk_note 'watch list' to the partner, while a read of transfers is still refused.",w:"Secure the copy on its own. A plain view is the security layer, a materialized view is for speed.",d:partner.concat([B(210,90,230,"view: the door","c",50),B(210,240,230,"materialized: own grants","w",50),A(172,170,206,115,"","c"),A(172,190,206,262,"","w",1)],base(pub,pubR))}
+]},
+stack:{name:"views on views",st:[
+ {t:"Start: one view per team, stacked",pc:["view_c reads view_b"],b:"view_a reads transfers. view_b reads view_a. view_c reads view_b. Each team added a layer.",w:"Each layer looks small. Together they hide what a query really does.",d:[B(20,140,130,"reader","s",50),B(190,140,140,"view_c","w",50),B(370,140,140,"view_b","w",50),B(550,140,140,"view_a","w",50),B(730,140,150,"transfers","n",50),A(152,165,186,165,"","f"),A(332,165,366,165,"","f"),A(512,165,546,165,"","f"),A(692,165,726,165,"","f")]},
+ {t:"The failure: the filter cannot get through",pc:["read view_c for"],b:"The reader asks view_c for 2 October. view_b has a GROUP BY and view_a a DISTINCT, so the planner cannot push the day filter down. The plan says SCAN transfers: every row, not the day index.",w:"Each layer hides cost. A query for one day scans all of history.",d:[B(20,140,130,"reader","s",50),B(190,140,140,"view_c","w",50),B(370,140,140,"view_b","x",50),B(550,140,140,"view_a","x",50),B(730,140,150,"transfers","x",50),A(152,165,186,165,"","f"),T(20,120,"WHERE day = today","f","start",15),A(332,165,366,165,"","f"),A(512,165,546,165,"","f"),A(692,165,726,165,"","x"),T(730,230,"full scan: all history","x","start",15)]},
+ {t:"Nobody knows what view_c reads",pc:["view_a drops a column"],b:"view_a's team drops the amount column. view_c, two layers up, now fails: no such column: amount. The team that owns view_c never touched view_a.",w:"Stacked views couple teams through code nobody reads end to end.",d:[B(20,140,130,"reader","s",50),B(190,140,140,"view_c: broken","x",50),B(370,140,140,"view_b","w",50),B(550,140,140,"view_a: changed","w",50),B(730,140,150,"transfers","n",50),A(332,165,366,165,"","f"),A(512,165,546,165,"","f"),A(692,165,726,165,"","f")]},
+ {t:"A filtering view can leak",pc:["reader's function"],b:"In PostgreSQL, a view that hides rows can be read around: the planner may run a reader's cheap function in the WHERE clause before the view's own filter, so it sees hidden rows. In this SQLite run the function was shown only 0xa1 and 0xa2, so the PostgreSQL tab holds the case.",w:"Create a security view WITH (security_barrier), so the view's own filter runs first.",d:[B(20,140,130,"reader","s",50),B(190,140,250,"view: chain = robinhood","w",50),B(550,140,330,"transfers: all chains","n",50),A(152,165,186,165,"","f"),A(442,165,546,165,"","f"),B(190,240,250,"crafted function sees base rows","x",44)]},
+ {t:"Fix: one layer, base tables only",pc:["flatten:"],b:"Flatten the stack. daily_volume reads transfers directly, with its filter and columns written out. The plan now says SEARCH transfers USING INDEX transfers_day. A view that hides rows is also created WITH (security_barrier).",w:"A view reads base tables only. A migration that touches a stacked view flattens it.",d:[B(20,140,130,"reader","s",50),B(190,140,320,"daily_volume (one layer)","c",50),B(730,140,150,"transfers","n",50),A(152,165,186,165,"","c"),A(512,165,726,165,"day filter reaches the table","c"),T(190,230,"WITH (security_barrier)","c","start",15)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

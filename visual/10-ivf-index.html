@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IVF index</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>IVF: search only the nearest clusters</h1>
+  <p class="lede">A team has fifty million vectors and not enough RAM for an HNSW graph. Press <b>Next</b> and watch IVF group the vectors into clusters, compare the question with the cluster centres only, and search inside the nearest few. The second tab shows a neighbour lost just across a cluster border.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="probe">Cluster and probe</button>
+    <button role="tab" aria-selected="false" data-mode="border">The failure: across the border</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Vectors grouped into clusters around centroids, a question probing the nearest clusters, and a neighbour missed across a border</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-ivf-index/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a stored vector</span>
+    <span style="--c:var(--coord)">a centroid: the centre of a cluster</span>
+    <span style="--c:var(--undo)">the question</span>
+    <span style="--c:var(--wait)">a probed cluster</span>
+    <span style="--c:var(--ok)">the nearest neighbour found</span>
+    <span style="--c:var(--fail)">missed, or a stale centroid</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Very large collections where memory is the limit, often with compressed vectors. FAISS (a vector search library) and many vector databases offer IVF. Pairing it with compression keeps a billion vectors on one server.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Raise the number of probes (often called nprobe) until recall on the golden set is good enough, then stop: each probe costs time. Retrain the centroids when the data shifts a lot. Pick HNSW instead when the vectors and links fit in memory.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>IVF</th><th>HNSW</th></tr>
+      <tr><td>Structure</td><td>Clusters around centroids</td><td>A layered graph of links</td></tr>
+      <tr><td>Memory</td><td>Lighter</td><td>Hungry: stores links</td></tr>
+      <tr><td>Recall set by</td><td>Number of clusters probed</td><td>Candidate list length (ef)</td></tr>
+      <tr><td>Misses when</td><td>The neighbour is in a cluster not probed</td><td>The walk stops in a local corner</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"IVF groups vectors into clusters and searches only the nearest few, so it saves memory and trades recall for the number of clusters probed."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={probe:{
+ pc:["centroids = kmeans(vectors, k)        # k = 3 here, thousands in real",
+"for v in vectors:",
+"  lists[nearest centroid of v].append(v)   # the inverted file",
+"order = centroids sorted by dist to q   # k comparisons only",
+"probed = order[:nprobe]",
+"cands = every vector in the probed lists",
+"return min(cands, by dist to q)"],
+ real:["SEEDS = [(200, 120), (470, 250), (690, 110)]      # k = 3 starting centres",
+"",
+"def kmeans(points, centres, rounds=10):",
+"    for _ in range(rounds):",
+"        lists = assign(points, centres)",
+"        centres = [tuple(sum(points[i][d] for i in l) / len(l) for d in (0, 1))",
+"                   for l in lists]",
+"    return centres",
+"",
+"def assign(points, centres):",
+"    lists = [[] for _ in centres]",
+"    for i, p in enumerate(points):",
+"        lists[min(range(len(centres)), key=lambda k: math.dist(p, centres[k]))].append(i)",
+"    return lists",
+"",
+"def search(q, centres, lists, nprobe):",
+"    order = sorted(range(len(centres)), key=lambda k: math.dist(q, centres[k]))",
+"    probed = order[:nprobe]                                  # compare with centroids only",
+"    cands = [i for k in probed for i in lists[k]]",
+"    best = min(cands, key=lambda i: math.dist(q, PTS[i]))    # compare inside the lists",
+"    return best, probed, len(cands)",
+"",
+"centres = kmeans(PTS, SEEDS)           # (210, 118), (462, 256), (679, 113)",
+"lists = assign(PTS, centres)           # sizes 6, 5, 6",
+"search(QA, centres, lists, nprobe=2)   # clusters 1, 2: 11 of 17, vector 3"],
+ map:{1:[1,3,4,5,6,7,8,23],2:[10,11,12],3:[13,14,24],4:[16,17],5:[18],6:[19],7:[20,21,25]}},
+border:{
+ pc:["order = centroids sorted by dist to q",
+"probed = order[:nprobe]               # nprobe = 1",
+"cands = every vector in the probed lists",
+"# a vector in a list not probed is never compared",
+"return min(cands, by dist to q)",
+"nprobe = 2                            # the fix: more lists, more compares",
+"if new data sits far from every centroid: retrain kmeans"],
+ real:["def search(q, centres, lists, nprobe):",
+"    order = sorted(range(len(centres)), key=lambda k: math.dist(q, centres[k]))",
+"    probed = order[:nprobe]",
+"    cands = [i for k in probed for i in lists[k]]",
+"    best = min(cands, key=lambda i: math.dist(q, PTS[i]))",
+"    return best, probed, len(cands)",
+"",
+"truth = min(range(len(PTS)), key=lambda i: math.dist(QB, PTS[i]))   # vector 16, cluster 3",
+"for nprobe in (1, 2):   # 1: cluster 2 only, vector 9 at 81, wrong; 2: clusters 2, 3, vector 16 at 66",
+"    best, probed, n = search(QB, centres, lists, nprobe)",
+"",
+"NEW = [(820, 300), (840, 270), (800, 330), (860, 320), (830, 240)]",
+"spread(NEW, centres)                                   # 236 from the nearest centroid",
+"retrained = kmeans(PTS + NEW, centres + [NEW[0]])      # k = 4: 36"],
+ map:{1:[1,2],2:[3,9],3:[4],4:[8],5:[5,6],6:[9,10],7:[12,13,14]}}};
+// end code
+const C=[[210,118,"Cluster 1: trades, pools, prices"],[462,256,"Cluster 2: graph sync, risk"],[679,113,"Cluster 3: dashboards, alerts"]];
+const PTS=[[160,90,0],[230,80,0],[180,160,0],[250,140,0],[140,130,0],[300,110,0],[430,220,1],[500,290,1],[450,280,1],[520,230,1],[410,260,1],[650,80,2],[720,140,2],[700,70,2],[660,150,2],[750,100,2],[595,140,2]];
+const QA=[270,170],QB=[530,150];
+const steps={
+"probe":[
+ {t:"Fifty million vectors",b:"The team has fifty million vectors. An HNSW graph would not fit in RAM. Here 17 vectors stand for all of them, and every search below counts how many it compares.",w:"IVF (inverted file index) saves memory by skipping most vectors on every search.",pts:1,pc:[2]},
+ {t:"Find the centroids",b:"kmeans() starts from three seeds, puts each vector with its nearest centre, and moves each centre to the average of its vectors. After 10 rounds the centroids sit at (210, 118), (462, 256) and (679, 113). A real index has thousands.",w:"Each centroid is the average of the vectors near it.",pts:1,cent:1,pc:[1]},
+ {t:"Store each vector in a list",b:"assign() puts each vector id into the list of its nearest centroid. The lists hold 6, 5 and 6 vectors. That list is the cluster.",w:"One list per centroid: that is the inverted file.",pts:1,cent:1,clus:1,pc:[2, 3]},
+ {t:"Compare with the centroids only",b:"search() sorts the centroids by distance to the question: 79, 210 and 413. That is 3 comparisons, not 17.",w:"Thousands of centroids are still far fewer than fifty million vectors.",pts:1,cent:1,clus:1,q:QA,tocent:1,pc:[4]},
+ {t:"Probe the nearest two",b:"probed = order[:nprobe] with nprobe = 2: clusters 1 and 2. Cluster 3 is skipped.",w:"More probes means better recall and slower search.",pts:1,cent:1,clus:1,q:QA,probe:[0,1],pc:[5]},
+ {t:"Search inside, return the best",b:"cands holds the 11 vectors of clusters 1 and 2. min() over them returns vector 3 at distance 36: a chunk about exchange trades.",w:"11 vectors compared out of 17, plus 3 centroids.",pts:1,cent:1,clus:1,q:QA,probe:[0,1],found:3,pc:[6, 7]}
+],
+"border":[
+ {t:"A question near a border",b:"Question B is 126 from centroid 2 and 154 from centroid 3. It lands near the border between them.",w:"Near a border, the nearest vector may belong to the next cluster.",pts:1,cent:1,clus:1,q:QB,pc:[1]},
+ {t:"The true neighbour is across the border",b:"Checked against all 17, its true nearest neighbour is vector 16 at distance 66. Vector 16 is in the list of cluster 3.",w:"Clusters are drawn by centroids, not by questions.",pts:1,cent:1,clus:1,q:QB,truth:16,pc:[4]},
+ {t:"The failure: cluster 3 is skipped",b:"With nprobe = 1, probed is cluster 2 only, so cands holds its 5 vectors. Vector 16 is never compared. min() returns vector 9 at distance 81, a worse match.",w:"IVF misses neighbours in clusters it does not probe. No error is raised.",pts:1,cent:1,clus:1,q:QB,probe:[1],truth:16,miss:9,pc:[2, 3, 4, 5]},
+ {t:"The fix: probe more clusters",b:"With nprobe = 2, clusters 2 and 3 are probed. cands grows from 5 to 11 vectors, and min() returns vector 16 at 66: the true neighbour.",w:"Raise the probes until recall on the golden set is good enough.",pts:1,cent:1,clus:1,q:QB,probe:[1,2],found:16,pc:[6, 3, 5]},
+ {t:"A second failure: the data shifts",b:"Five new vectors arrive in a new area. Old vectors sit 55 from their centroid on average. The new ones sit 236 from the nearest one. Retraining with k = 4 brings them to 36.",w:"Retrain the centroids when the data changes a lot.",pts:1,cent:1,clus:1,shift:1,pc:[7]}
+]};
+function nearestC(p){let b=0,d=1e9;C.forEach((c,k)=>{const e=Math.hypot(c[0]-p[0],c[1]-p[1]);if(e<d){d=e;b=k}});return b;}
+function scene(s){
+  let h="";
+  if(s.clus)C.forEach((c,k)=>{const pr=s.probe&&s.probe.includes(k);h+=`<circle cx="${c[0]}" cy="${c[1]}" r="${k===1?100:110}" fill="${pr?"var(--wait)":"none"}" fill-opacity=".15" stroke="${pr?"var(--wait)":"var(--line)"}" stroke-width="2" stroke-dasharray="6 4"/>`;
+    h+=k===1?T(c[0]+78,352,c[2],pr?"var(--fg)":"var(--muted)",12,"start",1):T(c[0],c[1]+130,c[2],pr?"var(--fg)":"var(--muted)",12,"middle",1);});
+  if(s.pts)PTS.forEach(([x,y],i)=>{const f=s.found===i,t=s.truth===i&&!s.found,m=s.miss===i;
+    h+=`<circle class="box" cx="${x}" cy="${y}" r="${f||t||m?10:6}" fill="${f?"var(--ok)":m?"var(--fail)":t?"none":"var(--svc)"}" ${t?'stroke="var(--ok)" stroke-width="3"':""}/>`;});
+  if(s.shift){[[820,300],[840,270],[800,330],[860,320],[830,240]].forEach(([x,y])=>h+=`<circle cx="${x}" cy="${y}" r="6" fill="var(--fail)"/>`);h+=T(860,220,"new data","var(--fail)",13,"end",1)+T(870,350,"far from every centroid","var(--fail)",12,"end",1);}
+  if(s.cent)C.forEach((c,k)=>{h+=`<rect x="${c[0]-9}" y="${c[1]-9}" width="18" height="18" fill="var(--coord)" transform="rotate(45 ${c[0]} ${c[1]})"/>`;});
+  if(s.q){const [x,y]=s.q;if(s.tocent)C.forEach(c=>h+=`<line x1="${x}" y1="${y}" x2="${c[0]}" y2="${c[1]}" stroke="var(--undo)" stroke-width="2" stroke-dasharray="4 4"/>`);
+    h+=`<circle cx="${x}" cy="${y}" r="9" fill="var(--undo)"/>`+T(x-14,s.q===QB?y-4:y+26,"question","var(--undo)",13,"end",1);
+    if(s.found!==undefined){const p=PTS[s.found];h+=A(x,y,p[0]+(p[0]>x?-10:10),p[1],"var(--ok)");}
+    if(s.miss!==undefined){const p=PTS[s.miss];h+=A(x,y,p[0],p[1]-12,"var(--fail)");h+=`<rect x="${p[0]+14}" y="${p[1]+20}" width="150" height="20" rx="4" fill="var(--panel)"/>`+T(p[0]+20,p[1]+34,"returned: worse match","var(--fail)",12,"start",1);}
+    if(s.truth!==undefined&&s.found===undefined){const p=PTS[s.truth];h+=T(p[0]+10,p[1]+28,"true neighbour","var(--ok)",12,"start",1);}}
+  const n=s.probe?PTS.filter(p=>s.probe.includes(p[2])).length:null;
+  if(n!==null)h+=T(20,350,`probes: ${s.probe.length}, compared: ${n} of ${PTS.length}`,"var(--fg)",14,"start",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

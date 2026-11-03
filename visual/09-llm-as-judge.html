@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM as judge</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>LLM-as-judge: a model grades against a rubric</h1>
+  <p class="lede">A Chain Insights answer must name every exchange the money reached, in plain words. Code checks the hard rules first. Then a judge model grades the soft parts against a rubric and a reference answer. Watch a verdict with reasons, then a pairwise comparison. Then switch tabs to see the judge's biases.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Hard checks, then a rubric</button>
+    <button role="tab" aria-selected="false" data-mode="bad">A biased judge</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 430" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">An answer, hard checks in code, a judge model with a rubric and a reference, and a verdict</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="eh" class="edge" d="M260 68 L316 72" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="ehj" class="edge" d="M450 110 L450 166" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="erj" class="edge" d="M260 258 L316 210" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="ejv" class="edge" d="M580 196 L636 136" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="ebj" class="edge msg" d="M260 158 L316 192" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="ehu" class="edge msg" d="M765 230 L765 164" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"/>
+      <g><rect id="ans" class="box" x="10" y="40" width="250" height="56" rx="10" fill="var(--line)"/><text id="ans-l" x="135.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Answer A (skill v1)</text></g>
+      <g id="ansb-g" class="msg"><rect id="ansb" class="box" x="10" y="130" width="250" height="56" rx="10" fill="var(--line)"/><text id="ansb-l" x="135.0" y="162.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Answer B (skill v2)</text></g>
+      <g><rect id="hard" class="box" x="320" y="40" width="260" height="70" rx="10" fill="var(--line)"/><text id="hard-l" x="450.0" y="71.75" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"><tspan x="450.0" dy="0">Hard checks in code:</tspan><tspan x="450.0" dy="15.6">full addresses, no query text</tspan></text></g>
+      <g><rect id="judge" class="box" x="320" y="170" width="260" height="60" rx="10" fill="var(--line)"/><text id="judge-l" x="450.0" y="204.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Judge model + rubric</text></g>
+      <g><rect id="ref" class="box" x="10" y="230" width="250" height="56" rx="10" fill="var(--line)"/><text id="ref-l" x="135.0" y="262.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Reference answer</text></g>
+      <g><rect id="verdict" class="box" x="640" y="100" width="250" height="60" rx="10" fill="var(--line)"/><text id="verdict-l" x="765.0" y="134.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Verdict</text></g>
+      <g id="human-g" class="msg"><rect id="human" class="box" x="640" y="230" width="250" height="60" rx="10" fill="var(--line)"/><text id="human-l" x="765.0" y="256.75" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"><tspan x="765.0" dy="0">Human labels</tspan><tspan x="765.0" dy="15.6">(a sample)</tspan></text></g>
+      <text x="10" y="308" font-size="14" font-weight="700" fill="var(--fg)">Judge output</text>
+      <rect x="10" y="318" width="880" height="104" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-llm-as-judge/main.py</code> (<code>python3 main.py</code>). The judge is a fake: rules over the reference stand in for a model's yes-or-no replies. The hard checks and the pairwise and calibration rules are real code.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">grading</span>
+    <span style="--c:var(--svc)">reference or human label</span>
+    <span style="--c:var(--ok)">pass, or a fair verdict</span>
+    <span style="--c:var(--fail)">bias</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>The soft half of a skill eval: is the answer complete, is it plain. Comparing two prompt wordings pairwise. LangSmith and OpenAI evals both run judges. Hard rules such as address length stay in code.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Run hard checks in code first, and give the judge only what code cannot check. Write the rubric as yes-or-no questions with a reference answer. Use a different model from the one that wrote the answer. Swap the order in pairwise judging. Check the judge against human labels on a sample.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>LLM-as-judge</th><th>Hard checks in code</th></tr>
+      <tr><td>Checks</td><td>Meaning: complete, correct, plain</td><td>Rules: length, format, forbidden text</td></tr>
+      <tr><td>Cost</td><td>A model call per case</td><td>Almost free</td></tr>
+      <tr><td>Reliability</td><td>Has biases: length, position, own style</td><td>Exact</td></tr>
+      <tr><td>Run order</td><td>Second</td><td>First</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"An LLM judge grades the soft parts against a rubric after code has checked the hard rules, and I swap orders and compare it with human labels because it has biases."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"pc": [], "t": "An answer to grade", "b": "Answer A says where the money from one wallet went. It must name every exchange reached, in plain words.", "w": "Some of this is a rule. Some of it is judgement.", "box": {"ans": "coord"}},
+{"pc": [1, 2], "t": "Hard checks first, in code", "b": "The regular expression finds each address and checks len == 42. A second check looks for query text such as 'MATCH ('. Both pass, so line 2 lets the answer go on to the judge.", "w": "Never pay a judge for what a regular expression can check exactly.", "box": {"hard": "ok"}, "ed": {"eh": "ok"}, "rows": [["hard checks: addresses 42 characters, no query text: pass", "ok"]]},
+{"pc": [3, 4], "t": "The judge gets a rubric and a reference", "b": "Line 3: a different model from the writer. Line 4 asks three yes-or-no questions: every exchange named? amounts in plain words? any claim the rows do not support? The reference answer names Exchange A and Exchange B.", "w": "Yes-or-no questions with a reference make the judge consistent.", "box": {"judge": "coord", "ref": "svc"}, "ed": {"ehj": "coord", "erj": "svc"}},
+{"pc": [5, 6], "t": "A verdict with reasons", "b": "Question 1: the reference names 2 exchanges, the answer names 1. So 'no: missing Exchange B'. Questions 2 and 3 are yes. Line 6 needs every verdict good, so Answer A does not pass.", "w": "A reason makes a verdict checkable and points at the fix.", "box": {"verdict": "ok", "judge": "ok"}, "ed": {"ejv": "ok"}, "rows": ["clear", ["every exchange named: no, the second is missing", "fail"], ["plain words: yes  |  unsupported claims: none", "ok"]]},
+{"pc": [7, 8], "t": "Pairwise: which is better?", "b": "Line 7 runs twice. A shown first: B wins, 3 of 3 against 2 of 3. B shown first: B wins again. Line 8 keeps the winner because both runs agree.", "w": "Swapping the order cancels position bias. Keep the verdict only if both runs agree.", "box": {"ansb": "coord", "judge": "coord"}, "ed": {"ebj": "coord"}, "show": ["ansb", "ebj"], "rows": ["clear", ["A then B: B wins  |  B then A: B wins: keep it", "ok"]]},
+{"pc": [9, 10], "t": "Calibrate the judge", "b": "On 10 example cases people label the answers too. The judge agrees on 9 of 10. Line 10 needs 80 % or more, so its numbers can be trusted.", "w": "A judge is a measuring tool. Check it against people before you trust its numbers.", "box": {"human": "svc", "verdict": "ok"}, "ed": {"ehu": "svc"}, "show": ["ansb", "human", "ehu"], "rows": [["judge agrees with the human labels on the sample", "ok"]]}],
+"bad":[
+{"pc": [3, 4], "t": "A judge with no rubric", "b": "Suppose lines 3 and 4 are off: the same model that wrote the answer is asked for a score from 1 to 10, with no rubric. It gives 9.", "w": "A model grading its own style with no rubric tends to like it.", "box": {"judge": "fail"}, "ed": {"ehj": "coord"}, "rows": [["self-graded, no rubric: 9 out of 10", "fail"]]},
+{"pc": [4, 5], "t": "Length bias", "b": "Suppose the judge rewards length. A long answer that names Exchange C, which no row supports, beats the short right one. The rubric gives the long one 1 of 3 and the short one 3 of 3.", "w": "Judges often reward length and confident tone.", "box": {"judge": "fail", "verdict": "fail"}, "ed": {"ejv": "fail"}, "rows": [["longer wrong answer beats shorter right one", "fail"]]},
+{"pc": [7, 8], "t": "Position bias", "b": "Suppose the judge picks whichever it reads first. Line 7 gives w1 = A and w2 = B. Line 8 sees w1 and w2 differ, so it keeps no winner: a verdict that flips with order is not a verdict.", "w": "A verdict that flips with order is not a verdict.", "box": {"ansb": "coord", "judge": "fail"}, "ed": {"ebj": "fail"}, "show": ["ansb", "ebj"], "rows": [["A first: A wins  |  B first: B wins", "fail"]]},
+{"pc": [9, 10], "t": "Nobody checked the judge", "b": "Line 9 compares this judge with people on the same 10 example cases: it agrees on 6 of them. Line 10 asks: is 6 of 10 at least 80 %? No. So this judge is not trusted until it is fixed.", "w": "Calibrate the judge before you believe its numbers.", "box": {"judge": "fail", "human": "svc"}, "ed": {"ehu": "fail"}, "show": ["human", "ehu"], "rows": [["judge against people: 6 of 10, below 80 %", "fail"]]},
+{"pc": [1, 3, 4, 7, 8, 9], "t": "The fix", "b": "Line 1: hard checks in code first. Lines 3 and 4: a different model, yes-or-no questions with a reference. Lines 7 and 8: both orders. Line 9: calibration. With the fair judge, B wins both orders.", "w": "Each fix removes one known bias.", "box": {"hard": "ok", "judge": "ok", "verdict": "ok", "human": "svc"}, "ed": {"eh": "ok", "ehj": "ok", "ejv": "ok", "ehu": "svc"}, "show": ["human", "ehu"], "rows": ["clear", ["rubric, different model, swapped order, calibrated", "ok"]]}]},
+"T0":{},"panel":{"x": 10, "y": 318, "w": 880, "h": 104, "title": "Judge output", "rh": 32, "fs": 12},"code":{"_": {"label": "Python", "pc": ["hard = every address is 42 characters and no query text   # code: exact and free", "if not hard: fail, with no judge call", "judge = a different model from the writer", "for q in rubric:                             # yes-or-no questions", "  verdict[q], reason[q] = judge(answer, reference, q)", "pass = every verdict is good", "pairwise: w1 = judge.pick(A, B) and w2 = judge.pick(B, A)   # both orders", "keep the winner only if w1 == w2", "calibrate: agreement = judge against people on a sample", "trust the judge only if agreement >= 80 %"], "real": ["def hard_checks(answer):", "    addresses = re.findall(r\"0x[0-9a-fA-F]+\", answer)", "    return all(len(a) == 42 for a in addresses) and \"MATCH (\" not in answer  # code, exact and free", "", "", "def grade(answer):", "    if not hard_checks(answer):  # no judge call", "        return False, [\"failed the hard checks\"]", "    # the judge is a different model from the writer", "    verdicts = {}", "    for q in RUBRIC:  # yes-or-no questions", "        verdicts[q] = fake_judge_question(answer, q)  # a verdict with a reason", "    return all(v[0] for v in verdicts.values()), verdicts", "", "", "def pairwise(a, b, pick=fake_pick):", "    first = pick(a, b)  # A shown first", "    second = pick(b, a)  # B shown first", "    return first if first == second else None  # keep only if both agree", "", "", "def calibrated(judge_labels, human_labels):", "    agree = sum(j == h for j, h in zip(judge_labels, human_labels))", "    return agree, agree / len(human_labels) >= 0.8  # trust at 80 % or more"], "map": {"1": [3], "2": [7, 8], "3": [9], "4": [11], "5": [12], "6": [13], "7": [17, 18], "8": [19], "9": [23], "10": [24]}, "path": "handbook/code/09-llm-as-judge/main.py", "cmd": "python3 main.py", "note": "The judge is a fake: rules over the reference stand in for a model's yes-or-no replies. The hard checks and the pairwise and calibration rules are real code."}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

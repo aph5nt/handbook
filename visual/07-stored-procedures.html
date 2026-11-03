@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stored procedures</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Stored procedures: one call, and its price</h1>
+  <p class="lede">Moving money between two accounts takes five statements. Run them from the app and you pay five round trips with locks held. Run them in a stored procedure and you pay one. The second tab shows the bill that arrives years later.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pros">One call, not five</button>
+    <button role="tab" aria-selected="false" data-mode="cons">The cost, years later</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Stored procedures: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">the app</span>
+    <span style="--c:var(--wait)">locks held, or waiting</span>
+    <span style="--c:var(--ok)">done inside the database</span>
+    <span style="--c:var(--undo)">refused by a permission</span>
+    <span style="--c:var(--fail)">the problem</span>
+    <span style="--c:var(--line)">plain step</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Banks and older enterprise systems: Oracle PL/SQL and SQL Server T-SQL hold years of business rules. PostgreSQL: a function for one atomic operation that several services share. Most new systems keep logic in the app.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep a procedure small and data-shaped: one atomic multi-row write, or a permission boundary. Version it in migrations and test it against a real database. Business rules such as fees and limits stay in the app, where they are tested, logged and traced.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Logic in the app</th><th>Logic in a stored procedure</th></tr>
+      <tr><td>Round trips</td><td>One per statement</td><td>One per call</td></tr>
+      <tr><td>Locks held</td><td>Across every round trip</td><td>Only while the call runs</td></tr>
+      <tr><td>Permissions</td><td>The app needs <code>UPDATE</code> on tables</td><td>The app needs only <code>EXECUTE</code></td></tr>
+      <tr><td>Tests, logs, traces</td><td>The app's own</td><td>Separate, often missing</td></tr>
+      <tr><td>Scaling and lock-in</td><td>App servers scale out</td><td>Spends database CPU, tied to one engine</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A stored procedure saves round trips and can be a permission boundary, but its logic is hard to test, version and trace, so I keep it small and data-shaped."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const ST=["lock accounts A and B","check A's balance >= 100","debit A by 100","credit B by 100","write a ledger row"];
+const db=(ks,lab)=>[F(500,50,380,300,lab||"database")].concat(ST.map((s,j)=>B(510,94+44*j,360,s,(ks||[])[j]||"n",34)));
+const app=(k)=>[B(20,80,160,"app",k||"s",250)];
+const trips=(k)=>ST.map((s,j)=>A(182,111+44*j,506,111+44*j,"round trip "+(j+1),k));
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. <code>handbook/code/07-stored-procedures/main.go</code> is a small model database: it counts round trips, keeps a simulated clock (a round trip is 2,000 us, a statement 50 us), checks each statement's privilege, and prints every number quoted here (<code>go run .</code>). The PostgreSQL tab shows the real CREATE PROCEDURE, GRANT EXECUTE and CALL.";
+const CODE={
+pros:{pc:["transfer(A, B, 100) = lock A and B, check A >= 100, debit A, credit B, write a ledger row",
+"app_transfer: for each statement: one round trip, then run it     # 5 trips",
+"call_transfer: one round trip, then all 5 statements run inside   # 1 trip",
+"commit: the locks were held only while the statements ran          # 200 us, not 8,200",
+"permission: app has EXECUTE on transfer_funds only",
+"  run(role, statement): refuse when the role lacks the statement's privilege"],
+ views:[{v:"real",label:"Go",lines:[].concat(["func newDB() *DB {", "\treturn &DB{", "\t\taccounts: map[string]int{\"A\": 1000, \"B\": 1000},", "\t\tgrants: map[string]map[string]bool{", "\t\t\t\"owner\":  {\"UPDATE accounts\": true, \"SELECT accounts\": true, \"INSERT ledger\": true},", "\t\t\t\"app_rw\": {\"UPDATE accounts\": true, \"SELECT accounts\": true, \"INSERT ledger\": true},", "\t\t\t\"app\":    {\"EXECUTE transfer_funds\": true},", "\t\t},", "\t}", "}"],[""],["func transferStmts(from, to string, amount int) []Stmt {", "\treturn []Stmt{", "\t\t{\"SELECT * FROM accounts WHERE id IN (A, B) FOR UPDATE\", \"UPDATE accounts\",", "\t\t\tfunc(d *DB) error { d.lockedAt = d.clock; return nil }},", "\t\t{\"SELECT balance FROM accounts WHERE id = A\", \"SELECT accounts\",", "\t\t\tfunc(d *DB) error {", "\t\t\t\tif d.accounts[from] < amount {", "\t\t\t\t\treturn errNotEnough", "\t\t\t\t}", "\t\t\t\treturn nil", "\t\t\t}},", "\t\t{\"UPDATE accounts SET balance = balance - amount WHERE id = A\", \"UPDATE accounts\",", "\t\t\tfunc(d *DB) error { d.accounts[from] -= amount; return nil }},", "\t\t{\"UPDATE accounts SET balance = balance + amount WHERE id = B\", \"UPDATE accounts\",", "\t\t\tfunc(d *DB) error { d.accounts[to] += amount; return nil }},", "\t\t{\"INSERT INTO ledger VALUES (A, B, amount)\", \"INSERT ledger\",", "\t\t\tfunc(d *DB) error { d.ledger = append(d.ledger, fmt.Sprintf(\"%s->%s %d\", from, to, amount)); return nil }},", "\t}", "}"],[""],["// roundTrip is one message from the app to the database and back.", "func (d *DB) roundTrip(what string) {", "\td.trips++", "\td.clock += rttMicros", "\td.trace = append(d.trace, \"app -> db: \"+what)", "}"],[""],["// run checks the role's privilege, then runs the statement next to the data.", "func (d *DB) run(role string, s Stmt) error {", "\tif !d.grants[role][s.Needs] {", "\t\treturn fmt.Errorf(\"permission denied: %s has no %s\", role, s.Needs)", "\t}", "\td.clock += stmtMicros", "\td.stmts++", "\treturn s.Run(d)", "}"],[""],["// commit releases the row locks and records how long they were held.", "func (d *DB) commit() { d.held = d.clock - d.lockedAt }"],[""],["// AppTransfer sends each statement on its own round trip.", "func AppTransfer(d *DB, role, from, to string, amount int) error {", "\tfor _, s := range transferStmts(from, to, amount) {", "\t\td.roundTrip(s.SQL)", "\t\tif err := d.run(role, s); err != nil {", "\t\t\treturn err", "\t\t}", "\t}", "\td.commit()", "\treturn nil", "}"],[""],["// CallTransfer is CALL transfer_funds: one round trip, and the statements", "// run with the owner's rights (SECURITY DEFINER), so the caller needs", "// only EXECUTE.", "func CallTransfer(d *DB, role, from, to string, amount int) error {", "\td.roundTrip(\"CALL transfer_funds\")", "\tif !d.grants[role][\"EXECUTE transfer_funds\"] {", "\t\treturn fmt.Errorf(\"permission denied: %s has no EXECUTE transfer_funds\", role)", "\t}", "\tfor _, s := range transferStmts(from, to, amount) {", "\t\tif err := d.run(\"owner\", s); err != nil {", "\t\t\treturn err", "\t\t}", "\t}", "\td.commit()", "\treturn nil", "}"],[""],["\tdebit := transferStmts(\"A\", \"B\", 100)[2]", "\tfmt.Println(\"app sends UPDATE accounts directly:\", d.run(\"app\", debit))"]),
+  map:[["transfer(A, B, 100)","func transferStmts..INSERT INTO ledger VALUES"],["app_transfer:","// AppTransfer sends..d.commit()","// roundTrip is one..d.trace = append"],
+   ["call_transfer:","// CallTransfer is..range transferStmts(from, to, amount) {","d.run(\"owner\", s)"],["commit:","// commit releases..func (d *DB) commit()","d.lockedAt = d.clock"],
+   ["permission:","{\"EXECUTE transfer_funds\": true}","grants[role][\"EXECUTE transfer_funds\"]"],["run(role, statement)","// run checks..has no %s","debit := transferStmts..directly"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- the five statements, sent one by one from the app",
+"BEGIN;",
+"SELECT * FROM accounts WHERE id IN ('A', 'B') FOR UPDATE;",
+"SELECT balance FROM accounts WHERE id = 'A';",
+"UPDATE accounts SET balance = balance - 100 WHERE id = 'A';",
+"UPDATE accounts SET balance = balance + 100 WHERE id = 'B';",
+"INSERT INTO ledger VALUES ('A', 'B', 100);",
+"COMMIT;",
+"",
+"-- the same five, stored in the database",
+"CREATE PROCEDURE transfer_funds(from_id text, to_id text, amount numeric)",
+"LANGUAGE plpgsql SECURITY DEFINER AS $$",
+"BEGIN",
+"  PERFORM 1 FROM accounts WHERE id IN (from_id, to_id) FOR UPDATE;",
+"  IF (SELECT balance FROM accounts WHERE id = from_id) < amount THEN",
+"    RAISE EXCEPTION 'balance below amount';",
+"  END IF;",
+"  UPDATE accounts SET balance = balance - amount WHERE id = from_id;",
+"  UPDATE accounts SET balance = balance + amount WHERE id = to_id;",
+"  INSERT INTO ledger VALUES (from_id, to_id, amount);",
+"END $$;",
+"",
+"CALL transfer_funds('A', 'B', 100);",
+"",
+"REVOKE ALL ON accounts, ledger FROM app;",
+"GRANT EXECUTE ON PROCEDURE transfer_funds TO app;",
+"-- app: UPDATE accounts SET balance = 0;",
+"-- ERROR:  permission denied for table accounts"],
+  map:[["transfer(A, B, 100)","the five statements..INSERT INTO ledger VALUES ('A'"],["app_transfer:","=BEGIN;","SELECT * FROM accounts WHERE id IN ('A', 'B')","=COMMIT;"],
+   ["call_transfer:","CALL transfer_funds('A', 'B', 100);","CREATE PROCEDURE..END $$;"],["commit:","PERFORM 1 FROM accounts..END $$;"],
+   ["permission:","GRANT EXECUTE ON PROCEDURE","SECURITY DEFINER"],["run(role, statement)","REVOKE ALL ON accounts..permission denied"]]}]},
+cons:{pc:["trace(call_transfer): one line, CALL transfer_funds, 2,250 us    # the 5 statements unseen",
+"rules drift in: fee lookup, daily limit, fraud check",
+"deployed: staging v41, production v38 -> B receives 96 in staging, 99 in production",
+"every rule inside spends database CPU: 8 statements per transfer, not 5",
+"fix: app_rules(limit, fraud list) in the app, then CALL the 5-statement procedure",
+"  check it against the database: A 900, B 1100, 1 ledger row"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// ruleStmts are the business rules that drifted into the procedure.", "func ruleStmts() []Stmt {", "\treturn []Stmt{", "\t\t{\"SELECT fee FROM fee_table\", \"SELECT accounts\", func(d *DB) error { return nil }},", "\t\t{\"SELECT SUM(amount) FROM ledger WHERE day = today\", \"SELECT accounts\", func(d *DB) error { return nil }},", "\t\t{\"SELECT 1 FROM fraud_list WHERE id = B\", \"SELECT accounts\", func(d *DB) error { return nil }},", "\t}", "}"],[""],["// payout is what B receives under each deployed version of the procedure.", "var payout = map[int]func(amount int) int{", "\t38: func(amount int) int { return amount - 1 },     // fee 1", "\t41: func(amount int) int { return amount - 2 - 2 }, // fee raised to 2, charged twice by mistake", "}"],[""],["var fraudList = map[string]bool{\"M\": true}", "", "// appRules is the fix: limits and fraud checks in app code, where tests,", "// logs and traces reach them.", "func appRules(to string, amount int) error {", "\tif amount > 10000 {", "\t\treturn errors.New(\"refused: over the daily limit\")", "\t}", "\tif fraudList[to] {", "\t\treturn errors.New(\"refused: receiver on the fraud list\")", "\t}", "\treturn nil", "}"],[""],["func cons() {", "\td := newDB()", "\t_ = CallTransfer(d, \"app\", \"A\", \"B\", 100)", "\tfmt.Printf(\"app trace: %d line: %q, %d us\\n\", len(d.trace), d.trace[0], d.clock)", "", "\tlean := len(transferStmts(\"A\", \"B\", 100))", "\tfat := lean + len(ruleStmts())", "\tfmt.Printf(\"statements inside the database per transfer: %d, with the rules %d\\n\", lean, fat)", "", "\tdeployed := map[string]int{\"staging\": 41, \"production\": 38}", "\tfor _, env := range []string{\"production\", \"staging\"} {", "\t\tv := deployed[env]", "\t\tfmt.Printf(\"%s runs v%d: B receives %d of 100\\n\", env, v, payout[v](100))", "\t}", "", "\td = newDB()", "\terr := appRules(\"B\", 100)", "\tif err == nil {", "\t\terr = CallTransfer(d, \"app\", \"A\", \"B\", 100)", "\t}", "\tok := err == nil && d.accounts[\"A\"] == 900 && d.accounts[\"B\"] == 1100 && len(d.ledger) == 1", "\tfmt.Printf(\"fix: %d statements inside; check against the database: A=%d B=%d ledger=%d ok=%v\\n\",", "\t\td.stmts, d.accounts[\"A\"], d.accounts[\"B\"], len(d.ledger), ok)", "\tfmt.Println(\"fix: app rule for receiver M:\", appRules(\"M\", 100))", "}"]),
+  map:[["trace(call_transfer)","_ = CallTransfer","app trace:"],["rules drift in","// ruleStmts are..SELECT 1 FROM fraud_list"],
+   ["deployed:","// payout is what..fee raised to 2","deployed := map..payout[v](100))"],["every rule inside","lean := len..with the rules %d"],
+   ["fix: app_rules","var fraudList..receiver on the fraud list","err := appRules(\"B\", 100)..err = CallTransfer","app rule for receiver M"],["check it against","ok := err == nil..len(d.ledger), ok)"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- the app's trace sees one span",
+"CALL transfer_funds('A', 'B', 100);",
+"",
+"-- years later, rules inside the procedure body",
+"  SELECT fee INTO v_fee FROM fee_table;",
+"  SELECT SUM(amount) INTO v_today FROM ledger WHERE day = current_date;",
+"  PERFORM 1 FROM fraud_list WHERE id = to_id;",
+"",
+"-- which version runs where? only each migration ledger knows",
+"SELECT max(version) FROM schema_migrations;  -- staging 41, production 38",
+"",
+"-- fix: keep the five statements, test them against a real database",
+"CALL transfer_funds('A', 'B', 100);",
+"SELECT balance FROM accounts WHERE id IN ('A', 'B') ORDER BY id;  -- 900, 1100"],
+  map:[["trace(call_transfer)","sees one span..CALL transfer_funds"],["rules drift in","years later..fraud_list WHERE"],["deployed:","which version runs..schema_migrations"],
+   ["every rule inside","SELECT fee INTO..fraud_list WHERE"],["fix: app_rules","fix: keep the five..CALL transfer_funds"],["check it against","SELECT balance FROM accounts"]]}]}};
+// CODE PANEL END
+const S={
+pros:{name:"transfer 100 from A to B",st:[
+ {t:"Start: five statements for one transfer",pc:["transfer(A, B, 100)"],b:"Moving 100 from account A to account B takes five statements: lock both rows, check the balance, debit, credit, write a ledger row.",w:"All five must happen together, or not at all.",d:app().concat(db())},
+ {t:"Logic in the app: five round trips",pc:["app_transfer:"],b:"The app sends each statement over the network and waits for the answer before sending the next. The model counts 5 round trips. With a 2,000 us round trip, the locks on A and B are held 8,200 us.",w:"Five round trips. The locks on A and B are held across all of them.",d:app().concat(db(["w","n","n","n","n"]),trips("f"),[T(20,360,"locks held across 5 network round trips","w","start",15)])},
+ {t:"A stored procedure: one call",pc:["call_transfer:"],b:"The same five statements live in the database as transfer_funds(A, B, 100). The app makes one call: the model counts 1 round trip, and A ends at 900, B at 1100, with 1 ledger row.",w:"The statements run next to the data. Only one network round trip.",d:app().concat(db(["c","c","c","c","c"],"database: procedure transfer_funds"),[A(182,200,506,200,"CALL transfer_funds(A, B, 100)","c")])},
+ {t:"Locks held for less time",pc:["commit:"],b:"The locks on A and B are taken and released inside one call. No network wait sits between the statements, so the model holds them 200 us: the four statements after the lock, 50 us each.",w:"Shorter locks mean fewer waits for every other transfer touching A or B.",d:app().concat(db(["c","c","c","c","c"],"database: procedure transfer_funds"),[A(182,200,506,200,"CALL transfer_funds(A, B, 100)","c"),T(20,360,"locks held only while the call runs","c","start",15)])},
+ {t:"A permission boundary",pc:["permission:", "run(role, statement)"],b:"The app gets EXECUTE on transfer_funds and no UPDATE on the accounts table. Every statement is checked against the role's privileges. A direct UPDATE from the app is refused: permission denied: app has no UPDATE accounts.",w:"Money can only move by the procedure's rules, even from a buggy or hostile client.",d:app().concat(db(["c","c","c","c","c"],"database: procedure transfer_funds"),[A(182,140,506,140,"CALL: allowed","c"),A(182,280,506,280,"UPDATE accounts: refused","u",1),B(510,316,360,"no UPDATE grant on accounts","u",30)])}
+]},
+cons:{name:"transfer_funds, five years on",st:[
+ {t:"The logic lives outside the app",pc:["trace(call_transfer)"],b:"transfer_funds is written in PL/pgSQL and deployed by migrations. The app's tests, logs and traces stop at the CALL.",w:"In the app's trace it is one line: CALL transfer_funds, 2,250 us in the model. What happened inside is invisible.",d:app().concat([F(500,50,380,300,"database"),B(510,94,360,"CALL transfer_funds: 2,250 us","n",40),T(510,170,"inside: no logs, no trace, no app tests","w","start",15)])},
+ {t:"Business rules drift in",pc:["rules drift in"],b:"Year by year, a fee lookup, a daily limit and a fraud check are added inside the procedure. Each transfer now runs 8 statements in the database, not 5.",w:"It was easy each time: the data was right there.",d:app().concat([F(500,50,380,300,"database: transfer_funds"),...["the 5 statements","+ fees","+ daily limits","+ fraud checks","+ currency rules","8 statements per transfer"].map((s,j)=>B(510,90+42*j,360,s,j===0?"n":j===5?"w":"w",32))])},
+ {t:"The failure: nobody can change it safely",pc:["deployed:"],b:"Staging runs v41, production v38. There are no tests. A fee change from 1 to 2 is charged twice by mistake: B receives 96 of 100 in staging, 99 in production.",w:"Logic that cannot be tested, reviewed or traced turns every change into a risk.",d:app().concat([F(500,50,380,300,"database"),B(510,94,170,"staging: v41","w",40),B(700,94,170,"production: v38","x",40),B(510,160,360,"fee change: payouts broken","x",40),T(510,240,"no tests caught it","x","start",15)])},
+ {t:"It spends the scarcest CPU",pc:["every rule inside"],b:"The database is the hardest part of the system to scale. Every rule inside a procedure spends its CPU: 8 statements per transfer instead of 5 in the model. Moving to another engine means rewriting every procedure.",w:"App servers scale out cheaply. The database does not.",d:app().concat([F(500,50,380,300,"database"),B(510,94,360,"CPU: queries + every rule","w",40),B(510,160,360,"move engine: rewrite everything","w",40)])},
+ {t:"Fix: small and data-shaped",pc:["fix: app_rules", "check it against"],b:"Cut the procedure back to the atomic five-statement write. Move limits and fraud checks into the app: its rule refuses receiver M. Version the procedure in migrations and test it against a real database: A 900, B 1100, 1 ledger row, ok.",w:"Keep a procedure for what only the database can do well: one atomic write, one permission boundary.",d:app("s").concat(db(["c","c","c","c","c"],"database: transfer_funds, 5 statements"),[T(20,360,"fees, limits, fraud checks: back in the app","c","start",15)])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

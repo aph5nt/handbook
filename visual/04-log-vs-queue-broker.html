@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log versus queue broker</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+svg text{paint-order:stroke}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:8px 0}
+#codetabs button[aria-pressed="true"]{background:var(--coord);color:#fff;border-color:var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Log broker versus queue broker</h1>
+  <p class="lede">A team adds a new graph layer and must build it from a year of events. On a log broker the events are still there. On a queue broker they were deleted when the first reader acknowledged them. Press <b>Next</b> on each tab.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="log">Log broker: Kafka</button>
+    <button role="tab" aria-selected="false" data-mode="queue">Queue broker: RabbitMQ</button>
+    <button role="tab" aria-selected="false" data-mode="compact">Log compaction</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene of a log with reader offsets and a queue that deletes</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story: <code>handbook/code/04-log-vs-queue-broker/main.go</code> (<code>go run .</code>). <span id="codenote"></span></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--line)">message kept</span>
+    <span style="--c:var(--ok)">just read</span>
+    <span style="--c:var(--coord)">a reader and its offset</span>
+    <span style="--c:var(--undo)">delete marker (tombstone)</span>
+    <span style="--c:var(--fail)">lost or wrong</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a log broker</h2>
+      <p>Kafka, Pulsar, Redpanda: event streams that many readers follow, and that a new reader may replay. A compacted <code>token_metadata</code> topic keyed by contract address gives a new consumer the current name and decimals of every token in one read.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet a queue broker</h2>
+      <p>RabbitMQ, Amazon SQS, NATS core: task queues, rich routing with topic, header and fanout exchanges, and request-reply. Do not pick Kafka for ten messages a second. Running it costs more than the problem.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Log broker</th><th>Queue broker</th></tr>
+      <tr><td>After a read</td><td>Message stays until retention ends</td><td>Message is deleted on acknowledgement</td></tr>
+      <tr><td>Who keeps the place</td><td>Each reader keeps its own offset</td><td>The broker tracks what is not yet acknowledged</td></tr>
+      <tr><td>New reader</td><td>Can start at offset 0 and replay</td><td>Sees only new messages</td></tr>
+      <tr><td>Routing</td><td>By topic and partition key</td><td>Exchanges: topic, header, fanout</td></tr>
+      <tr><td>Running it</td><td>Heavy (Kafka, Pulsar)</td><td>Medium (RabbitMQ) to none (SQS)</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A log keeps history and lets every reader keep its own place. A queue forgets on acknowledgement. I pick the log when replay matters."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const C={idle:["var(--line)","var(--fg)"],busy:["var(--wait)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],main:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],undo:["var(--undo)","#fff"],off:["none","var(--muted)"]};
+const col=st=>st==="idle"?"var(--muted)":(C[st]||[ "var(--fg)"])[0];
+function box(x,y,w,h,st,label,sub){const [f,t]=C[st]||C.idle;const cx=x+w/2,cy=y+h/2;
+  return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="5 4"/><text x="${cx}" y="${sub?cy-3:cy+6}" font-size="16" font-weight="700" fill="${t}">${label}</text>`+(sub?`<text x="${cx}" y="${cy+17}" font-size="13" fill="${t}">${sub}</text>`:"");}
+function arrow(x1,y1,x2,y2,label,st,dash){const c=st?col(st):"var(--fg)";
+  return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`+(label?`<rect x="${(x1+x2)/2-String(label).length*4.1-6}" y="${(y1+y2)/2-11}" width="${String(label).length*8.2+12}" height="22" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="1"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+5}" font-size="14" font-weight="700" fill="${c}">${label}</text>`:"")+`</g>`;}
+function chip(x,y,w,label,st){const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="${x}" y="${y}" width="${w}" height="26" rx="13" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="4 3"/><text x="${x+w/2}" y="${y+18}" font-size="13" font-weight="700" fill="${t}">${label}</text></g>`;}
+function note(y,txt,st){if(!txt)return"";const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="60" y="${y}" width="780" height="32" rx="16" fill="${f}"/><text x="450" y="${y+22}" font-size="15" font-weight="700" fill="${t}">${txt}</text></g>`;}
+function gdraw(s,base){let h="";const N=Object.assign({},base||{},s.nd||{});
+  for(const k in N){const n=N[k];if(n)h+=box(n[0],n[1],n[2],n[3],n[4],n[5],n[6]);}
+  (s.ar||[]).forEach(a=>h+=arrow(...a));(s.ch||[]).forEach(c=>h+=chip(...c));
+  if(s.n)h+=note(s.n[2]||352,s.n[0],s.n[1]);return h;}
+function seq(A,s){const n=A.length,gap=860/n,X={};A.forEach((a,k)=>X[a[0]]=20+gap*k+gap/2);
+  const w=Math.min(gap-14,180);let h="";
+  A.forEach(a=>{const x=X[a[0]];h+=box(x-w/2,14,w,52,(s.ac&&s.ac[a[0]])||a[2]||"main",a[1],a[3]);
+    h+=`<line x1="${x}" y1="66" x2="${x}" y2="330" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  let y=98;(s.m||[]).forEach(m=>{
+    if(m[0]==="x"){h+=`<g class="msg"><rect x="20" y="${y-15}" width="860" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${y+4}" fill="var(--fail)" font-weight="700" font-size="14">${m[1]}</text></g>`;y+=34;return;}
+    const [f,t,l,st,d]=m;
+    if(f===t)h+=chip(X[f]-Math.min(gap/2-4,110),y-13,Math.min(gap-8,220),l,st||"idle");
+    else{const x1=X[f],x2=X[t],dir=x2>x1?1:-1;h+=arrow(x1+4*dir,y,x2-6*dir,y,l,st||"main",d);}
+    y+=34;});
+  for(const k in (s.st||{})){const [st,txt]=s.st[k];h+=chip(X[k]-w/2,340,w,txt,st);}
+  if(s.n)h+=note(380,s.n[0],s.n[1]);return h;}
+const E=(f)=>Array.from({length:8},(_,k)=>["event "+k,f?f(k):"idle"]);
+const OFF=k=>["deleted","off"];
+const code={"log": {"label": "Go", "pc": ["log broker:", "  producer appends a record at the end", "  records stay until retention deletes them", "  each reader keeps its own offset", "reader loop:", "  record = read(offset)                # nothing is removed", "  offset = offset + 1", "new reader: starts at offset 0, replays history"], "real": ["// Log: reading does not remove anything.", "type Log struct{ recs []string }", "", "func (l *Log) Read(off int) (string, bool) {", "\tif off >= len(l.recs) {", "\t\treturn \"\", false", "\t}", "\treturn l.recs[off], true", "}", "", "// reader B starts at 0, reader A stays at 8", "a, b := 8, 0", "for {", "\tif _, ok := l.Read(b); !ok {", "\t\tbreak", "\t}", "\tb++", "}"], "map": {"1": [2], "2": [2], "3": [12], "4": [12], "5": [13], "6": [8], "7": [17], "8": [12]}}, "queue": {"label": "Go", "pc": ["queue broker:", "  producer puts a message on the queue", "consumer loop:", "  msg = next message", "  process(msg)", "  ack(msg)                             # the broker deletes it", "new consumer: gets only what is still there", "  history means the producer must send it again"], "real": ["// Queue: an ack removes the message for everyone.", "type Queue struct{ msgs []string }", "", "func (q *Queue) Ack() { q.msgs = q.msgs[1:] }", "", "for len(q.msgs) > 0 {", "\tprocess(q.msgs[0])", "\tq.Ack()", "}", "n := len(q.msgs) // consumer B connects now: 0"], "map": {"1": [2], "2": [2], "3": [6], "4": [6], "5": [7], "6": [8], "7": [10], "8": [10]}}, "compact": {"label": "Go", "pc": ["compaction, in the background:", "  for each key: find its newest record", "  keep only those                     # older values are dropped", "  a tombstone (null value) stays for the delete retention", "new reader, from the start:", "  table[key] = value", "  on a tombstone: delete table[key]"], "real": ["func compact(in []Rec) []Rec {", "\tlast := map[string]int{}", "\tfor i, r := range in {", "\t\tlast[r.Key] = i", "\t}", "\tvar out []Rec", "\tfor i, r := range in {", "\t\tif last[r.Key] == i {", "\t\t\tout = append(out, r)", "\t\t}", "\t}", "\treturn out", "}", "", "for _, r := range c {", "\tif r.Val == \"\" {", "\t\tdelete(table, r.Key) // a tombstone", "\t\tcontinue", "\t}", "\ttable[r.Key] = r.Val", "}"], "map": {"1": [1], "2": [4], "3": [8, 9], "4": [16], "5": [15], "6": [20], "7": [17]}}};
+const steps={
+"log":[
+ {pc:[1, 2, 3],t:"A log of events",b:"A Kafka partition holds eight events, offsets 0 to 7, kept for 30 days. Each reader keeps its own offset. The graph sync, reader A, has read them all and sits at offset 8.",w:"Reading did not remove anything. The log is the same for every reader.",hd:"block-events partition, kept for 30 days",c:E(),r:[["A: graph sync",8]]},
+ {pc:[8],t:"A new layer needs history",b:"The team adds a new graph layer. Its consumer, reader B, has never read this topic. It asks for offset 0, and the log still holds it.",w:"On a log broker that is a normal request. The data is still there.",hd:"block-events partition, kept for 30 days",c:E(),r:[["A: graph sync",8],["B: new layer",0,"busy"]]},
+ {pc:[5, 6, 7],t:"Reader B replays",b:"Reader B reads offsets 0, 1 and 2. Its offset moves to 3. A read removes nothing, and reader A has not moved.",w:"Each reader keeps its own offset. B's replay does not disturb A at all.",hd:"block-events partition, kept for 30 days",c:E(k=>k<3?"ok":"idle"),r:[["A: graph sync",8],["B: new layer",3,"busy"]]},
+ {pc:[5, 6, 7],t:"Still replaying",b:"Reader B reaches offset 6. The events it read are still in the log, ready for the next new reader.",w:"Replay is a read, not a move. A third reader could start at 0 right now.",hd:"block-events partition, kept for 30 days",c:E(k=>k<6?"ok":"idle"),r:[["A: graph sync",8],["B: new layer",6,"busy"]]},
+ {pc:[5, 6, 7, 8],t:"Caught up",b:"Reader B asks for offset 8 and gets nothing: it has caught up, with 8 events replayed. The log still holds all 8. Nobody had to ask the producer for anything.",w:"This is why you choose a log broker when replay matters.",hd:"block-events partition, kept for 30 days",c:E(),r:[["A: graph sync",8],["B: new layer",8,"ok"]],n:["New layer built from history, producer untouched","ok"]},
+ {pc:[1],t:"When a log is the wrong choice",b:"The same cluster for ten messages a second. Kafka wants several brokers, a controller quorum and its own monitoring.",w:"The log is right when you need replay and many readers. For a small task queue, running it costs more than the problem.",hd:"ten messages a second",c:E(k=>k<2?"idle":"off").map((c,k)=>k<2?c:["",c[1]]),r:[["one reader",2]],n:["Heavy to run for a light problem","busy"]}
+],
+"queue":[
+ {pc:[2],t:"The same events in a queue",b:"RabbitMQ holds the same eight messages in a queue. There are no offsets. The graph sync, consumer A, is connected at the head.",w:"A queue broker hands out a message and waits for an acknowledgement.",hd:"block-events queue",c:E(),r:[["A: graph sync",0]]},
+ {pc:[3, 4, 5, 6],t:"Read and acknowledge",b:"Consumer A takes message 0, processes it and acknowledges. The broker's rule: an acked message is deleted. 7 are left.",w:"On acknowledgement the message is gone. That is the queue's promise: done means done.",hd:"block-events queue",c:E(k=>k<1?"off":"idle").map((c,k)=>k<1?OFF(k):c),r:[["A: graph sync",1]]},
+ {pc:[3, 4, 5, 6],t:"All acknowledged",b:"Consumer A works through the rest. Each ack deletes a message. After 8 acks the queue holds 0.",w:"Perfect for jobs. Each was done once and needs no keeping.",hd:"block-events queue",c:E().map(OFF),r:[["A: graph sync",8]]},
+ {pc:[7],t:"The new layer arrives",b:"The team adds the new graph layer. Consumer B connects to the queue and asks for a year of events. The queue holds 0.",w:"There is no offset 0 to go back to. History was deleted message by message.",hd:"block-events queue",c:E().map(OFF),r:[["A: graph sync",8],["B: new layer",0,"fail"]],n:["Nothing to replay","fail"]},
+ {pc:[8],t:"The producer must resend",b:"The only way to build the layer is for the producer to send a year of events again. That is a project, not a configuration change.",w:"A queue broker for an event stream that later needs replay is the costly mistake. RabbitMQ Streams add a log for exactly this.",hd:"block-events queue",c:E().map(OFF),r:[["B: new layer",0,"fail"]],n:["Ask the producer to resend a year of events","fail"]}
+],
+"compact":[
+ {pc:[1],t:"A topic keyed by token",b:"The topic token_metadata is keyed by contract address. Six messages: token A, B and C, a newer A, a delete for B, and token D.",w:"The value for key B is null. That null is a tombstone: it means delete B.",hd:"token_metadata, before compaction",c:[["A: v1","idle"],["B: v1","idle"],["C: v1","idle"],["A: v2","idle"],["B: null","undo"],["D: v1","idle"]],r:[]},
+ {pc:[2, 3],t:"Compaction keeps the newest per key",b:"The compactor finds the newest offset of each key, and keeps a record only if it is that one. 6 become 4: C v1, A v2, B null, D v1. A v1 and B v1 are dropped.",w:"The log is now a table of current values, not a history.",hd:"after compaction",c:[["","off"],["","off"],["C: v1","idle"],["A: v2","idle"],["B: null","undo"],["D: v1","idle"]],r:[]},
+ {pc:[5, 6, 7],t:"A new consumer reads it once",b:"A new price service reads the compacted topic from the start and sets table[key] to each value. B null deletes B. Its table holds C, A and D.",w:"One short read builds a complete lookup table. No call to the indexer.",hd:"after compaction",c:[["","off"],["","off"],["C: v1","ok"],["A: v2","ok"],["B: null","ok"],["D: v1","ok"]],r:[["new consumer",6,"ok"]]},
+ {pc:[3],t:"The failure: no history",b:"Someone asks what token A was called before. A v1 did not survive the newest-per-key rule. A compacted topic cannot answer.",w:"Compaction trades history for size. Keep a normal topic too if you need the past.",hd:"after compaction",c:[["A: v1 ?","fail"],["","off"],["C: v1","idle"],["A: v2","idle"],["B: null","undo"],["D: v1","idle"]],r:[["asks for A v1",0,"fail"]],n:["History of A is gone","fail"]},
+ {pc:[4],t:"The failure: tombstones expire",b:"Tombstones are removed too, after a delete retention. A consumer that was offline the whole time comes back, never sees B null, and still holds B.",w:"Bring a consumer back within the delete retention, or rebuild it from the start.",hd:"later: tombstone expired",c:[["","off"],["","off"],["C: v1","idle"],["A: v2","idle"],["","off"],["D: v1","idle"]],r:[["offline consumer",4,"fail"]],n:["The offline consumer still thinks B exists","fail"]}
+]};
+const CX=k=>80+k*92+42;
+function draw(s,m){
+  let h=`<text x="450" y="50" font-size="17" font-weight="700" fill="var(--fg)">${s.hd}</text>`;
+  s.c.forEach((c,k)=>{const x=80+k*92,[f,t]=C[c[1]]||C.idle;
+    h+=`<text x="${CX(k)}" y="80" font-size="12" fill="var(--muted)">${m==="queue"?"message "+k:"offset "+k}</text><rect class="box" x="${x}" y="88" width="84" height="56" rx="6" fill="${f}" stroke="${c[1]==="off"?"var(--line)":"none"}" stroke-dasharray="4 4"/><text x="${CX(k)}" y="121" font-size="14" font-weight="700" fill="${t}">${c[0]}</text>`;});
+  s.r.forEach((r,k)=>{const x=CX(r[1]),y=200+k*70,c=col(r[2]||"main");
+    h+=`<g class="msg"><line x1="${x}" y1="${y-6}" x2="${x}" y2="152" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"/>`;
+    const w=r[0].length*8.4+20,bx=Math.min(Math.max(x-w/2,10),890-w);
+    h+=`<rect x="${bx}" y="${y-6}" width="${w}" height="30" rx="6" fill="${c}"/><text x="${bx+w/2}" y="${y+14}" font-size="14" font-weight="700" fill="#fff">${r[0]}</text></g>`;});
+  if(s.n)h+=note(352,s.n[0],s.n[1]);
+  return h;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+function render(){
+  const L=steps[mode],s=L[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${L.length}`;
+  $("scene").innerHTML=draw(s,mode);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("scene").querySelectorAll(".msg")].forEach((el,k)=>reduce?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),70*k+30));
+  $("prev").disabled=i===0;$("next").disabled=i===L.length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"){$("codecard").style.display="none";return;}
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codenote").textContent=c.note||"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

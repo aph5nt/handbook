@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Candidate keys and BCNF</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Candidate keys and BCNF: every decider must be a key</h1>
+  <p class="lede">A table records which router each trader uses on each exchange. A trader uses one router per exchange, and each router belongs to one exchange. Find the keys on the first tab. Then watch the table fail BCNF (Boyce-Codd Normal Form), get split, and pay a price for it.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="keys">Find the keys</button>
+    <button role="tab" aria-selected="false" data-mode="bcnf">BCNF: split and its price</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Candidate keys and BCNF: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">columns being tested as a key</span>
+    <span style="--c:var(--ok)">a key, or the fact kept</span>
+    <span style="--c:var(--wait)">a repeated value</span>
+    <span style="--c:var(--undo)">a column that decides another</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Schema review of an app database: list every column that decides another, then ask whether each is a key. Data modelling interviews ask for the gap between 3NF and BCNF. Warehouses skip it on purpose, because they rebuild every copy from the source.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Split to BCNF when the repeated fact changes or can be lost. Stay in 3NF when the split would lose a rule you need, such as "one router per trader per exchange", and enforce the repeat with a check instead.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>3NF</th><th>BCNF</th></tr>
+      <tr><td>Rule</td><td>No plain column decided by another plain column</td><td>Every column that decides another is a candidate key</td></tr>
+      <tr><td>Allows</td><td>A part of a candidate key decided by a non-key, like router deciding dex</td><td>Nothing of that kind</td></tr>
+      <tr><td>Keeps every rule as one key</td><td>Always possible</td><td>Not always</td></tr>
+      <tr><td>Fits</td><td>When a rule across columns must stay enforceable</td><td>When a repeated fact can drift or be lost</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A candidate key is a smallest set of columns that picks one row, and BCNF says every column that decides another must be one."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const R=[["ana","Aero","R1"],["ben","Aero","R1"],["ana","Topaz","R7"]];
+const tbl=(kf,lab,ex,rows)=>[F(20,50,400,200,lab||"trader_routes"),T(30,86,"trader"),T(160,86,"dex"),T(300,86,"router"),...(rows||R).flatMap((r,j)=>{const y=94+46*j;return[B(30,y,120,r[0],kf(j,0)),B(160,y,130,r[1],kf(j,1)),B(300,y,110,r[2],kf(j,2))];})].concat(ex||[]);
+const N=()=>"n";
+const side=(lines)=>lines.map(([l,k],j)=>B(460,70+56*j,420,l,k,40));
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. <code>handbook/code/07-candidate-keys-and-bcnf/main.py</code> loads the three rows into SQLite, finds the candidate keys from the two rules, tests BCNF and 3NF, then splits the table and prints every result quoted here (<code>python3 main.py</code>).";
+const CODE={
+keys:{pc:["rows: (ana, Aero, R1) (ben, Aero, R1) (ana, Topaz, R7)",
+"rules: trader + dex -> router,  router -> dex",
+"closure(cols): add every column the rules decide, until nothing changes",
+"superkey(cols): its closure is all three columns",
+"candidate key: a superkey with no smaller superkey inside",
+"keys found: trader + dex, trader + router",
+"one column alone repeats a value: not a key",
+"check a rule on the rows: no left value maps to two right values"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- three rows: ana uses R1 on Aero and R7 on Topaz, ben uses R1 on Aero", "CREATE TABLE trader_routes (trader TEXT, dex TEXT, router TEXT);", "INSERT INTO trader_routes VALUES ('ana', 'Aero', 'R1');", "INSERT INTO trader_routes VALUES ('ben', 'Aero', 'R1');", "INSERT INTO trader_routes VALUES ('ana', 'Topaz', 'R7');"],[""],["COLS = (\"trader\", \"dex\", \"router\")", "# functional dependencies: left side decides right side", "FDS = [((\"trader\", \"dex\"), \"router\"), ((\"router\",), \"dex\")]"],[""],["def closure(attrs):", "    # every column the rules let these columns decide", "    got = set(attrs)", "    changed = True", "    while changed:", "        changed = False", "        for left, right in FDS:", "            if set(left) <= got and right not in got:", "                got.add(right)", "                changed = True", "    return got"],[""],["def is_superkey(attrs):", "    return closure(attrs) == set(COLS)"],[""],["def candidate_keys():", "    # a superkey with nothing extra: drop any column and it stops being one", "    keys = []", "    for size in range(1, len(COLS) + 1):", "        for attrs in itertools.combinations(COLS, size):", "            if is_superkey(attrs) and not any(set(k) <= set(attrs) for k in keys):", "                keys.append(attrs)", "    return keys"],[""],["-- value combinations of these columns that appear more than once", "SELECT {cols}, COUNT(*) AS n FROM trader_routes", "GROUP BY {cols}", "HAVING COUNT(*) > 1;"],[""],["-- rows where one left value maps to two right values (empty: the rule holds)", "SELECT {left} FROM trader_routes", "GROUP BY {left}", "HAVING COUNT(DISTINCT {right}) > 1;"]),
+  map:[["rows: (ana","three rows: ana..('ana', 'Topaz', 'R7');"],["rules:","FDS = "],["closure(cols)","def closure..return got"],["superkey(cols)","def is_superkey..== set(COLS)"],
+   ["candidate key:","def candidate_keys..return keys"],["keys found","keys.append(attrs)"],["one column alone","these columns that appear more than once..HAVING COUNT(*) > 1;"],
+   ["check a rule","one left value maps..COUNT(DISTINCT"]]}]},
+bcnf:{pc:["bcnf(rule): the left side must be a superkey",
+"router -> dex: closure(router) = router, dex      # not a key: BCNF fails",
+"3nf(rule): BCNF holds, or the right side is part of a candidate key",
+"dex is in key trader + dex: 3NF holds",
+"one table: delete ana's Topaz row -> nothing says where R7 belongs",
+"split into routers(router key, dex) and trader_routers(trader, router)",
+"split: delete (ana, R7) from trader_routers -> routers still says Topaz",
+"add R2 on Aero for ana: accepted, ana now has 2 Aero routers"],
+ views:[{v:"real",label:"Python",lines:[].concat(["    prime = {c for k in keys for c in k}", "    for left, right in FDS:", "        bcnf = is_superkey(left)", "        third = bcnf or right in prime", "        print(f\"rule {' + '.join(left)} -> {right}: determinant is a key = {bcnf}, \"", "              f\"BCNF ok = {bcnf}, 3NF ok = {third}\")"],[""],["-- delete ana's Topaz row, then ask which exchange R7 belongs to", "DELETE FROM trader_routes WHERE trader = 'ana' AND router = 'R7';"],[""],["-- where does R7 belong?", "SELECT router, dex FROM trader_routes WHERE router = 'R7';"],[""],["-- each router once, keyed by router; who uses what, keyed by both", "CREATE TABLE routers (router TEXT PRIMARY KEY, dex TEXT NOT NULL);", "CREATE TABLE trader_routers (", "  trader TEXT, router TEXT REFERENCES routers (router),", "  PRIMARY KEY (trader, router));", "INSERT INTO routers SELECT DISTINCT router, dex FROM trader_routes;", "INSERT INTO trader_routers SELECT trader, router FROM trader_routes;"],[""],["-- remove only the fact 'ana uses R7'", "DELETE FROM trader_routers WHERE trader = 'ana' AND router = 'R7';"],[""],["-- routers still holds the fact", "SELECT router, dex FROM routers WHERE router = 'R7';"],[""],["-- R2 is also on Aero; ana adds it, and both tables accept it", "INSERT INTO routers VALUES ('R2', 'Aero');", "INSERT INTO trader_routers VALUES ('ana', 'R2');"],[""],["-- traders with two routers on one exchange: the rule no key holds now", "SELECT t.trader, r.dex, COUNT(*) AS routers", "FROM trader_routers t JOIN routers r ON r.router = t.router", "GROUP BY t.trader, r.dex", "HAVING COUNT(*) > 1;"]),
+  map:[["bcnf(rule)","for left, right in FDS:","bcnf = is_superkey(left)"],["router -> dex: closure","bcnf = is_superkey(left)","determinant is a key"],
+   ["3nf(rule)","prime = {c","third = bcnf or right in prime"],["dex is in key","third = bcnf or right in prime","3NF ok"],
+   ["one table: delete","delete ana's Topaz row..DELETE FROM trader_routes ","where does R7 belong?..WHERE router = 'R7';"],
+   ["split into routers","each router once..INSERT INTO trader_routers SELECT"],
+   ["split: delete","remove only the fact..DELETE FROM trader_routers","routers still holds..FROM routers WHERE"],
+   ["add R2","R2 is also on Aero..INSERT INTO trader_routers VALUES","traders with two routers..HAVING COUNT(*) > 1;"]]}]}};
+// CODE PANEL END
+const S={
+keys:{name:"trader_routes",st:[
+ {t:"Start: three rows",pc:["rows: (ana", "rules:"],b:"Ana uses router R1 on Aero and R7 on Topaz. Ben uses R1 on Aero. Two business rules hold: a trader uses one router per exchange (trader + dex decides router), and each router belongs to one exchange (router decides dex).",w:"Which sets of columns pick exactly one row?",d:tbl(N)},
+ {t:"A superkey: all three columns",pc:["closure(cols)", "superkey(cols)"],b:"The check: start from the columns, add every column a rule decides, and see if all three are reached. (trader, dex, router) already holds all three, so it picks one row. Any set that reaches all three is a superkey.",w:"A superkey may hold extra columns that are not needed.",d:tbl(()=>"r").concat(side([["superkey: trader + dex + router","r"]]))},
+ {t:"Drop router: trader + dex still works",pc:["superkey(cols)", "candidate key:"],b:"Drop router. The rule trader + dex decides router adds it back, so (trader, dex) still reaches all three: superkey true. Drop one more column and nothing reaches the rest, so (trader, dex) is minimal.",w:"A candidate key is a superkey with nothing extra.",d:tbl((j,c)=>c<2?"r":"n").concat(side([["superkey: trader + dex + router","n"],["candidate key: trader + dex","c"]]))},
+ {t:"A second candidate key: trader + router",pc:["candidate key:", "keys found"],b:"(trader, router): the rule router decides dex adds dex, so it reaches all three too. The program lists two candidate keys: trader + dex and trader + router.",w:"A table can have several candidate keys. You pick one as the primary key.",d:tbl((j,c)=>c!==1?"r":"n").concat(side([["superkey: trader + dex + router","n"],["candidate key: trader + dex","c"],["candidate key: trader + router","c"]]))},
+ {t:"Single columns are not keys",pc:["one column alone"],b:"The repeat check groups by one column and keeps values seen more than once. dex: Aero 2 times. router: R1 2 times. trader: ana 2 times.",w:"No single column picks one row here.",d:tbl((j,c)=>(c===1&&j<2)||(c===2&&j<2)||(c===0&&j!==1)?"w":"n").concat(side([["candidate key: trader + dex","c"],["candidate key: trader + router","c"],["no single column is a key","w"]]))},
+ {t:"A determinant: router decides dex",pc:["check a rule"],b:"The rule check groups by router and counts different dex values. R1 has only Aero, R7 has only Topaz, so no row breaks it: router decides dex.",w:"A column that decides another is a determinant. Remember it for the BCNF test.",d:tbl((j,c)=>c===2?"u":c===1?"c":"n").concat(side([["candidate key: trader + dex","c"],["candidate key: trader + router","c"],["router decides dex","u"]]),[A(355,236,225,236,"","u")])}
+]},
+bcnf:{name:"trader_routes, then split",st:[
+ {t:"The BCNF test fails",pc:["bcnf(rule)", "router -> dex: closure"],b:"BCNF asks, for each rule: does the left side reach all columns? trader + dex does. router reaches only router and dex, so it is not a key: BCNF ok = False.",w:"So trader_routes is not in BCNF.",d:tbl((j,c)=>c===2?"x":"n").concat(side([["determinant: router","u"],["is router a candidate key? no","x"]]))},
+ {t:"Yet it is in 3NF",pc:["3nf(rule)", "dex is in key"],b:"3NF adds one escape: the right side may be part of a candidate key. dex is in the key trader + dex, so the rule router decides dex passes: 3NF ok = True.",w:"This is the whole gap between 3NF and BCNF.",d:tbl((j,c)=>c===1?"r":"n").concat(side([["dex is part of key trader + dex","r"],["3NF: allowed","c"],["BCNF: not allowed","x"]]))},
+ {t:"The failure: the fact repeats, and can be lost",pc:["one table: delete"],b:"'R1 belongs to Aero' is stored 2 times. 'R7 belongs to Topaz' lives only in Ana's row. Delete that row, ask where R7 belongs, and the query returns no rows.",w:"Repeats risk update errors. A fact stored only beside another fact dies with it.",d:tbl((j,c)=>j<2&&c>0?"w":j===2?"x":"n").concat(side([["R1 = Aero stored twice","w"],["delete ana's Topaz row","x"],["fact 'R7 = Topaz' is lost","x"]]))},
+ {t:"Split into two tables",pc:["split into routers"],b:"routers(router, dex) holds each router once: R1 Aero, R7 Topaz. trader_routers(trader, router) holds who uses what: 3 rows.",w:"Now router is the key of its own table. Every determinant is a key: BCNF.",d:[F(20,50,400,160,"routers"),T(30,86,"router (key)"),T(220,86,"dex"),B(30,94,180,"R1","c"),B(220,94,190,"Aero","n"),B(30,140,180,"R7","c"),B(220,140,190,"Topaz","n"),F(460,50,420,200,"trader_routers"),T(470,86,"trader"),T(670,86,"router"),...R.flatMap((r,j)=>[B(470,94+46*j,190,r[0],"n"),B(670,94+46*j,200,r[2],"u")])]},
+ {t:"Delete Ana's Topaz row again",pc:["split: delete"],b:"Remove (ana, R7) from trader_routers. Ask routers where R7 belongs: (R7, Topaz) comes back.",w:"Each fact has its own home, so deleting one fact keeps the other.",d:[F(20,50,400,160,"routers"),T(30,86,"router (key)"),T(220,86,"dex"),B(30,94,180,"R1","c"),B(220,94,190,"Aero","n"),B(30,140,180,"R7","c"),B(220,140,190,"Topaz","c"),F(460,50,420,200,"trader_routers"),T(470,86,"trader"),T(670,86,"router"),B(470,94,190,"ana","n"),B(670,94,200,"R1","u"),B(470,140,190,"ben","n"),B(670,140,200,"R1","u"),B(470,186,190,"ana","g"),B(670,186,200,"R7","g"),T(20,300,"R7 = Topaz survives","c","start",16)]},
+ {t:"The price: a rule no key can hold",pc:["add R2"],b:"Ana adds router R2, which is also on Aero. Both tables accept it, because neither key holds trader + dex. The join check finds ana with 2 routers on Aero.",w:"BCNF does not always keep every rule. When the rule matters more, stay in 3NF or enforce it with a check.",d:[F(20,50,400,160,"routers"),T(30,86,"router (key)"),T(220,86,"dex"),B(30,94,180,"R1","n"),B(220,94,190,"Aero","x"),B(30,140,180,"R2","n"),B(220,140,190,"Aero","x"),F(460,50,420,200,"trader_routers"),T(470,86,"trader"),T(670,86,"router"),B(470,94,190,"ana","x"),B(670,94,200,"R1","x"),B(470,140,190,"ana","x"),B(670,140,200,"R2","x"),T(20,300,"one router per trader per exchange: no longer a key","x","start",16)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

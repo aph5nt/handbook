@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration ledger</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Schema changes through a ledger</h1>
+  <p class="lede">One migration runner keeps three databases of the same family, ethereum, base and robinhood, on the same schema. Migration 043 adds a column. Press <b>Next</b> to see the ledger record it, a service wait for it, and the checksum catch an edited old file.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ledger" id="tab-ledger">Ledger with checksums</button>
+    <button role="tab" aria-selected="false" data-mode="exact" id="tab-exact">Gate on an exact id (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Migration files, the ledger table, three databases and a service gate</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-migration-ledger/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">applied, or allowed to start</span>
+    <span style="--c:var(--wait)">being applied</span>
+    <span style="--c:var(--svc)">database</span>
+    <span style="--c:var(--coord)">runner reading</span>
+    <span style="--c:var(--fail)">mismatch or refused</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a warehouse family</h2>
+      <p>One runner per database family, recording ids and checksums in a ledger table. Services wait for a minimum id at start. Migrations are tested against a throwaway engine, from empty and from the previous version.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: any app database</h2>
+      <p>Flyway and Liquibase keep the same kind of ledger with checksums. On a hot table you cannot lock, create the new shape beside it, backfill, switch readers, then drop the old.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Ledger, minimum gate</th><th>Edited files, exact gate</th></tr>
+      <tr><td>An old migration changes</td><td>Checksum mismatch, the runner refuses</td><td>Fresh and old databases silently differ</td></tr>
+      <tr><td>A new migration ships</td><td>Services keep running</td><td>Every pinned service fails at restart</td></tr>
+      <tr><td>A fix</td><td>A new numbered migration</td><td>Edit in place and hope</td></tr>
+      <tr><td>Removing a column</td><td>Expand, roll the code, contract</td><td>Drop it and break the reader still using it</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Migrations are numbered, recorded with a checksum and never edited once applied, and a service waits for a minimum version, not an exact one."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"ledger": {"label": "Go", "pc": ["run(files):", "  sort files by id", "  for each file f:                        # check first", "    if ledger has f.id and ledger[f.id] != sha(f.text):", "      refuse: checksum mismatch, apply nothing", "  for each file f:                        # then apply", "    if ledger has f.id: skip               # never run twice", "    for db in ethereum, base, robinhood:", "      apply f.text to db", "    ledger[f.id] = sha(f.text)             # after all three", "service start:", "  ready if applied id >= needed id         # a minimum"], "real": ["type Migration struct{ ID, SQL string }", "", "type Runner struct {", "\tledger map[string]string // id -> checksum of the applied text", "\tdbs    map[string]string // database -> highest applied id", "\torder  []string          // the family, applied in this order", "}", "", "func checksum(sql string) string { return fmt.Sprintf(\"%x\", sha256.Sum256([]byte(sql)))[:4] }", "", "// Run checks every applied file first, then applies the new ones in order.", "func (r *Runner) Run(files []Migration) error {", "\tsort.Slice(files, func(i, j int) bool { return files[i].ID < files[j].ID })", "\tfor _, m := range files {", "\t\tif sum, done := r.ledger[m.ID]; done && sum != checksum(m.SQL) {", "\t\t\treturn fmt.Errorf(\"checksum mismatch on %s: ledger %s, file %s: refuse\", m.ID, sum, checksum(m.SQL))", "\t\t}", "\t}", "\tfor _, m := range files {", "\t\tif _, done := r.ledger[m.ID]; done {", "\t\t\tcontinue // applied before: never run again", "\t\t}", "\t\tfor _, db := range r.order { // one runner, the whole family", "\t\t\tr.dbs[db] = m.ID // stands in for executing m.SQL on db", "\t\t}", "\t\tr.ledger[m.ID] = checksum(m.SQL) // record after it ran everywhere", "\t}", "\treturn nil", "}", "", "// ReadyMinimum is the readiness latch: at least this id applied.", "func ReadyMinimum(applied, min string) bool { return applied >= min }", "", "// ReadyExact is the trap: exactly this id.", "func ReadyExact(applied, want string) bool { return applied == want }"], "map": {"1": [12], "2": [13], "3": [14], "4": [15], "5": [16], "6": [19], "7": [20, 21], "8": [23], "9": [24], "10": [26], "11": [31], "12": [32]}}, "exact": {"label": "Go", "pc": ["service start, the trap:", "  ready if applied id == pinned id        # exact", "a new migration ships:", "  applied id moves 042 -> 043", "restart:", "  043 == 042 is false -> refuse to start", "fix:", "  ready if applied id >= needed id        # a minimum"], "real": ["func (r *Runner) Run(files []Migration) error {", "\tsort.Slice(files, func(i, j int) bool { return files[i].ID < files[j].ID })", "\tfor _, m := range files {", "\t\tif sum, done := r.ledger[m.ID]; done && sum != checksum(m.SQL) {", "\t\t\treturn fmt.Errorf(\"checksum mismatch on %s: ledger %s, file %s: refuse\", m.ID, sum, checksum(m.SQL))", "\t\t}", "\t}", "\tfor _, m := range files {", "\t\tif _, done := r.ledger[m.ID]; done {", "\t\t\tcontinue // applied before: never run again", "\t\t}", "\t\tfor _, db := range r.order { // one runner, the whole family", "\t\t\tr.dbs[db] = m.ID // stands in for executing m.SQL on db", "\t\t}", "\t\tr.ledger[m.ID] = checksum(m.SQL) // record after it ran everywhere", "\t}", "\treturn nil", "}", "", "// ReadyExact is the trap: exactly this id.", "func ReadyExact(applied, want string) bool { return applied == want }", "", "// ReadyMinimum is the readiness latch: at least this id applied.", "func ReadyMinimum(applied, min string) bool { return applied >= min }"], "map": {"1": [20], "2": [21], "3": [1], "4": [13, 15], "5": [21], "6": [21], "7": [23], "8": [24]}}};
+
+const L2=[["041","9481","ok"],["042","efb9","ok"]],L3=L2.concat([["043","c5e3","ok"]]);
+const db=v=>[v,v,v];
+const steps={
+"ledger":[
+ {pc:[1, 2, 3, 4],t:"The runner reads the ledger",b:"Migrations are numbered files, sorted by id. For each file the runner looks up its id in the ledger table. 041 and 042 are there, with checksums 9481 and efb9, and their text on disk still hashes to the same values. 043 has no row, so it is new.",w:"The ledger is the memory of what each database has been through.",files:[["041","ok"],["042","ok"],["043","idle"]],led:L2,dbs:db("042"),run:["reads the ledger","var(--coord)"]},
+ {pc:[6, 7, 8, 9],t:"Apply 043 to the whole family",b:"Rule: a file with no ledger row runs, a file with a row is skipped. 043 has no row. It adds a column. The one runner applies it to ethereum, base and robinhood, in that order.",w:"One runner per family keeps the three schemas identical.",files:[["041","ok"],["042","ok"],["043","wait"]],led:L2,dbs:db("043"),dbNew:true,run:["applies 043 to all three","var(--wait)"]},
+ {pc:[10],t:"Record it with a checksum",b:"Only after 043 ran on all three databases, the runner writes its id and the first hex digits of the SHA-256 of its text, c5e3, into the ledger.",w:"From now on 043 is immutable. Any change to it is a new file.",files:[["041","ok"],["042","ok"],["043","ok"]],led:L3,ledNew:"043",dbs:db("043"),run:["records 043, sum c5e3","var(--ok)"]},
+ {pc:[11, 12],t:"The service checks a minimum",b:"The service starts and compares: applied id 043 >= needed 042? Yes, so it starts. Ids are zero-padded, so text order is number order.",w:"A minimum is a readiness latch. Newer migrations never block it.",files:[["041","ok"],["042","ok"],["043","ok"]],led:L3,dbs:db("043"),run:["idle","var(--line)"],svc:["needs at least 042","starts","var(--ok)"]},
+ {pc:[3, 4],t:"Someone edits 041",b:"An engineer opens 041, which ran months ago, and changes a column type in it. Its checksum is now 7012, not 9481.",w:"Production already ran the old 041. A fresh database would run the new one. They would differ.",files:[["041","bad"],["042","ok"],["043","ok"]],led:L3,dbs:db("043"),run:["idle","var(--line)"],svc:["needs at least 042","running","var(--ok)"],edit:true},
+ {pc:[4, 5],t:"The failure that matters, caught",b:"The runner checks every applied file before it runs any new one. 041 hashes to 7012 on disk, and the ledger holds 9481. They differ, so it returns the error checksum mismatch on 041 and applies nothing.",w:"The refusal is the protection. Revert the edit and put the change in a new migration, 044.",files:[["041","bad"],["042","ok"],["043","ok"]],led:[["041","9481","bad"],["042","efb9","ok"],["043","c5e3","ok"]],dbs:db("043"),run:["checksum mismatch on 041: refuse","var(--fail)"],svc:["needs at least 042","running","var(--ok)"],fail:true},
+ {pc:[7, 8, 9, 10],t:"Expand, roll, contract",b:"041 stays as it was, so its checksum matches again. 044 adds fee_v2 beside fee: expand. The code rolls to fee_v2. 045 drops fee: contract. Both have no ledger row, so both run, and the ledger records 6991 and 4080.",w:"What a change retires, that change drops, in a tail migration. Nothing half-used is left behind.",files:[["041","ok"],["042","ok"],["043","ok"],["044","ok"],["045","ok"]],led:L3.concat([["044","6991","ok"],["045","4080","ok"]]),dbs:db("045"),run:["applied 044 and 045","var(--ok)"],svc:["needs at least 044","starts","var(--ok)"]}
+],
+"exact":[
+ {pc:[1, 2],t:"A service pinned to one id",b:"This service checks at start: applied id == 042? Today the applied id is 042, so it starts.",w:"It looks strict and safe. Watch the next migration.",files:[["041","ok"],["042","ok"]],led:L2,dbs:db("042"),run:["idle","var(--line)"],svc:["needs exactly 042","running","var(--ok)"]},
+ {pc:[3, 4],t:"Another team ships 043",b:"043 adds a column for a different service. It has no ledger row, so the runner applies it to all three databases and records c5e3.",w:"Nothing this service reads has changed.",files:[["041","ok"],["042","ok"],["043","ok"]],led:L3,ledNew:"043",dbs:db("043"),dbNew:true,run:["applies 043 to all three","var(--wait)"],svc:["needs exactly 042","running","var(--ok)"]},
+ {pc:[5, 6],t:"A pod restarts",b:"The service's pod is moved to another node and starts again. It compares 043 == 042. That is false, so it refuses to start.",w:"A healthy service went down because of a change it does not use.",files:[["041","ok"],["042","ok"],["043","ok"]],led:L3,dbs:db("043"),run:["idle","var(--line)"],svc:["needs exactly 042","refuses: found 043","var(--fail)"]},
+ {pc:[6, 2],t:"The failure that matters",b:"Every service pinned to an exact id breaks at its next restart, after every new migration. Teams start to delay migrations to keep deploys alive.",w:"An exact gate couples every deploy to every schema change. Fix: gate on a minimum.",files:[["041","ok"],["042","ok"],["043","ok"]],led:L3,dbs:db("043"),run:["idle","var(--line)"],svc:["needs exactly 042","refuses: found 043","var(--fail)"],svc2:true,fail:true},
+ {pc:[7, 8],t:"The fix",b:"The gate becomes 043 >= 042, which is true. The service starts on 043, and on 044 and 045 when they come.",w:"Migrations are numbered, recorded with a checksum and never edited once applied, and a service waits for a minimum version, not an exact one.",files:[["041","ok"],["042","ok"],["043","ok"]],led:L3,dbs:db("043"),run:["idle","var(--line)"],svc:["needs at least 042","starts","var(--ok)"]}
+]};
+const FILL={ok:"var(--ok)",idle:"var(--line)",wait:"var(--wait)",bad:"var(--fail)"};
+function draw(s){
+  let o=T(20,26,"migration files",{a:"start"});
+  s.files.forEach(([n,st],k)=>{const f=FILL[st];o+=B(20,40+k*46,150,36,f,6)+T(95,63+k*46,n+".sql"+(st==="bad"?" (edited)":""),{c:ink(f),s:13});});
+  o+=T(220,26,"ledger table",{a:"start"});
+  s.led.forEach(([n,c,st],k)=>{const f=st==="bad"?"var(--fail)":"var(--panel)";const nw=s.ledNew===n;
+    o+=(nw?M:x=>x)(B(220,40+k*46,260,36,f,6,'stroke="var(--line)"')+T(350,63+k*46,n+" · checksum "+c+(st==="bad"?" ≠ 7012":""),{c:ink(f),w:400,s:13}));});
+  ["ethereum","base","robinhood"].forEach((d,k)=>{const y=40+k*62;o+=(s.dbNew?M:x=>x)(chip(560,y,320,50,"var(--svc)",d,"schema at "+s.dbs[k]));});
+  o+=B(20,290,460,46,s.run[1],10)+T(250,318,"Runner: "+s.run[0],{c:ink(s.run[1]),s:14});
+  if(s.svc){o+=M(chip(560,236,320,50,s.svc[2],"Service: "+s.svc[0],s.svc[1]));}
+  if(s.svc2)o+=M(chip(560,300,320,50,"var(--fail)","Indexer: needs exactly 042","refuses: found 043"));
+  if(s.edit)o+=M(T(250,272,"041 changed after it ran",{c:"var(--fail)"}));
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

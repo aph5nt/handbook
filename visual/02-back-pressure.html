@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Back-pressure</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Back-pressure</h1>
+  <p class="lede">The graph sync reads pages of rows from StarRocks and writes them into DozerDB. DozerDB writes more slowly than StarRocks reads. Something has to slow the reader down, or the pages pile up. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="push" id="tab-push">Push with no limit</button>
+    <button role="tab" aria-selected="false" data-mode="pull" id="tab-pull">Pull a few pages at a time</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">StarRocks feeding the graph sync, a buffer of pages, and DozerDB writing</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-bp">
+          <g class="node" id="n-sr" data-c="v"><rect class="box" id="r-sr" x="30" y="140" width="180" height="70" rx="8"/><text id="t-srl" x="120.0" y="172" text-anchor="middle" font-size="15">StarRocks</text><text id="t-srs" x="120.0" y="188" text-anchor="middle" font-size="12" font-weight="400">reads fast</text></g>
+          <g class="node" id="n-rd" data-c="c"><rect class="box" id="r-rd" x="260" y="140" width="150" height="70" rx="8"/><text id="t-rdl" x="335.0" y="172" text-anchor="middle" font-size="15">Reader</text><text id="t-rds" x="335.0" y="188" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-wr" data-c="c"><rect class="box" id="r-wr" x="640" y="140" width="150" height="70" rx="8"/><text id="t-wrl" x="715.0" y="172" text-anchor="middle" font-size="15">Writer</text><text id="t-wrs" x="715.0" y="188" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-dz" data-c="v"><rect class="box" id="r-dz" x="820" y="140" width="70" height="70" rx="8"/><text id="t-dzl" x="855.0" y="180" text-anchor="middle" font-size="12">Dozer DB</text></g>
+          <g class="arrow" id="a-a1" data-c="m"><path class="route" d="M210 175 L256 175" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-a2" data-c="m"><path class="route" d="M790 175 L816 175" marker-end="url(#arr)"/></g>
+          <rect x="440" y="150" width="170" height="50" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/>
+          <text id="t-bufcap" x="525" y="140" text-anchor="middle" font-size="13" font-weight="400" fill="var(--muted)">pages waiting</text>
+          <g class="node" id="n-buf" data-c="v"><rect class="box" id="r-buf" x="442" y="152" width="10" height="46" rx="4"/><text id="t-bufl" x="447.0" y="180" text-anchor="middle" font-size="15"></text></g>
+          <g class="arrow" id="a-pb" data-c="x"><path class="route" d="M410 175 L438 175" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-bw" data-c="x"><path class="route" d="M610 175 L636 175" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-req" data-c="x"><path class="route" d="M640 225 C560 270 420 270 345 214" marker-end="url(#arr)"/><text id="t-reql" x="492" y="282" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">ask for 2 more pages</text></g>
+          <text id="t-memv" x="450" y="330" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-back-pressure/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a database</span>
+    <span style="--c:var(--coord)">reader or writer</span>
+    <span style="--c:var(--ok)">keeping up</span>
+    <span style="--c:var(--wait)">slow or waiting</span>
+    <span style="--c:var(--fail)">overloaded</span>
+    <span style="--c:var(--muted)">reading or writing</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: Kafka and Reactive Streams</h2>
+      <p>A Kafka consumer pulls at its own pace, so the broker never floods it. Reactive Streams (Project Reactor, RxJava, Akka Streams) send a demand signal: "give me n". A Go channel with a capacity blocks the sender when full.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: a graph sync</h2>
+      <p>Read one page, write it, then read the next. The writer's pace sets the reader's pace, and memory stays at a page or two.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Push, no limit</th><th>Pull or bounded</th></tr>
+      <tr><td>Who sets the pace</td><td>The sender</td><td>The receiver</td></tr>
+      <tr><td>Slow receiver</td><td>Memory grows</td><td>Sender waits</td></tr>
+      <tr><td>Failure</td><td>Out of memory, retry storms</td><td>A slower pipeline</td></tr>
+      <tr><td>Tools</td><td>Fire and forget</td><td>Pull consumers, bounded channels, demand signals</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Back-pressure lets a slow receiver slow the sender, by pulling, blocking on a bound, dropping, or buffering durably, so memory stays flat."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+push:[
+ {"t": "Reader and writer at the same speed", "b": "Each tick the reader reads one page and pushes it. A write costs 1 tick, so the writer takes each page at once. After 10 ticks: 10 pages read, 10 written, 0 waiting.", "w": "Back-pressure only matters when one side is slower.", "a": {"pb": "ok", "bw": "ok"}, "n": {"rd": "ok", "wr": "ok"}, "wd": {"buf": 20}, "x": {"memv": "waiting: 0 pages"}, "pc": [1, 2, 3, 5, 6, 9]},
+ {"t": "DozerDB slows down", "b": "From tick 10, big merges make a write cost 4 ticks. The reader still reads 1 page per tick. In push mode the reader never checks the writer.", "w": "Push means the sender decides the pace.", "n": {"wr": "w", "dz": "w"}, "x": {"wrs": "slow"}, "pc": [2, 6]},
+ {"t": "Pages pile up", "b": "Each tick 1 page comes in, and 1 page leaves only every 4 ticks. The line that would stop the reader, ask for 2 more pages, runs only in pull mode. At tick 30 the buffer holds 15 pages.", "w": "With no signal back, the fast side fills the gap with memory.", "n": {"buf": "w"}, "wd": {"buf": 120}, "x": {"memv": "waiting at tick 30: 15 pages"}, "pc": [3, 10]},
+ {"t": "Timeouts and retries make it worse", "b": "At tick 38 the writer takes a page that waited over 20 ticks. The call times out, and the page goes back in the queue. The write time is wasted. Pages now wait longer and longer, so more calls time out.", "w": "Retries without back-pressure amplify the overload.", "n": {"buf": "f", "wr": "f"}, "wd": {"buf": 166}, "a": {"bw": "f"}, "x": {"memv": "retries piling up", "wrs": "timeouts"}, "pc": [8]},
+ {"t": "The process dies", "b": "The check: does the buffer hold over 60 pages? At tick 78 it holds 62. The sync runs out of memory with 11 retries behind it. It read 78 pages and wrote 16, so it restarts and reads 62 pages again.", "w": "This is the failure: no back-pressure turns a slow writer into a crash loop.", "n": {"rd": "f"}, "a": {"pb": "f"}, "x": {"memv": ""}, "m": "graph sync: restarting, 62 pages to read again", "pc": [11]}
+],
+pull:[
+ {"t": "The writer asks for work", "b": "The writer asks for 2 pages. The reader reads 1 page per tick only while a request is open, then stops. When the buffer is empty, the writer asks for 2 more. After 10 ticks: 10 written, reader idle 0 ticks.", "w": "Pull means the receiver sets the pace. That is back-pressure built in.", "a": {"req": "ok", "pb": "ok", "bw": "ok"}, "n": {"rd": "ok", "wr": "ok"}, "wd": {"buf": 40}, "x": {"memv": "waiting: at most 2 pages"}, "pc": [2, 3, 10]},
+ {"t": "DozerDB slows down", "b": "From tick 10 a write costs 4 ticks. The buffer empties less often, so the writer asks less often.", "w": "The slowdown travels back as fewer requests, not as more memory.", "n": {"wr": "w", "dz": "w"}, "x": {"wrs": "slow"}, "pc": [6, 10]},
+ {"t": "The reader waits", "b": "The check: is a request open? Often no, so the reader skips its read. From tick 10 to tick 60 it waits 36 ticks, and 12 pages are written. StarRocks gets fewer queries, and retries stay at 0.", "w": "The whole chain runs at the speed of the slowest part.", "n": {"rd": "w"}, "a": {"req": "w"}, "x": {"rds": "waits for a request"}, "pc": [4]},
+ {"t": "Other ways to push back", "b": "Block: a send on a full bounded channel waits. Drop: when full, throw away the oldest. In a channel of 2, sending 5 metrics keeps 4 and 5 and drops 3. Spill: write to a durable queue such as Kafka.", "w": "Block, drop, or buffer durably. Never buffer without a limit in memory.", "pc": [12, 13, 14, 15]},
+ {"t": "DozerDB recovers, the pace rises", "b": "At tick 60 the merges end, and a write costs 1 tick again. The writer asks more often, and the reader speeds up. The last 30 ticks write 29 pages. Over all 90 ticks the buffer never held more than 2 pages.", "w": "Back-pressure keeps memory flat and lets the system recover by itself.", "n": {"wr": "ok", "dz": "v", "rd": "ok"}, "a": {"req": "ok"}, "x": {"wrs": "", "rds": ""}, "m": "at most 2 pages waiting, the whole 90 ticks", "pc": [6, 9, 10]}
+]};
+const SCENE={"push": "bp", "pull": "bp"};
+const CODE={
+ push:{label:"Go",why:"",
+  pc:[
+   "every tick:",
+   "  if push, or the writer asked for pages:         # pull reads only on request",
+   "    read one page from StarRocks into the buffer",
+   "  else: the reader waits                          # no request, no read",
+   "  if the writer is free: take the oldest page",
+   "    a write costs 4 ticks during big merges, else 1",
+   "  when a write ends:",
+   "    if the page waited over 20 ticks: timeout, put it back, retries += 1",
+   "    else: written += 1",
+   "  if pull and the buffer is empty: ask for 2 more pages   # the back-pressure",
+   "  if the buffer holds over 60 pages: out of memory, restart",
+   "# other ways to push back",
+   "block: a send on a full bounded channel waits",
+   "drop: when full, throw away the oldest (metrics only)",
+   "spill: write to a durable queue such as Kafka"],
+  real:[
+   "func (s *Sync) tick(t int) {",
+   "\tif !s.pull || s.demand > 0 { // push reads always, pull only on request",
+   "\t\ts.buf = append(s.buf, page{s.read, t})",
+   "\t\ts.read++",
+   "\t\tif s.pull {",
+   "\t\t\ts.demand--",
+   "\t\t}",
+   "\t} else {",
+   "\t\ts.idle++ // no request, no read",
+   "\t}",
+   "\tif s.busy == 0 && len(s.buf) > 0 { // the writer takes the oldest page",
+   "\t\ts.cur, s.buf = s.buf[0], s.buf[1:]",
+   "\t\ts.busy = cost(t, s.pull) // 4 ticks during big merges, else 1",
+   "\t}",
+   "\tif s.busy > 0 {",
+   "\t\ts.busy--",
+   "\t\tif s.busy == 0 {",
+   "\t\t\ts.finish(t)",
+   "\t\t}",
+   "\t}",
+   "\tif s.pull && len(s.buf) == 0 && s.demand == 0 {",
+   "\t\ts.demand = pullSize // ask for 2 more pages",
+   "\t}",
+   "}",
+   "",
+   "func (s *Sync) finish(t int) {",
+   "\tif t-s.cur.readAt > timeout {",
+   "\t\ts.retries++",
+   "\t\ts.buf = append(s.buf, s.cur) // put it back: wasted work",
+   "\t\treturn",
+   "\t}",
+   "\ts.written++",
+   "}",
+   "",
+   "// nothing else stops the growth in the push run",
+   "if len(s.buf) > memLimit {",
+   "\tbreak // out of memory: restart, read the pages again",
+   "}",
+   "",
+   "// block: a plain send, ch <- v, waits while the channel is full",
+   "func offer(ch chan int, v int) (dropped bool) {",
+   "\tselect {",
+   "\tcase ch <- v: // there is room",
+   "\t\treturn false",
+   "\tdefault:",
+   "\t\t<-ch // full: drop the oldest",
+   "\t\tch <- v",
+   "\t\treturn true",
+   "\t}",
+   "}"],
+  map:{"1": [1], "2": [2], "3": [3, 4, 5, 6, 7], "4": [8, 9, 10], "5": [11, 12], "6": [13], "7": [15, 16, 17, 18, 19, 20], "8": [27, 28, 29, 30, 31], "9": [32], "10": [21, 22, 23], "11": [36, 37, 38], "13": [40], "14": [41, 42, 43, 44, 45, 46, 47, 48, 49, 50]}},
+ pull:{label:"Go",why:"",
+  pc:[
+   "every tick:",
+   "  if push, or the writer asked for pages:         # pull reads only on request",
+   "    read one page from StarRocks into the buffer",
+   "  else: the reader waits                          # no request, no read",
+   "  if the writer is free: take the oldest page",
+   "    a write costs 4 ticks during big merges, else 1",
+   "  when a write ends:",
+   "    if the page waited over 20 ticks: timeout, put it back, retries += 1",
+   "    else: written += 1",
+   "  if pull and the buffer is empty: ask for 2 more pages   # the back-pressure",
+   "  if the buffer holds over 60 pages: out of memory, restart",
+   "# other ways to push back",
+   "block: a send on a full bounded channel waits",
+   "drop: when full, throw away the oldest (metrics only)",
+   "spill: write to a durable queue such as Kafka"],
+  real:[
+   "func (s *Sync) tick(t int) {",
+   "\tif !s.pull || s.demand > 0 { // push reads always, pull only on request",
+   "\t\ts.buf = append(s.buf, page{s.read, t})",
+   "\t\ts.read++",
+   "\t\tif s.pull {",
+   "\t\t\ts.demand--",
+   "\t\t}",
+   "\t} else {",
+   "\t\ts.idle++ // no request, no read",
+   "\t}",
+   "\tif s.busy == 0 && len(s.buf) > 0 { // the writer takes the oldest page",
+   "\t\ts.cur, s.buf = s.buf[0], s.buf[1:]",
+   "\t\ts.busy = cost(t, s.pull) // 4 ticks during big merges, else 1",
+   "\t}",
+   "\tif s.busy > 0 {",
+   "\t\ts.busy--",
+   "\t\tif s.busy == 0 {",
+   "\t\t\ts.finish(t)",
+   "\t\t}",
+   "\t}",
+   "\tif s.pull && len(s.buf) == 0 && s.demand == 0 {",
+   "\t\ts.demand = pullSize // ask for 2 more pages",
+   "\t}",
+   "}",
+   "",
+   "func (s *Sync) finish(t int) {",
+   "\tif t-s.cur.readAt > timeout {",
+   "\t\ts.retries++",
+   "\t\ts.buf = append(s.buf, s.cur) // put it back: wasted work",
+   "\t\treturn",
+   "\t}",
+   "\ts.written++",
+   "}",
+   "",
+   "// nothing else stops the growth in the push run",
+   "if len(s.buf) > memLimit {",
+   "\tbreak // out of memory: restart, read the pages again",
+   "}",
+   "",
+   "// block: a plain send, ch <- v, waits while the channel is full",
+   "func offer(ch chan int, v int) (dropped bool) {",
+   "\tselect {",
+   "\tcase ch <- v: // there is room",
+   "\t\treturn false",
+   "\tdefault:",
+   "\t\t<-ch // full: drop the oldest",
+   "\t\tch <- v",
+   "\t\treturn true",
+   "\t}",
+   "}"],
+  map:{"1": [1], "2": [2], "3": [3, 4, 5, 6, 7], "4": [8, 9, 10], "5": [11, 12], "6": [13], "7": [15, 16, 17, 18, 19, 20], "8": [27, 28, 29, 30, 31], "9": [32], "10": [21, 22, 23], "11": [36, 37, 38], "13": [40], "14": [41, 42, 43, 44, 45, 46, 47, 48, 49, 50]}}};
+let mode="push";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

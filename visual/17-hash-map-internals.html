@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hash map internals</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+/*CODE-CSS*/:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.codetabs{display:flex;gap:8px;flex-wrap:wrap}
+.codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/</style>
+</head>
+<body>
+<main>
+  <h1>Hash map internals</h1>
+  <p class="lede">A graph sync maps addresses to node ids. To keep the numbers readable, each address here is a short hex key, and its hash is simply its number: <code>0xa1</code> is 161. The bucket is the hash modulo the bucket count. Press <b>Next</b> to insert keys, fill the table, and watch it resize.</p>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Buckets of a hash map with chained entries</title>
+      <text id="calc" x="450" y="30" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="18" font-weight="700" fill="var(--fg)"></text>
+      <g id="table" font-family="Atkinson Hyperlegible,system-ui" font-weight="700" text-anchor="middle"></g>
+      <text id="load" x="450" y="388" text-anchor="middle" font-family="Atkinson Hyperlegible,system-ui" font-size="18" font-weight="700" fill="var(--fg)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+
+<!--CODE-CARD-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, with a run of this exact story, is in <code>handbook/code/17-hash-map-internals/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs codetabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-CARD-->
+
+  <div class="legend">
+    <span style="--c:var(--coord)">stored entry</span>
+    <span style="--c:var(--wait)">just inserted or being looked up</span>
+    <span style="--c:var(--undo)">collision: chained behind another key</span>
+    <span style="--c:var(--fail)">load factor too high, or worst case</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a hash map</h2>
+      <p>Go <code>map[string]int</code> from address to node id in a graph sync. Python <code>dict</code>. The visited set in a fund-tracing walk. Java <code>HashMap</code> resizes when the load factor passes 0.75, the same rule as here.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it inside a database</h2>
+      <p>A hash join builds this table on the small side of the join, keyed by the join column. Then it streams the big side and probes the table once per row. That is O(n + m), against O(n × m) for a nested loop.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Hash map</th><th>Balanced tree</th></tr>
+      <tr><td>Lookup by key</td><td>O(1) average, O(n) worst</td><td>O(log n) always</td></tr>
+      <tr><td>Range, min, max, sorted order</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Growth</td><td>Resize and rehash, O(n) once, a latency spike</td><td>Small rotations, no spike</td></tr>
+      <tr><td>Main risk</td><td>Bad hash or attacker keys fill one bucket</td><td>None of that, just slower per lookup</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A hash map turns a key into a bucket number, so lookup is O(1) on average. Collisions are chained, and past a load factor of about 0.75 it doubles and rehashes, which is O(1) amortized."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/*CODE-JS*/
+const code={"_": {"label": "Python","pc": ["bucket_of(key):","  return hash(key) % len(buckets)         # one hash, one division","put(key, value):","  chain = buckets[bucket_of(key)]         # one array jump","  if key is on the chain:","    overwrite its value, return","  add [key, value] to the chain           # two keys in a bucket: a collision","  count = count + 1","  if count / len(buckets) > 0.75:         # the load factor check","    resize(2 * len(buckets))","resize(new_size):","  for each entry on every old chain:      # touches every key: O(n), once","    put it in new_buckets[hash(key) % new_size]","get(key):","  for each entry on the chain of bucket_of(key):","    if entry.key == key: return entry.value","  return none"],"real": ["class ChainedMap:","    def __init__(self, size=8, hash_fn=lambda key: key):","        self.buckets = [[] for _ in range(size)]","        self.hash_fn = hash_fn               # the key's number; here the key itself","        self.count = 0","","    def bucket_of(self, key):","        return self.hash_fn(key) % len(self.buckets)  # one hash, one division","","    def put(self, key, value):","        chain = self.buckets[self.bucket_of(key)]     # one array jump","        for entry in chain:","            if entry[0] == key:              # the same key again: overwrite","                entry[1] = value","                return","        chain.append([key, value])           # a new key goes on the chain","        self.count += 1","        if self.count / len(self.buckets) > 0.75:     # load factor past the limit","            self.resize(2 * len(self.buckets))","","    def resize(self, new_size):","        old = self.buckets","        self.buckets = [[] for _ in range(new_size)]","        for chain in old:                    # touch every key: O(n), once","            for key, value in chain:","                self.buckets[self.bucket_of(key)].append([key, value])  # rehash","","    def get(self, key):","        steps = 0","        for k, value in self.buckets[self.bucket_of(key)]:","            steps += 1                       # one compare per entry on the chain","            if k == key:","                return value, steps","        return None, steps"],"map": {"1": [7],"2": [8],"3": [10],"4": [11],"5": [12,13],"7": [16],"8": [17],"9": [18],"10": [19],"11": [21],"12": [24,25],"13": [26],"14": [28],"15": [30],"16": [32,33],"17": [34],"6": [14]}}};
+let view="pc";
+function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(key,pcs){
+  const c=code[key]||code[Object.keys(code)[0]],box=document.getElementById("codebox");if(!c||!box)return;
+  const lines=view==="pc"?c.pc:c.real;pcs=pcs||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Python";
+  box.innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));if(typeof redrawCode==="function")redrawCode();});
+/*END-CODE-JS*/
+const KEYS=["0xa1","0x3c","0x72","0x19","0xe8","0x5b","0x44"];
+const H=k=>parseInt(k,16);
+const steps=[
+ {t:"Eight empty buckets",b:"The table is an array of eight buckets. Each bucket holds a short chain of entries. count is 0, so the load factor, count divided by buckets, is 0 / 8.",w:"Every operation starts the same way: turn the key into a bucket number.",n:0,size:8,pc:[1,2]},
+ {t:"Insert 0xa1",b:"bucket_of(0xa1): the hash is 161, and 161 mod 8 = 1. Bucket 1 is empty, so the entry goes on its chain. count = 1, and 1 / 8 > 0.75 is false.",w:"One hash, one division, one array jump. That is why the cost does not depend on how many keys are stored.",n:1,size:8,calc:"0xa1",pc:[3,4,7,8,9]},
+ {t:"Insert 0x3c and 0x72",b:"60 mod 8 = 4. 114 mod 8 = 2. Both buckets are empty. count = 3, and 3 / 8 = 0.375, still below 0.75.",w:"Keys spread across buckets. Most buckets hold zero or one entry.",n:3,size:8,calc:"0x72",pc:[2,4,7,9]},
+ {t:"Insert 0x19: a collision",b:"25 mod 8 = 1. Bucket 1 already holds 0xa1. The loop compares 0xa1 == 0x19: no, so it is a new key. It goes on the chain behind 0xa1.",w:"Two keys, one bucket. get(0x19) now costs two compares: the program counts 2.",n:4,size:8,calc:"0x19",pc:[2,4,5,7]},
+ {t:"Insert 0xe8 and 0x5b: load factor 0.75",b:"232 mod 8 = 0. 91 mod 8 = 3. count = 6, and 6 / 8 = 0.75. The check is count / buckets > 0.75: 0.75 > 0.75 is false, so no resize yet.",w:"0.75 is the usual limit. One more insert goes past it.",n:6,size:8,calc:"0x5b",pc:[2,7,8,9]},
+ {t:"Insert 0x44: past the limit",b:"68 mod 8 = 4, so it chains behind 0x3c. count = 7, and 7 / 8 = 0.875. Now 0.875 > 0.75 is true, so put calls resize(16).",w:"Past 0.75 the map decides to grow before chains get long.",n:7,size:8,calc:"0x44",over:true,pc:[2,7,8,9,10]},
+ {t:"Resize to 16 and rehash",b:"A new array of 16 buckets. The loop visits every entry and computes hash mod 16. 25 mod 16 = 9, so 0x19 moves to bucket 9. 68 mod 16 = 4, so 0x44 stays in 4. 60 mod 16 = 12, so 0x3c moves to 12. Both chains are gone.",w:"The resize touches every key: O(n) once. It happens after n inserts, so each insert is O(1) amortized. The pause is a latency spike in a hot service.",n:7,size:16,rehash:true,pc:[11,12,13]},
+ {t:"Get 0x19: one step",b:"25 mod 16 = 9. Bucket 9 holds only 0x19. The loop compares 0x19 == 0x19: found on the first compare. Before the resize it took two.",w:"Short chains are the whole point. Average lookup stays O(1).",n:7,size:16,calc:"0x19",get:"0x19",pc:[14,15,16]},
+ {t:"The failure that matters: every key in one bucket",b:"A weak hash function, or an attacker who picks keys on purpose, sends every key to bucket 0. The load factor is 7 / 16, so no resize fires. get(0x44) compares down the chain: the program counts 7 compares.",w:"Lookup becomes a list scan: O(n). The load check cannot see it. Languages defend with a random hash seed per process, and Java turns a long chain into a tree.",n:7,size:16,worst:true,pc:[2,15,16]}
+];
+const $=id=>document.getElementById(id);
+let i=0,timer=null;
+function render(){
+  const s=steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps.length}`;
+  const bw=s.size===8?100:53,x0=s.size===8?50:26;
+  const keys=KEYS.slice(0,s.n),chains=Array.from({length:s.size},()=>[]);
+  keys.forEach(k=>chains[s.worst?0:H(k)%s.size].push(k));
+  const fresh=s.rehash?[]:(s.n>0&&s.calc&&!s.get?[s.calc]:[]);
+  if(i===2)fresh.push("0x3c");if(i===4)fresh.push("0xe8");
+  let h="";
+  for(let b=0;b<s.size;b++){const x=x0+b*bw;
+    h+=`<rect class="box" x="${x}" y="52" width="${bw-6}" height="40" rx="5" fill="var(--line)"/><text x="${x+(bw-6)/2}" y="78" font-size="${s.size===8?16:13}" fill="var(--fg)">${b}</text>`;
+    chains[b].forEach((k,d)=>{const y=110+d*(s.worst?36:46);let fill=d>0?"var(--undo)":"var(--coord)";
+      if(fresh.includes(k)||s.get===k)fill="var(--wait)";if(s.worst)fill=d>3?"var(--fail)":"var(--undo)";
+      if(d>0)h+=`<line x1="${x+(bw-6)/2}" y1="${y-(s.worst?8:14)}" x2="${x+(bw-6)/2}" y2="${y}" stroke="var(--fg)" stroke-width="2"/>`;
+      h+=`<rect class="box" x="${x+2}" y="${y}" width="${bw-10}" height="${s.worst?28:32}" rx="5" fill="${fill}"/><text x="${x+(bw-6)/2}" y="${y+(s.worst?19:21)}" font-size="${s.size===8?15:12}" fill="#fff">${k}</text>`;});
+  }
+  $("table").innerHTML=h;
+  if(s.calc){const v=H(s.calc);$("calc").textContent=`hash(${s.calc}) = ${v}    ${v} mod ${s.size} = ${v%s.size}`;}
+  else $("calc").textContent=s.rehash?"rehash every key: hash mod 16":s.worst?"every key lands in bucket 0":"";
+  const lf=(s.n/s.size);
+  $("load").textContent=s.worst?"lookup cost: up to 7 steps, O(n)":`load factor ${s.n} / ${s.size} = ${lf.toFixed(lf*1000%10?3:2).replace(/0+$/,"").replace(/\.$/,"")}${s.over?"   past 0.75, resize":""}`;
+  $("load").setAttribute("fill",s.over||s.worst?"var(--fail)":"var(--fg)");
+  drawCode("_",s.pc);
+  $("prev").disabled=i===0;$("next").disabled=i===steps.length-1;
+}
+function redrawCode(){drawCode("_",steps[i].pc);}
+function go(n){i=Math.max(0,Math.min(steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps.length-1)return stop();go(i+1)},2600)};
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

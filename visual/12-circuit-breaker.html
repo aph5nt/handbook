@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circuit breaker</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Circuit breaker</h1>
+  <p class="lede">A proxy sends agent queries to graph lane B. Lane B starts failing. With a breaker, the proxy stops calling, answers fast, and probes now and then. Without one, every client retries and keeps the lane down. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="with">With a breaker</button>
+    <button role="tab" aria-selected="false" data-mode="storm">No breaker: the retry storm</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Animated circuit breaker states</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-cl" class="box" x="20" y="150" width="190" height="60" rx="8"/><text id="b-cl-t" x="115" y="186">Proxy</text>
+        <rect id="b-br" class="box" x="300" y="110" width="270" height="140" rx="10" stroke="var(--line)" stroke-width="2"/><text id="b-br-t" x="435" y="138">Circuit breaker</text>
+        <circle id="l-c" class="box" cx="350" cy="180" r="18"/><text x="350" y="222" class="sm" fill="var(--fg)">Closed</text>
+        <circle id="l-o" class="box" cx="435" cy="180" r="18"/><text x="435" y="222" class="sm" fill="var(--fg)">Open</text>
+        <circle id="l-h" class="box" cx="520" cy="180" r="18"/><text x="520" y="222" class="sm" fill="var(--fg)">Half-open</text>
+        <text id="b-cnt" x="435" y="278" fill="var(--fg)">failures 0 of 5</text>
+        <text id="b-tmr" x="435" y="302" fill="var(--muted)"></text>
+        <rect id="b-sv" class="box" x="680" y="150" width="200" height="60" rx="8"/><text id="b-sv-t" x="780" y="186">Graph lane B</text>
+        <rect x="680" y="230" width="200" height="16" rx="8" fill="var(--line)"/>
+        <rect id="ld" class="box" x="680" y="230" width="0" height="16" rx="8"/>
+        <text id="ld-t" x="780" y="270" class="sm" fill="var(--fg)"></text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-circuit-breaker/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--ok)">healthy, calls pass</span>
+    <span style="--c:var(--fail)">failing, or breaker open</span>
+    <span style="--c:var(--wait)">probing, or under strain</span>
+    <span style="--c:var(--coord)">the caller</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Around every remote call that can fail: a database, a node, another service. Netflix wrapped every call with Hystrix, then retired it in 2018 for adaptive concurrency limits, because fixed thresholds needed hand tuning. In Go, a breaker per dependency sits under a timeout and above a connection pool.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>One breaker per dependency and per endpoint, not one per service. A timeout under it, or calls hang instead of failing and the breaker never trips. A fallback that says what is missing. Retries only on top, with backoff and jitter, and only for idempotent calls.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No breaker</th><th>With a breaker</th></tr>
+      <tr><td>Sick dependency</td><td>Every call waits its full timeout</td><td>Calls fail at once while open</td></tr>
+      <tr><td>Load on the sick side</td><td>Grows with every retry</td><td>Drops to one probe at a time</td></tr>
+      <tr><td>Your own threads</td><td>Pile up, your service goes down too</td><td>Stay free for healthy work</td></tr>
+      <tr><td>Recovery</td><td>Knocked down again by the retry wave</td><td>Found by a half-open probe</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A circuit breaker counts failures, fails fast while the dependency is sick, and sends one probe in half-open to learn when it is safe again. It only works with a timeout under it."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)";
+const lamps=(c,o,h)=>({"l-c":c?G:N,"l-o":o?R:N,"l-h":h?Y:N});
+const D={with:{f:Object.assign({"b-cl":C,"b-br":PN,"b-sv":G},lamps(1,0,0)),x:{"b-br-t":"Circuit breaker","b-tmr":"","b-cl-t":"Proxy","b-cnt":"failures 0 of 5"}},
+ storm:{f:Object.assign({"b-cl":C,"b-br":PN,"b-sv":G},lamps(0,0,0)),x:{"b-br-t":"No breaker","b-tmr":"","b-cl-t":"100 agents","b-cnt":"no breaker to count"}}};
+const pass=c=>[[210,170,298,170,"",C],[570,170,678,170,"call",C],[678,192,572,192,"",c],[298,192,212,192,"",c]];
+const steps={
+with:[
+ {t:"Closed: calls pass through",b:"The breaker is closed. Each query goes through to lane B and comes back with an answer.",w:"Closed means current flows, like an electric circuit. The breaker only watches and counts.",x:{"b-cnt":"failures 0 of 5"},m:pass(G),load:.4},
+ {t:"Lane B gets sick",b:"Lane B starts failing. Each call still waits for its 2-second timeout, then fails. The breaker writes down the time of each failure and forgets any older than 10 seconds. At 6 seconds it holds 3.",w:"The timeout is what turns a hang into a failure the breaker can count.",f:{"b-sv":R},x:{"b-cnt":"failures 3 of 5"},m:pass(R),load:.7},
+ {t:"The threshold is passed: trip",b:"After each failure the breaker checks: are there 5 failures in the last 10 seconds? At 10 seconds the fifth one arrives, with all five inside the window. The breaker trips from closed to open.",w:"The threshold is a trade. Too low and one blip trips it. Too high and you wait long before it helps.",f:Object.assign({"b-sv":R},lamps(0,1,0)),x:{"b-cnt":"failures 5 of 5: trip"},m:pass(R),load:.7},
+ {t:"Open: fail fast",b:"Every new query first checks the state. It is open, and less than 30 seconds have passed since the trip, so the query is answered at once with \"lane unavailable\", or a fallback. No call goes to lane B.",w:"The proxy's threads stay free. Lane B gets no load, which gives it room to recover.",f:Object.assign({"b-sv":R},lamps(0,1,0)),x:{"b-cnt":"calls blocked","b-tmr":"waiting 30 s before a probe"},m:[[210,170,298,170,"",C],[298,192,212,192,"fast error",R]],load:0},
+ {t:"Half-open: one probe, and it fails",b:"At 40 seconds, 30 seconds after the trip, the breaker moves to half-open and lets exactly one call through. Lane B is still sick, the probe fails, and the breaker goes back to open with a new 30-second wait.",w:"Only one call risks the sick dependency. The wait starts again.",f:Object.assign({"b-sv":R},lamps(0,0,1)),x:{"b-cnt":"probe failed: open again","b-tmr":"waiting 30 s again"},m:[[570,170,678,170,"probe",Y],[678,192,572,192,"error",R]],load:.05},
+ {t:"Half-open: the probe succeeds",b:"Lane B has recovered. A query at 50 seconds is still refused fast, because the new wait ends at 70. The probe at 71 seconds comes back with an answer.",w:"A success in half-open is the signal that it is safe to send traffic again.",f:Object.assign({"b-sv":G},lamps(0,0,1)),x:{"b-cnt":"probe ok","b-tmr":""},m:[[570,170,678,170,"probe",Y],[678,192,572,192,"answer",G]],load:.05},
+ {t:"Closed again",b:"The breaker closes and resets its count. Queries flow to lane B as before.",w:"The whole cycle protected both sides: the proxy kept answering, and lane B got quiet time to recover.",x:{"b-cnt":"failures 0 of 5"},m:pass(G),load:.4}
+],
+storm:[
+ {t:"A normal day",b:"A hundred agents query lane B through the proxy. There is no breaker. Lane B runs at 40 percent of its capacity.",w:"Everything looks fine. The missing breaker costs nothing until the first bad minute.",m:pass(G),load:.4},
+ {t:"Lane B slows down",b:"Lane B has a slow minute. Every call now waits the full 2-second timeout and fails.",w:"Calls in flight pile up. The proxy's connection pool starts to fill.",f:{"b-sv":Y},x:{"b-cnt":"every call times out"},m:pass(R),load:1},
+ {t:"Everyone retries at once",b:"All 100 agents retry after the same fixed wait, at the same instant. Each failed call is now two calls.",w:"With no jitter, retries arrive as a wave. With three layers that each retry three times, one request becomes 27 calls.",f:{"b-sv":R},x:{"b-cnt":"calls doubled by retries"},m:pass(R).concat([[210,160,298,160,"retry",R],[570,160,678,160,"retry",R]]),load:2},
+ {t:"The failure that matters: knocked down again",b:"Lane B was about to recover. The retry wave hits it at three times its capacity and it falls over. The proxy's pool is full too, so healthy queries also fail.",w:"The retries are now the outage. The sick service can never catch up while every client keeps hammering it.",f:{"b-sv":R,"b-cl":R},x:{"b-sv-t":"Graph lane B: down","b-cnt":"retry storm"},m:pass(R).concat([[210,160,298,160,"retry",R],[570,160,678,160,"retry",R],[210,150,298,150,"retry",R],[570,150,678,150,"retry",R]]),load:3},
+ {t:"The fix",b:"Add a breaker that opens after five failures. Add exponential backoff with random jitter. Retry in one layer only, with a retry budget.",w:"The breaker drops the load to near zero, lane B recovers, and a half-open probe finds out when. This is the With a breaker tab.",f:Object.assign({"b-sv":G},lamps(0,1,0)),x:{"b-br-t":"Breaker added","b-cnt":"calls blocked, backoff with jitter"},m:[[210,170,298,170,"",C],[298,192,212,192,"fast error",R]],load:.02}
+]};
+function draw(s){const l=s.load||0;$("ld").setAttribute("width",Math.min(l,1)*200);$("ld").setAttribute("fill",l>1?R:l>.8?Y:G);
+ $("ld-t").textContent=`load ${Math.round(l*100)} percent of capacity`;if(!(s.x&&s.x["b-sv-t"]))$("b-sv-t").textContent="Graph lane B";}
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);const t=$(k+"-t");if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  if(typeof draw==="function")draw(s);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["call(query, now):", "  if state == open:", "    if now - openedAt < 30 s: return fast error   # nothing reaches lane B", "    state = half-open                             # let one probe through", "  result = send(query, timeout 2 s)", "  if ok: state = closed; failures = []; return answer", "  if state == half-open:", "    state = open; openedAt = now                  # probe failed: wait again", "  failures.add(now); drop failures older than 10 s", "  if count(failures) >= 5:", "    state = open; openedAt = now                  # trip", "", "# BUG no breaker: every client keeps calling the sick lane", "#   and retries at the same instant: 100 -> 200 calls"], "real": ["func (b *Breaker) Call(now time.Duration, laneOK bool) error {", "\tif b.State == Open {", "\t\tif now-b.openedAt < openFor {", "\t\t\treturn ErrOpen // no call reaches lane B", "\t\t}", "\t\tb.State = HalfOpen // 30 s passed: let exactly one probe through", "\t}", "\tif laneOK {", "\t\tb.State, b.failures = Closed, nil // success closes and resets the count", "\t\treturn nil", "\t}", "\tif b.State == HalfOpen {", "\t\tb.State, b.openedAt = Open, now // the probe failed: open again", "\t\treturn errors.New(\"probe failed\")", "\t}", "\tb.failures = append(b.failures, now)", "\tfor len(b.failures) > 0 && now-b.failures[0] > window {", "\t\tb.failures = b.failures[1:] // drop failures older than the window", "\t}", "\tif len(b.failures) >= threshold {", "\t\tb.State, b.openedAt = Open, now // trip", "\t}", "\treturn errors.New(\"timeout after 2 s\")", "}", "", "agents := 100", "fmt.Printf(\"normal: %d calls, load 40%%\\n\", agents)", "fmt.Printf(\"every call fails, all retry at the same instant: %d calls\\n\", 2*agents)", "fmt.Printf(\"3 layers x 3 tries: one request becomes %d calls\\n\", 3*3*3)"], "map": {"1": [1], "2": [2], "3": [3, 4, 5], "4": [6], "5": [8], "6": [8, 9, 10], "7": [12], "8": [13, 14], "9": [16, 17, 18, 19], "10": [20], "11": [21], "13": [26, 27], "14": [28, 29]}}},PCS={"with": [[1, 5, 6], [5, 9], [9, 10, 11], [2, 3], [4, 5, 7, 8], [4, 5, 6], [6]], "storm": [[13], [13, 5], [14], [13, 14], [2, 3, 10, 11]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

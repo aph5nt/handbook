@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slack Vitess</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Slack: Vitess sharding and the edge</h1>
+  <p class="lede">Slack first gave each workspace one MySQL shard. Watch one huge company's workspace make its shard run hot. Then watch Vitess spread messages by channel, and the edge cache that lets a client start without asking the core for everything. Pick a tab and press <b>Next</b>.</p>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="shard">Shards and Vitess</button>
+    <button role="tab" aria-selected="false" data-mode="edge">The edge and boot</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <g data-scene="shard">
+          <rect id="app" class="box" x="20" y="174" width="160" height="52" rx="8"/><text id="app-t" x="100" y="205">Slack app</text>
+          <rect id="vg" class="box" x="230" y="150" width="190" height="100" rx="10"/><text id="vg-t" x="325" y="190">Router</text><text id="vg-c" x="325" y="218" class="sm" fill="#fff"></text>
+          <rect id="h1" class="box" x="500" y="30" width="380" height="72" rx="10"/><text id="h1-t" x="690" y="60">Shard 1</text><text id="h1-c" x="690" y="86" class="sm" fill="#fff"></text>
+          <rect id="h2" class="box" x="500" y="164" width="380" height="72" rx="10"/><text id="h2-t" x="690" y="194">Shard 2</text><text id="h2-c" x="690" y="220" class="sm" fill="#fff"></text>
+          <rect id="h3" class="box" x="500" y="298" width="380" height="72" rx="10"/><text id="h3-t" x="690" y="328">Shard 3</text><text id="h3-c" x="690" y="354" class="sm" fill="#fff"></text>
+        </g>
+        <g data-scene="edge">
+          <rect id="cl" class="box" x="20" y="174" width="170" height="52" rx="8"/><text id="cl-t" x="105" y="205">Ola's laptop</text>
+          <rect id="eg" class="box" x="250" y="40" width="250" height="72" rx="10"/><text id="eg-t" x="375" y="70">Edge gateway, Frankfurt</text><text id="eg-c" x="375" y="96" class="sm" fill="#fff">WebSocket</text>
+          <rect id="fl" class="box" x="250" y="280" width="250" height="72" rx="10"/><text id="fl-t" x="375" y="310">Flannel edge cache</text><text id="fl-c" x="375" y="336" class="sm" fill="#fff"></text>
+          <rect id="co" class="box" x="620" y="160" width="260" height="80" rx="10"/><text id="co-t" x="750" y="195">Core, US</text><text id="co-c" x="750" y="222" class="sm" fill="#fff">app servers + Vitess</text>
+        </g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">a request, or routing</span>
+    <span style="--c:var(--ok)">healthy, served</span>
+    <span style="--c:var(--wait)">moving data, or busy</span>
+    <span style="--c:var(--fail)">hot shard, or overloaded</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Vitess began at YouTube and now shards MySQL at Slack, GitHub, Square and PlanetScale. Slack's edge gateways and its Flannel cache keep WebSocket connections and boot data close to users, while the core stays in the US.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Pick a shard key that spreads load: Slack moved messages from "by workspace" to "by channel". Let a proxy route queries so the app does not know where shards live. Cache what every client asks for at start-up near the user.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Shard by workspace</th><th>Vitess, shard by channel</th></tr>
+      <tr><td>One huge customer</td><td>One hot shard</td><td>Spread over many shards</td></tr>
+      <tr><td>Where shard logic lives</td><td>In the app</td><td>In the Vitess router</td></tr>
+      <tr><td>Resharding</td><td>Hand-made, risky</td><td>Copy, catch up, switch reads, then writes</td></tr>
+      <tr><td>Cost</td><td>Simple joins inside a workspace</td><td>Cross-shard queries for a workspace view</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Slack moved from one MySQL shard per workspace to Vitess sharding by channel, so a giant customer no longer heats one shard, and edge caches keep start-up close to users."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const D={shard:{f:{app:N,vg:N,h1:N,h2:N,h3:N},x:{"vg-t":"Router","vg-c":"","h1-c":"","h2-c":"","h3-c":""}},
+ edge:{f:{cl:N,eg:N,fl:N,co:N},x:{"fl-c":"","co-c":"app servers + Vitess"}}};
+const r3=c=>[[420,190,498,66,"",c],[420,200,498,200,"",c],[420,210,498,334,"",c]];
+const steps={
+shard:[
+ {t:"One shard per workspace",b:"At first the shard is a lookup by workspace: BigCorp is 1, the design studio is 2, many small teams are 3. The whole workspace sits together, which keeps joins simple.",w:"Simple: every query for a workspace goes to one database, and joins stay local.",f:{h1:G,h2:G,h3:G},x:{"vg-t":"App shard map","h1-c":"workspace: BigCorp","h2-c":"workspace: Studio","h3-c":"workspaces: many small teams"},pc:[1]},
+ {t:"The failure that matters: BigCorp heats one shard",b:"BigCorp grows to hundreds of thousands of people. The lookup gives shard 1 for each of their messages: 900 of 1,000 in our model, against 60 and 40. Shard 1 runs hot while shards 2 and 3 sit quiet.",w:"Sharding by customer breaks when one customer is bigger than one database. You cannot split a workspace that is the shard key.",f:{app:C,h1:R,h2:G,h3:G},x:{"vg-t":"App shard map","h1-c":"BigCorp: CPU and disk full","h2-c":"workspace: Studio","h3-c":"workspaces: many small teams"},m:[[180,200,228,200,"",C],[420,190,498,66,"all BigCorp",R,false,470,110]],pc:[1, 2]},
+ {t:"Put Vitess in front",b:"Vitess adds a router (VTGate) in front of the MySQL shards. The app sends plain SQL with no shard number in it. The router reads the query and finds where each row lives.",w:"Moving shard logic out of the app means you can reshard without changing app code.",f:{vg:C,h1:Y,h2:G,h3:G},x:{"vg-t":"Vitess router","vg-c":"VTGate","h1-c":"BigCorp","h2-c":"Studio","h3-c":"small teams"},m:[[180,200,228,200,"SQL",C]],pc:[3, 4]},
+ {t:"Reshard messages by channel",b:"The new key is the channel. Vitess copies rows to the new shards, and follows the MySQL log until the copy has caught up. Then it switches reads, then writes.",w:"The copy runs while users chat. The switch is short because the new shards are already caught up.",f:{vg:C,h1:Y,h2:Y,h3:Y},x:{"vg-t":"Vitess router","vg-c":"key = channel","h1-c":"copying…","h2-c":"copying…","h3-c":"copying…"},m:[[690,102,690,162,"copy",Y],[690,236,690,296,"copy",Y]],pc:[6, 7, 8]},
+ {t:"BigCorp is spread out",b:"The first letter of the channel now decides: A to H is shard 1, I to P shard 2, Q to Z shard 3. Our 260 model rows give 80, 80 and 100. BigCorp's channels are on every shard. A busy channel is one group among many.",w:"A good shard key has many values with small, even load each. Channel beats workspace.",f:{app:C,vg:G,h1:G,h2:G,h3:G},x:{"vg-t":"Vitess router","vg-c":"key = channel","h1-c":"channels A–H, all workspaces","h2-c":"channels I–P","h3-c":"channels Q–Z"},m:[[180,200,228,200,"",C],...r3(G)],pc:[4, 5]},
+ {t:"The new cost: cross-shard reads",b:"'Show me every unread channel in BigCorp' has no channel in it. The router's rule then is: ask every shard and merge. 3 shards asked for one screen.",w:"Every shard key makes some queries cheap and others expensive. Pick the one your hot path needs.",f:{vg:Y,h1:G,h2:G,h3:G},x:{"vg-t":"Vitess router","vg-c":"fan out + merge","h1-c":"channels A–H, all workspaces","h2-c":"channels I–P","h3-c":"channels Q–Z"},m:r3(Y),pc:[9, 10]}
+],
+edge:[
+ {t:"Ola opens Slack in Warsaw",b:"Ola's laptop connects to the nearest edge gateway, in Frankfurt. It holds her WebSocket open for live messages. No data is chosen yet.",w:"A long-lived connection to a nearby server is fast. A connection across the Atlantic would add delay to every message.",f:{cl:C,eg:G},m:[[190,190,248,90,"WebSocket",C,false,210,130]],pc:[11]},
+ {t:"Boot used to mean 'send me everything'",b:"In the past, a client at start-up asked the core for every channel, every member and every emoji of the workspace. There was no check: boot meant everything.",w:"For BigCorp that start-up answer was huge, and every client asked for it at 9 in the morning.",f:{cl:C,co:Y},m:[[190,205,618,200,"everything!",Y,false,400,195]],pc:[11]},
+ {t:"The failure that matters: a boot storm",b:"After an outage every client reconnects at once. 100,000 clients x 500 items is 50 million items from the core, in our model. The core falls over again from the start-up load alone.",w:"A thundering herd: the recovery itself causes the next outage.",f:{cl:R,co:R},x:{"co-c":"overloaded by boot"},m:[[190,205,618,200,"x 1,000,000",R,true,400,195]],pc:[11, 12]},
+ {t:"Flannel: a cache at the edge",b:"Flannel is a cache near each gateway. It keeps the users and channels of the workspaces it serves. The client's boot now asks for a small answer, not everything.",w:"Ask for little at start, then load more lazily, from a cache close to the user.",f:{fl:C,eg:G},x:{"fl-c":"users, channels, near Ola"},m:[[375,112,375,278,"lookups",C]],pc:[13]},
+ {t:"Lookups served near Ola",b:"When Ola opens a channel the check is: does Flannel have these names? Yes, so the answer comes from Frankfurt and the core counts 0 items. A rare name misses, costs 1 item, and is then stored.",w:"The core does less per client. The edge does the repeated reads.",f:{cl:G,eg:G,fl:G,co:G},x:{"fl-c":"hit: served at the edge"},m:[[248,320,192,214,"names",G]],pc:[14, 15]},
+ {t:"Changes flow out to the edge",b:"When someone renames a channel, the core pushes the change to the Flannel caches holding it. The next lookup hits with the new name, and the core still counts no extra read.",w:"An edge cache is only correct if changes reach it. Push updates, do not wait for a timeout.",f:{co:C,fl:Y,eg:Y},x:{"fl-c":"update: channel renamed"},m:[[618,190,502,90,"event",C],[618,215,502,310,"event",C]],pc:[16, 15]}
+]};
+const code={main:{"label": "Go", "dir": "11-slack-vitess", "pc": ["before: shard = workspaceShard[workspace]   # BigCorp on 1", "  every message of BigCorp lands on shard 1", "router(query):                              # the app sends plain SQL", "  read the channel from the query", "  first letter A-H: 1, I-P: 2, Q-Z: 3       # the shard key is the channel", "reshard:", "  copy rows to the new shards; follow the MySQL log until caught up", "  switch reads, then writes", "fanOut(workspace):                          # no channel in the query", "  ask every shard, merge the answers", "before, boot(client): the core sends everything", "  after an outage: clients x everything hits the core at once", "Flannel, boot(client): a small answer from the edge cache", "lookup(name):", "  if Flannel has it: answer here; else ask the core and store it", "change(name): the core pushes the new value to every Flannel holding it"], "real": ["func ByWorkspace(ws string) int {", "\treturn map[string]int{\"BigCorp\": 1, \"Studio\": 2}[ws]", "}", "", "func ByChannel(channel string) int {", "\tswitch c := channel[0]; {", "\tcase c <= 'H':", "\t\treturn 1", "\tcase c <= 'P':", "\t\treturn 2", "\t}", "\treturn 3", "}", "", "// Reshard copies rows, then flips the router. Nothing is lost in the copy.", "func Reshard(rows []string) map[int][]string {", "\tout := map[int][]string{}", "\tfor _, ch := range rows {", "\t\tout[ByChannel(ch)] = append(out[ByChannel(ch)], ch)", "\t}", "\treturn out", "}", "", "func FanOut(shards map[int][]string) (asked, rows int) {", "\tfor _, r := range shards {", "\t\tasked++", "\t\trows += len(r)", "\t}", "\treturn", "}", "", "type Core struct{ Items int }", "", "func (c *Core) Boot(everything int) { c.Items += everything }", "", "type Flannel struct {", "\tCache map[string]string", "\tCore  *Core", "}", "", "func (f *Flannel) Lookup(name string) string {", "\tif v, ok := f.Cache[name]; ok {", "\t\treturn v", "\t}", "\tf.Core.Items++", "\tf.Cache[name] = \"from core\"", "\treturn f.Cache[name]", "}", "", "func (f *Flannel) Change(name, v string) { f.Cache[name] = v }", ""], "map": {"1": [1], "2": [2], "3": [5], "4": [5, 6], "5": [6, 8, 10, 12], "6": [16], "7": [17, 18, 19], "8": [19], "9": [24], "10": [25, 26, 27], "11": [34], "12": [34], "13": [37], "14": [41], "15": [42, 43, 45, 46], "16": [50]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

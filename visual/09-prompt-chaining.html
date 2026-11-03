@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt chaining</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Prompt chaining: small calls with a gate between</h1>
+  <p class="lede">A daily incident report goes through three model calls: summarise, translate, format as a table. Between call 1 and call 2 a gate written in code checks that the summary names a risk level. Watch the output pass from step to step. Then switch tabs to see what one bad step does when no gate stands in the way.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Chain with a gate</button>
+    <button role="tab" aria-selected="false" data-mode="bad">No gate: one bad step spreads</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Incident log, three model calls with a gate between the first two, and the report</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="e1" class="edge" d="M130 88 L156 88" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e2" class="edge" d="M290 88 L316 88" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e3" class="edge" d="M470 88 L496 88" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e4" class="edge" d="M620 88 L646 88" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e5" class="edge" d="M770 88 L796 88" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="eb" class="edge msg" d="M395 116 L395 150 L225 150 L225 120" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"/>
+      <text id="lb" class="msg" x="310" y="170" text-anchor="middle" font-size="12" font-weight="700" fill="var(--wait)">back to call 1, with the reason</text>
+      <g><rect id="in" class="box" x="10" y="60" width="120" height="56" rx="10" fill="var(--line)"/><text id="in-l" x="70.0" y="92.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Incident log</text></g>
+      <g><rect id="c1" class="box" x="160" y="60" width="130" height="56" rx="10" fill="var(--line)"/><text id="c1-l" x="225.0" y="84.5" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"><tspan x="225.0" dy="0">Call 1:</tspan><tspan x="225.0" dy="16.8">summarise</tspan></text></g>
+      <g><rect id="gate" class="box" x="320" y="60" width="150" height="56" rx="10" fill="var(--line)"/><text id="gate-l" x="395.0" y="92.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Gate: risk level?</text></g>
+      <g><rect id="c2" class="box" x="500" y="60" width="120" height="56" rx="10" fill="var(--line)"/><text id="c2-l" x="560.0" y="84.5" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"><tspan x="560.0" dy="0">Call 2:</tspan><tspan x="560.0" dy="16.8">translate</tspan></text></g>
+      <g><rect id="c3" class="box" x="650" y="60" width="120" height="56" rx="10" fill="var(--line)"/><text id="c3-l" x="710.0" y="84.5" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"><tspan x="710.0" dy="0">Call 3:</tspan><tspan x="710.0" dy="16.8">format table</tspan></text></g>
+      <g><rect id="out" class="box" x="800" y="60" width="90" height="56" rx="10" fill="var(--line)"/><text id="out-l" x="845.0" y="92.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Report</text></g>
+      <text x="10" y="200" font-size="14" font-weight="700" fill="var(--fg)">What passes between the steps</text>
+      <rect x="10" y="210" width="880" height="158" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-prompt-chaining/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a model call running</span>
+    <span style="--c:var(--ok)">output passed</span>
+    <span style="--c:var(--wait)">gate sends it back</span>
+    <span style="--c:var(--fail)">bad output, carried forward</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A release pipeline where one model call writes the changelog line and code does the rest. A daily report built as summarise, translate, format. LangChain calls the same thing a chain: prompt, model, output parser, next prompt.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Split a big prompt into small calls that each do one job, so each can be tested alone. Put a gate in code after any step whose output the next step trusts. Give the gate a retry cap, and send the reason back with the retry.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Prompt chain</th><th>One big prompt</th></tr>
+      <tr><td>Testing</td><td>Each step has its own input and output to check</td><td>Only the final answer can be checked</td></tr>
+      <tr><td>Failure</td><td>Caught at the gate after the bad step</td><td>Hidden inside one long answer</td></tr>
+      <tr><td>Cost</td><td>A fixed number of calls, known in advance</td><td>One call, but retries redo everything</td></tr>
+      <tr><td>Main risk</td><td>No gate, so one bad step spreads</td><td>The model skips a part of the job</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A prompt chain is small calls in a fixed order, and a gate in code between them stops one bad step from spreading."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"t": "The log arrives", "b": "The incident log for the day comes in: about 2,000 words of alerts and notes.", "w": "The path is known in advance: summarise, check, translate, format. So code owns the order, not the model.", "box": {"in": "coord"}, "rows": [["input: incident log, about 2,000 words", "muted"]], "pc": [1]},
+{"t": "Call 1 summarises", "b": "The first call gets one job: summarise the log and name a risk level. It returns a short summary that ends with risk: high.", "w": "One job per call makes each prompt short and each output easy to check.", "box": {"c1": "coord"}, "ed": {"e1": "coord"}, "rows": [["call 1: summary, risk: high", "ok"]], "pc": [2]},
+{"t": "The gate checks it", "b": "The gate is plain code with one check: does the summary hold the text 'risk:'? It finds 'risk: high', so the summary passes to call 2.", "w": "A gate costs almost nothing and runs every time. It checks what the next step will trust.", "box": {"gate": "ok"}, "ed": {"e2": "ok"}, "rows": [["gate: risk level present, passes", "ok"]], "pc": [3]},
+{"t": "Call 2 translates", "b": "The second call translates the summary for the partner team. Its prompt is only about translation.", "w": "Call 2 trusts that the summary is complete. The gate is why that trust is safe.", "box": {"c2": "coord"}, "ed": {"e3": "coord"}, "rows": [["call 2: translated summary, risk kept", "ok"]], "pc": [6]},
+{"t": "Call 3 formats", "b": "The third call turns the translation into a table with four columns: time, service, impact, risk.", "w": "Each step's output is the next step's input. That is the whole pattern.", "box": {"c3": "coord"}, "ed": {"e4": "coord"}, "rows": [["call 3: table with 4 columns", "ok"]], "pc": [7]},
+{"t": "The report goes out", "b": "The report is sent. It took three model calls, today and every day.", "w": "A fixed number of calls means a known cost and a known time. An agent cannot promise that.", "box": {"out": "ok"}, "ed": {"e5": "ok"}, "rows": [["3 model calls every time: the cost is known in advance", "coord"]], "pc": [8]}],
+"bad":[
+{"t": "Call 1 drops the risk level", "b": "Today the summary leaves out the risk level. The model wrote a fine summary and forgot one field.", "w": "Models miss parts of a job now and then. The question is where you notice.", "box": {"c1": "fail"}, "ed": {"e1": "coord"}, "txt": {"gate-l": "no gate"}, "rows": [["call 1: summary, no risk level", "fail"]], "pc": [2]},
+{"t": "Call 2 translates the gap", "b": "Suppose line 3, the gate, is off. Nothing checks for 'risk:'. Call 2 translates the summary faithfully, gap included.", "w": "Every later step does its own job well, on the wrong input.", "box": {"c2": "coord"}, "ed": {"e2": "fail", "e3": "fail"}, "rows": [["call 2: translated, still no risk level", "fail"]], "pc": [3, 6]},
+{"t": "Call 3 leaves the column empty", "b": "The table has a risk column. Call 3 has nothing to put in it, so it leaves it blank.", "w": "The mistake from step 1 is now a blank cell three steps later.", "box": {"c3": "fail"}, "ed": {"e4": "fail"}, "rows": [["call 3: risk column left empty", "fail"]], "pc": [7]},
+{"t": "A wrong report ships", "b": "The partner team reads the table. No risk is shown, so they treat a high-risk incident as low.", "w": "Nothing failed loudly. That is the danger of a chain without gates.", "box": {"out": "fail"}, "ed": {"e5": "fail"}, "rows": [["report sent: the reader assumes low risk", "fail"]], "pc": [8]},
+{"t": "The fix: a gate in code", "b": "The gate goes back in. Its check, 'does it hold risk:?', answers no, so the summary returns to call 1 with the reason 'you must name a risk level'.", "w": "The gate catches the bad output one step after it was made, not at the reader.", "box": {"gate": "wait", "c1": "coord"}, "ed": {"e1": "coord", "e2": "wait", "eb": "wait"}, "show": ["eb", "lb"], "txt": {"gate-l": "Gate: risk level?"}, "rows": ["clear", ["gate: no risk level, back to call 1 with the reason", "wait"]], "pc": [3, 4]},
+{"t": "The retry passes", "b": "Call 1 runs again with the reason in its prompt and returns 'risk: high'. The check now answers yes, and the rest of the chain runs: 4 calls instead of 3. After 2 failed retries it would stop and report.", "w": "One extra call bought a correct report. A retry cap keeps a broken step from looping.", "box": {"gate": "ok", "c1": "ok", "c2": "ok", "c3": "ok", "out": "ok"}, "ed": {"e1": "ok", "e2": "ok", "e3": "ok", "e4": "ok", "e5": "ok"}, "rows": [["retry 1 of 2: risk: high, passes", "ok"], ["report correct, for one extra call", "ok"]], "pc": [2, 3, 5]}]},
+"T0":{"gate-l": "Gate: risk level?"},"panel":{"x": 10, "y": 210, "w": 880, "h": 158, "title": "What passes between the steps", "rh": 30, "fs": 13},"code":{"_": {"label": "Python", "pc": ["log = the day's incident log", "summary = model('Summarise', log)            # call 1: one job", "gate(summary): does it hold 'risk:'?         # plain code, no model", "on a miss: back to call 1 with the reason", "at most 2 retries, then stop and report", "translated = model('Translate', summary)     # call 2", "table = model('Format as a table', translated)  # call 3", "send the report"], "real": ["RETRIES = 2", "", "", "def gate(summary):", "    return \"risk:\" in summary  # plain code, no model", "", "", "def run_chain(log, forgetful=False, use_gate=True):", "    reason = \"\"", "    for attempt in range(RETRIES + 1):", "        summary = fake_model(f\"Summarise {log}{reason}\", forgetful)", "        if not use_gate or gate(summary):", "            break", "        print(f\"  gate: no risk level, retry {attempt + 1} of {RETRIES}\")", "        reason = \". You must name a risk level\"  # back with the reason", "    else:", "        return \"stopped: no risk level after retries\"", "    translated = fake_model(f\"Translate: {summary}\")", "    return fake_model(f\"Format as a table: {translated}\")"], "map": {"5": [1, 10, 17], "3": [4, 5, 12, 13], "1": [8], "2": [11], "4": [14, 15], "6": [18], "7": [19], "8": [19]}, "path": "handbook/code/09-prompt-chaining/main.py", "cmd": "python3 main.py", "note": ""}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

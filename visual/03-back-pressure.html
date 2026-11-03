@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Back-pressure</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Back-pressure</h1>
+  <p class="lede">An indexer reads blocks at 2,000 rows a second. The warehouse loader behind it writes only 1,000 a second. Press <b>Next</b> to watch an unbounded queue kill the pod, then watch a bounded queue make the indexer slow down.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="unb" id="tab-unb">Unbounded queue: out of memory</button>
+    <button role="tab" aria-selected="false" data-mode="bnd" id="tab-bnd">Bounded queue: back-pressure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">An indexer, a queue and a warehouse loader, with the indexer pod's memory</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-back-pressure/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">rows flowing</span>
+    <span style="--c:var(--wait)">queue filling, or producer told to wait</span>
+    <span style="--c:var(--ok)">steady and safe</span>
+    <span style="--c:var(--fail)">memory limit reached, rows lost</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A Go channel with a buffer size: a send blocks when it is full, which is back-pressure for free. TCP flow control: the receiver advertises a window and the sender never sends more. Kafka: the consumer pulls at its own pace, and lag grows on disk, not in memory.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Give every queue a limit and a rule for the limit: block the producer, slow its rate, or shed work it can drop. Across HTTP the signal is a refusal: 429 Too Many Requests or 503 with a Retry-After header.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Unbounded queue</th><th>Bounded queue with back-pressure</th></tr>
+      <tr><td>Producer faster than consumer</td><td>Queue grows without end</td><td>Queue fills, then the producer waits</td></tr>
+      <tr><td>Memory</td><td>Grows until the pod is killed</td><td>Flat at the queue limit</td></tr>
+      <tr><td>Throughput</td><td>Looks high until the crash</td><td>The consumer's speed, 1,000 rows a second</td></tr>
+      <tr><td>On a crash</td><td>Everything in the queue is lost</td><td>At most one full queue to redo</td></tr>
+      <tr><td>Bigger queue</td><td>Only delays the crash</td><td>Only absorbs longer bursts</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Back-pressure lets the slowest part set the pace. Every queue gets a limit and a rule at the limit: block, slow down, or shed."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const fmt=n=>n.toLocaleString("en-US");
+function scene(s){
+  let b="";const msgs=[];
+  b+=T(450,30,"t = "+s.tm,{s:15,c:"var(--muted)"});
+  b+=BOX(20,60,170,80,s.oom?"var(--fail)":s.full?"var(--wait)":"var(--coord)","Indexer",s.oom?"killed":fmt(s.rate)+" rows/s");
+  b+=BOX(710,60,170,80,"var(--coord)","Warehouse loader","1,000 rows/s");
+  const lim=s.qmax||60000,f=Math.min(s.q/lim,1);
+  b+=R(250,75,400,50,"var(--panel)",{st:"var(--line)"});
+  b+=R(252,77,Math.max(0,396*f),46,s.oom?"var(--fail)":f>=1?"var(--wait)":"var(--coord)",{rx:6});
+  b+=T(450,150,s.lag?"log on disk: "+fmt(s.q)+" rows behind":"queue: "+fmt(s.q)+" rows"+(s.qmax?" of "+fmt(s.qmax):", no limit"),{s:14,c:s.oom?"var(--fail)":"var(--fg)"});
+  b+=ARROW(190,100,250,100,"",KC.n);b+=ARROW(650,100,710,100,"",KC.n);
+  b+=T(220,58,s.oom?"":fmt(s.rate)+"/s",{s:12,c:"var(--muted)"});b+=T(680,58,"1,000/s",{s:12,c:"var(--muted)"});
+  if(s.full)msgs.push(`<path d="M450 160 Q300 220 110 145" fill="none" stroke="var(--wait)" stroke-width="2.5" marker-end="url(#arr)" stroke-dasharray="6 5"/>`+T(300,226,s.back||"queue full: wait",{s:13,c:"var(--wait)"}));
+  b+=T(250,262,"indexer pod memory",{a:"start",s:13,w:400,c:"var(--muted)"});
+  b+=R(250,270,400,30,"var(--line)",{rx:6});
+  b+=R(250,270,400*Math.min(s.mem,1),30,s.mem>=1?"var(--fail)":s.mem>0.6?"var(--wait)":"var(--ok)",{rx:6});
+  b+=`<line x1="650" y1="262" x2="650" y2="308" stroke="var(--fail)" stroke-width="3"/>`+T(660,290,"pod limit",{a:"start",s:12,c:"var(--fail)"});
+  b+=T(450,322,Math.round(s.mem*100)+" % of the limit",{s:13,w:400,c:"var(--muted)"});
+  if(s.ban)msgs.push(BANNER(360,s.ban));
+  if(s.note)msgs.push(T(450,358,s.note,{s:14,c:"var(--ok)"}));
+  return{base:b,msgs};
+}
+const steps={
+unb:[
+ {t:"A fast producer, a slow consumer",b:"The indexer offers 2,000 rows a second. Line 2 caps the loader at 1,000. Between them is an in-memory queue with no limit, so line 3 is false and every row is accepted.",w:"Every second, 1,000 more rows go in than come out.",tm:"0 s",rate:2000,q:0,mem:.1,pc:[1,2,3]},
+ {t:"After one second",b:"Line 8: queue = 0 + 2,000 - 1,000 = 1,000. Line 9: memory = 10 % + 1,000 x 0.0018 % = 12 %.",w:"The indexer looks fast. The gap is invisible in its own speed.",tm:"1 s",rate:2000,q:1000,mem:.118,pc:[8,9]},
+ {t:"After ten seconds",b:"Line 8 has run ten times, so the queue holds 10,000 rows. Line 9 gives 28 %.",w:"The queue is not a buffer for a burst. It is a slow leak of 1,000 rows every second.",tm:"10 s",rate:2000,q:10000,mem:.28,pc:[8,9]},
+ {t:"After forty seconds",b:"40,000 rows wait in memory. Line 9 gives 82 % of the pod limit. Line 10 is still false.",w:"A dashboard of indexer speed still looks green. Only memory tells the truth.",tm:"40 s",rate:2000,q:40000,mem:.82,pc:[9,10]},
+ {t:"The failure: out of memory",b:"At 50 seconds line 9 gives 10 % + 50,000 x 0.0018 % = 100 %. Line 10 is true and Kubernetes kills the pod. Line 3 never ran its check, because no limit was set. All 50,000 rows are gone.",w:"An unbounded queue hides the problem until it is fatal. A bigger queue only moves the crash later.",tm:"50 s",rate:2000,q:50000,mem:1,oom:true,ban:"Out of memory: 50,000 queued rows lost, the pod restarts.",pc:[3,9,10]},
+ {t:"The fix: set a limit",b:"Set limit = 10,000, so lines 4 to 7 run. At 50 seconds the same indexer has a full queue of 10,000 rows, memory is 28 %, and line 10 never fires.",w:"One number decides the most memory the gap can ever use.",tm:"50 s",rate:1000,q:10000,qmax:10000,mem:.28,full:true,note:"memory flat, nothing lost",pc:[3,4,5,7]}
+],
+bnd:[
+ {t:"Same speeds, a queue with a limit",b:"The limit is 10,000 rows. The indexer offers 2,000 a second, and the loader takes 1,000.",w:"The limit is the whole idea. It decides how much memory the gap may ever use.",tm:"0 s",rate:2000,q:0,qmax:10000,mem:.1,pc:[3]},
+ {t:"The queue fills",b:"Line 4 at 5 seconds: free = 10,000 - 4,000 + 1,000 = 7,000. Line 5: is 2,000 above 7,000? No, so all 2,000 rows go in. The queue reaches 5,000.",w:"Up to the limit, the queue absorbs the difference, as a burst buffer should.",tm:"5 s",rate:2000,q:5000,qmax:10000,mem:.19,pc:[4,5,8]},
+ {t:"Full: the signal travels back",b:"In second 11 the queue already holds 10,000. Line 4: free = 10,000 - 10,000 + 1,000 = 1,000. Line 5: is 2,000 above 1,000? Yes. Line 7 sets offered to 1,000, and the indexer waits.",w:"The loader's slowness now reaches the producer. That backward signal is back-pressure.",tm:"11 s",rate:1000,q:10000,qmax:10000,mem:.28,full:true,pc:[4,5,7]},
+ {t:"The indexer runs at the loader's pace",b:"Every second now, line 7 allows 1,000 rows and line 2 takes 1,000. Line 8 gives 10,000 + 1,000 - 1,000 = 10,000. Memory stays at 28 %.",w:"The slowest part sets the pace. The system is slower than the indexer could be, and it never crashes.",tm:"60 s",rate:1000,q:10000,qmax:10000,mem:.28,full:true,back:"wait for a free slot",note:"memory flat, nothing lost",pc:[7,8]},
+ {t:"Other rules at the limit",b:"Line 6 is a different rule: drop and count. With shed, by 60 seconds the queue holds 10,000 and 50,000 rows were dropped. Across HTTP the loader answers 429 Too Many Requests, and the caller backs off.",w:"Pick the rule per queue. Rows from a chain must not be dropped, so this indexer blocks. A metrics sample may be shed.",tm:"60 s",rate:1000,q:10000,qmax:10000,mem:.28,full:true,back:"block, slow down, or shed (429)",pc:[5,6]},
+ {t:"The same rule in real Go",b:"A buffered channel is this queue. Line 12 blocks while the channel is full. The program sends 1,000 rows through a buffer of 10: all 1,000 arrive, and the channel never holds more than 10.",w:"You get back-pressure for free from a channel with a size. An unbuffered append to a slice gives you the leak instead.",tm:"60 s",rate:1000,q:10000,qmax:10000,mem:.28,full:true,back:"queue <- r blocks",pc:[11,12]},
+ {t:"Pull instead of push",b:"With Kafka between them, line 13 reads only the 1,000 rows the loader asked for. After 60 seconds, 120,000 rows were written and 60,000 read. Line 14 gives a lag of 60,000 rows, on disk.",w:"Pull-based systems have back-pressure built in. Memory stays at 10 %, and the lag is visible and safe.",tm:"60 s",rate:2000,q:60000,lag:true,mem:.1,note:"backlog lives on disk as consumer lag",pc:[13,14]}
+]};
+const code={"*": {"label": "Go", "pc": ["each second:", "  taken = min(1000, queue + offered)       # the loader's pace", "  if a limit is set:", "    free = limit - queue + taken           # slots open this second", "    if offered > free:                     # the queue is full", "      rule shed: count and drop the extra rows", "      rule block: offered = free           # the indexer waits", "  queue = queue + offered - taken", "  memory = 10 % + queue x 0.0018 %         # share of the pod limit", "  if memory >= 100 %: pod killed, queue lost", "real Go: queue := make(chan row, size)", "  queue <- r                               # blocks while the channel is full", "pull: got = log.Pull(1000)                 # the reader asks for what it can take", "  lag = appended - consumed                # the backlog stays on disk"], "real": ["// Second runs one second. The loader's slowness reaches the indexer here.", "func (p *Pipeline) Second() {", "\toffered := indexerRate", "\ttaken := min(loaderRate, p.queue+offered)", "\tif p.limit > 0 {", "\t\tfree := p.limit - p.queue + taken", "\t\tif offered > free { // the queue is full: apply the rule", "\t\t\tif p.rule == Shed {", "\t\t\t\tp.shed += offered - free // dropped and counted", "\t\t\t}", "\t\t\toffered = free // Block: the indexer waits for a free slot", "\t\t}", "\t}", "\tp.queue += offered - taken", "\tp.rate = offered", "\tif p.Memory() >= 1 {", "\t\tp.killed = true // over the pod limit: every queued row is lost", "\t}", "}", "", "// Memory is the share of the pod limit in use.", "func (p *Pipeline) Memory() float64 { return baseMem + float64(p.queue)*rowMem }", "", "// ChannelDemo is the same rule in real Go: a buffered channel. A send blocks", "// when the buffer is full, so the buffer can never grow past its size.", "func ChannelDemo(rows, size int) (delivered, maxLen int) {", "\tqueue := make(chan int, size)", "\tgo func() {", "\t\tfor r := 0; r < rows; r++ {", "\t\t\tqueue <- r // blocks while the channel is full", "\t\t\tmaxLen = max(maxLen, len(queue))", "\t\t}", "\t\tclose(queue)", "\t}()", "\tfor range queue {", "\t\tdelivered++ // the consumer frees one slot per row", "\t}", "\treturn delivered, maxLen", "}", "", "// Pull gives the reader only what it asked for. The rest stays in the log.", "func (l *Log) Pull(n int) int {", "\tgot := min(n, l.appended-l.consumed)", "\tl.consumed += got", "\treturn got", "}"], "map": {"1": [2], "2": [4], "3": [5], "4": [6], "5": [7], "6": [8, 9], "7": [11], "8": [14], "9": [22], "10": [16, 17], "11": [27], "12": [30], "13": [42, 43], "14": [44]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

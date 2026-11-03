@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Change data capture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Change data capture</h1>
+  <p class="lede">The orders app writes to Postgres. The warehouse needs every change within seconds: inserts, updates and deletes. Press <b>Next</b> to compare reading the database change log with polling a timestamp column.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="cdc" id="tab-cdc">Read the change log (CDC)</button>
+    <button role="tab" aria-selected="false" data-mode="poll" id="tab-poll">Poll by updated_at (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Postgres with its log, a reader, a Kafka topic and the StarRocks copy</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-change-data-capture/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">just changed</span>
+    <span style="--c:var(--ok)">copied correctly</span>
+    <span style="--c:var(--line)">deleted</span>
+    <span style="--c:var(--coord)">reader with a saved position</span>
+    <span style="--c:var(--fail)">wrong or stopped</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet CDC</h2>
+      <p>Debezium reading the Postgres write-ahead log or the MySQL binlog into Kafka, then into a warehouse, a search index or a cache. You watch the replication slot lag and upsert by key.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it in patterns</h2>
+      <p>The outbox pattern: a service writes events to an outbox table in the same transaction, and CDC publishes them. A chain indexer is CDC on a blockchain: the chain is the log, the block height the position.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>CDC from the log</th><th>Polling updated_at</th></tr>
+      <tr><td>Sees deletes</td><td>Yes, as delete events</td><td>No</td></tr>
+      <tr><td>Sees writes that skip a column</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Order of changes</td><td>Kept per key</td><td>Lost within one poll</td></tr>
+      <tr><td>Load on the source</td><td>Reads the log, light</td><td>Repeated queries</td></tr>
+      <tr><td>Risk</td><td>A stalled reader fills the source disk</td><td>Silent wrong rows</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"CDC reads the database's own change log, so it sees every insert, update and delete in order, and the consumer upserts by key."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"cdc": {"label": "Go", "pc": ["snapshot: for each existing row r: publish(insert r)", "on each write in Postgres:", "  append the change to the write-ahead log   # before it is applied", "reader loop:", "  changes = log records after savedPosition", "  for each change c: publish(key c.id, before, after)", "  savedPosition = position of the last c     # the checkpoint", "consumer, for each event e:", "  if e is a delete: remove row e.key", "  else: upsert row e.key = e.after            # twice gives one row", "# a stalled reader: Postgres keeps every record after savedPosition", "alert when the log held for the reader grows (replication slot lag)"], "real": ["// the change is logged before it is applied, every time", "p.wal = append(p.wal, Change{LSN: len(p.wal) + 1, Op: op, Before: before, After: after})", "", "// Debezium reads the log from its saved position and publishes events.", "func (d *Debezium) Poll(p *Postgres) []Change {", "\tvar out []Change", "\tfor _, c := range p.wal {", "\t\tif c.LSN > d.saved { // only records after the saved position", "\t\t\tout = append(out, c)", "\t\t}", "\t}", "\tif len(out) > 0 {", "\t\td.saved = out[len(out)-1].LSN // save the new position: the checkpoint", "\t}", "\treturn out", "}", "", "// Apply upserts by key, and removes the row on a delete event.", "func Apply(wh map[int]Row, events []Change) {", "\tfor _, e := range events {", "\t\tswitch e.Op {", "\t\tcase \"delete\":", "\t\t\tdelete(wh, e.Before.ID)", "\t\tdefault:", "\t\t\twh[e.After.ID] = *e.After // same key twice gives one row", "\t\t}", "\t}", "}", "", "// Postgres keeps every record the reader has not read yet", "held := len(pg.wal) - d.saved // alert on this: the replication slot lag", "", "// snapshot first: every existing row goes out as an insert", "for id, r := range pg.rows {", "\twh[id] = r", "}"], "map": {"1": [33, 34, 35, 36], "2": [1], "3": [1, 2], "4": [5], "5": [7, 8, 9], "6": [15], "7": [12, 13], "8": [19, 20], "9": [22, 23], "10": [24, 25], "11": [30, 31], "12": [31]}}, "poll": {"label": "Go", "pc": ["every minute:", "  rows = SELECT * FROM orders WHERE updated_at > last", "  for each row r in rows: upsert r into the warehouse", "  last = now", "# a deleted row is never in rows", "# a write that skips updated_at is never in rows", "fix: read the change log instead (CDC)"], "real": ["last := 0", "poll := func() {", "\tfor id, r := range pg2.rows {", "\t\tif r.UpdatedAt > last { // only rows whose updated_at moved", "\t\t\twh2[id] = r", "\t\t}", "\t}", "\tlast++", "}", "", "// order 43 is deleted: it is no longer in pg2.rows, so the loop never sees it", "pg2.write(\"delete\", 43, \"\", 2, true)", "// a repair script sets cancelled but forgets updated_at", "pg2.write(\"update\", 41, \"cancelled\", 3, false)", "", "// the fix is the reader above: d.Poll(pg) reads every log record"], "map": {"1": [1, 2], "2": [3, 4], "3": [5], "4": [8], "5": [11, 12], "6": [13, 14], "7": [16]}}};
+
+const R=(id,st,s)=>["order "+id+": "+st,s];
+const P0=[R(41,"new","idle"),R(42,"new","idle"),R(43,"new","idle")];
+const steps={
+"cdc":[
+ {pc:[1],t:"Snapshot first",b:"Debezium starts by copying the rows that already exist: orders 41, 42 and 43. Each becomes an event on the Kafka topic, and StarRocks stores them.",w:"The snapshot gives a starting point. From here on, only changes travel.",pg:P0,wal:[],rd:["snapshot","var(--wait)"],kf:[["snapshot 41","ok"],["snapshot 42","ok"],["snapshot 43","ok"]],wh:[R(41,"new","ok"),R(42,"new","ok"),R(43,"new","ok")]},
+ {pc:[2, 3],t:"An order is paid",b:"The orders app runs UPDATE on order 42: status paid. Postgres first writes the change to its write-ahead log, the file where every change is recorded before it is applied.",w:"The log holds every change in order, including ones no column marks.",pg:[R(41,"new","idle"),R(42,"paid","new"),R(43,"new","idle")],wal:[["update 42: new to paid","new"]],rd:["position 0","var(--coord)"],kf:[],wh:[R(41,"new","ok"),R(42,"new","ok"),R(43,"new","ok")]},
+ {pc:[4, 5, 6, 7],t:"Read the log",b:"Debezium asks the log for every record after its saved position, 0. There is one: record 1, order 42, before new, after paid. It publishes that event, then saves position 1.",w:"The saved position is the checkpoint. A restart replays from it.",pg:[R(41,"new","idle"),R(42,"paid","idle"),R(43,"new","idle")],wal:[["update 42: new to paid","ok"]],rd:["position 1","var(--coord)"],kf:[["42: before new, after paid","new"]],wh:[R(41,"new","ok"),R(42,"new","ok"),R(43,"new","ok")]},
+ {pc:[8, 10],t:"Upsert by key",b:"StarRocks checks the event type. It is an update, so it upserts the after row under key 42: the row becomes paid. If the same event arrives twice, the second write lands on the same key and changes nothing.",w:"Keyed events make the consumer idempotent.",pg:[R(41,"new","idle"),R(42,"paid","idle"),R(43,"new","idle")],wal:[["update 42: new to paid","ok"]],rd:["position 1","var(--coord)"],kf:[["42: before new, after paid","ok"]],wh:[R(41,"new","ok"),R(42,"paid","new"),R(43,"new","ok")]},
+ {pc:[3, 9],t:"A delete travels too",b:"The app deletes order 43. The log writes record 2: delete 43, with the row before. Debezium reads it, saves position 2, and publishes a delete event. StarRocks sees the type delete and removes key 43.",w:"Deletes are the reason to read the log. A query on the table can never see a row that is gone.",pg:[R(41,"new","idle"),R(42,"paid","idle"),["order 43: deleted","gone"]],wal:[["update 42: new to paid","ok"],["delete 43","ok"]],rd:["position 2","var(--coord)"],kf:[["42: before new, after paid","ok"],["43: deleted","new"]],wh:[R(41,"new","ok"),R(42,"paid","ok"),["order 43: removed","gone"]]},
+ {pc:[11, 12],t:"The failure that matters",b:"Debezium stops at position 2. Postgres must keep every log record after position 2 for it, so each new write grows the held log. On Monday the disk is full and the orders database stops taking writes.",w:"A stalled reader can take down the source. Fix: alert on the replication slot lag, and drop an abandoned slot.",pg:[R(41,"new","bad"),R(42,"paid","bad"),R(43,"new","bad")],wal:[["update ...","bad"],["update ...","bad"],["insert ...","bad"],["update ...","bad"],["disk full","bad"]],rd:["stopped","var(--fail)"],kf:[],wh:[R(41,"new","ok"),R(42,"paid","ok")],fail:true}
+],
+"poll":[
+ {pc:[1, 2],t:"Polling instead",b:"Another team copies orders with a query every minute: SELECT rows WHERE updated_at is later than the last run.",w:"No new tools, no log access. It looks fine at first.",pg:P0,wal:[],rd:["poll every minute","var(--wait)"],kf:[],wh:[R(41,"new","ok"),R(42,"new","ok"),R(43,"new","ok")],poll:true},
+ {pc:[2, 3, 4],t:"An update is copied",b:"Order 42 is paid and its updated_at is set. The next poll finds it and copies it.",w:"Updates that touch updated_at work.",pg:[R(41,"new","idle"),R(42,"paid","new"),R(43,"new","idle")],wal:[],rd:["found 42","var(--wait)"],kf:[],wh:[R(41,"new","ok"),R(42,"paid","new"),R(43,"new","ok")],poll:true},
+ {pc:[2, 5],t:"A delete is invisible",b:"Order 43 is deleted. The poll asks for rows whose updated_at is later than its last run. A deleted row has no updated_at, because it has no row at all.",w:"The warehouse keeps order 43 forever.",pg:[R(41,"new","idle"),R(42,"paid","idle"),["order 43: deleted","gone"]],wal:[],rd:["found nothing","var(--wait)"],kf:[],wh:[R(41,"new","ok"),R(42,"paid","ok"),R(43,"new","bad")],poll:true},
+ {pc:[2, 6],t:"A silent update",b:"A repair script sets order 41 to cancelled but forgets to set updated_at. The poll never sees it.",w:"Any write path that skips the column is lost.",pg:[R(41,"cancelled","new"),R(42,"paid","idle"),["order 43: deleted","gone"]],wal:[],rd:["found nothing","var(--wait)"],kf:[],wh:[R(41,"new","bad"),R(42,"paid","ok"),R(43,"new","bad")],poll:true},
+ {pc:[5, 6],t:"The failure that matters",b:"Two of three warehouse rows are now wrong, and nothing reported an error. Reports show a cancelled order as open and a deleted order as real.",w:"Polling misses deletes and any write that skips updated_at. Fix: read the database change log with CDC.",pg:[R(41,"cancelled","idle"),R(42,"paid","idle"),["order 43: deleted","gone"]],wal:[],rd:["green, and wrong","var(--fail)"],kf:[],wh:[R(41,"new","bad"),R(42,"paid","ok"),R(43,"new","bad")],poll:true,fail:true}
+]};
+const FILL={idle:"var(--panel)",new:"var(--wait)",ok:"var(--ok)",bad:"var(--fail)",gone:"var(--line)"};
+function rows(x,y,w,list,h=34){return list.map(([t,st],j)=>{const f=FILL[st];return B(x,y+j*(h+6),w,h,f,6,'stroke="var(--line)"')+T(x+w/2,y+j*(h+6)+h/2+5,t,{c:ink(f),w:400,s:13});}).join("");}
+function draw(s){
+  let o=T(20,26,"Postgres orders",{a:"start"})+rows(20,38,210,s.pg);
+  if(!s.poll){o+=T(20,190,"write-ahead log",{a:"start",c:"var(--muted)"})+rows(20,200,210,s.wal,26);}
+  o+=chip(270,150,170,56,s.rd[1],s.poll?"Poll job":"Debezium",s.rd[0]);
+  o+=`<line x1="232" y1="178" x2="268" y2="178" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#arr)"/>`;
+  if(!s.poll){o+=T(480,26,"Kafka topic: orders",{a:"start"})+B(470,38,200,300,"none",8,'stroke="var(--line)" stroke-dasharray="6 4"')+rows(480,48,180,s.kf);
+    o+=`<line x1="442" y1="178" x2="468" y2="178" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#arr)"/><line x1="672" y1="178" x2="688" y2="178" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#arr)"/>`;}
+  else o+=`<line x1="442" y1="178" x2="688" y2="178" stroke="var(--muted)" stroke-width="2.5" marker-end="url(#arr)"/>`+T(565,168,"SELECT WHERE updated_at > last",{s:12,c:"var(--muted)"});
+  o+=T(700,26,"StarRocks orders",{a:"start"})+rows(700,38,180,s.wh);
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

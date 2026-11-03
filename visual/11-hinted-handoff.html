@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hinted handoff</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Hinted handoff: a neighbour holds the write</h1>
+  <p class="lede">Node C holds a copy of Ana's cart, and C is rebooting. Ana adds headphones anyway. Watch node D keep the write for C and hand it over later. Then watch C stay down too long, and a Merkle tree find what it missed. Press <b>Next</b>.</p>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="hand">Hold and hand over</button>
+    <button role="tab" aria-selected="false" data-mode="repair">Down too long: repair</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <g data-scene="hand">
+          <rect id="an" class="box" x="20" y="170" width="160" height="52" rx="8"/><text id="an-t" x="100" y="201">Ana's cart</text>
+          <rect id="co" class="box" x="240" y="170" width="190" height="52" rx="8"/><text id="co-t" x="335" y="201">Coordinator B</text>
+          <rect id="na" class="box" x="560" y="40" width="240" height="52" rx="8"/><text id="na-t" x="680" y="71">Node A (copy)</text>
+          <rect id="nc" class="box" x="560" y="170" width="240" height="52" rx="8"/><text id="nc-t" x="680" y="201">Node C (copy)</text>
+          <rect id="nd" class="box" x="560" y="300" width="240" height="52" rx="8"/><text id="nd-t" x="680" y="331">Node D (next healthy)</text>
+          <g id="hint" class="msg"><rect x="600" y="358" width="160" height="32" rx="6" fill="var(--undo)"/><text x="680" y="379" fill="#fff" class="sm">hint: belongs to C</text></g>
+          <text id="wq" x="335" y="120" fill="var(--muted)" class="sm">needs W = 2 of 3</text>
+        </g>
+        <g data-scene="repair">
+          <text x="230" y="40" fill="var(--muted)">Copy on node B</text>
+          <line x1="230" y1="100" x2="140" y2="150" stroke="var(--line)" stroke-width="2"/><line x1="230" y1="100" x2="320" y2="150" stroke="var(--line)" stroke-width="2"/><line x1="140" y1="190" x2="84" y2="250" stroke="var(--line)" stroke-width="2"/><line x1="140" y1="190" x2="179" y2="250" stroke="var(--line)" stroke-width="2"/><line x1="320" y1="190" x2="274" y2="250" stroke="var(--line)" stroke-width="2"/><line x1="320" y1="190" x2="369" y2="250" stroke="var(--line)" stroke-width="2"/>
+          <rect id="br" class="box" x="180" y="60" width="100" height="40" rx="6"/><text id="br-t" x="230.0" y="86" class="sm">hash</text>
+          <rect id="ba" class="box" x="70" y="150" width="140" height="40" rx="6"/><text id="ba-t" x="140.0" y="176" class="sm">hash</text>
+          <rect id="bb" class="box" x="250" y="150" width="140" height="40" rx="6"/><text id="bb-t" x="320.0" y="176" class="sm">hash</text>
+          <rect id="bl0" class="box" x="40" y="250" width="88" height="40" rx="6"/><text id="bl0-t" x="84" y="276" class="sm">keys 0–24</text>
+          <rect id="bl1" class="box" x="135" y="250" width="88" height="40" rx="6"/><text id="bl1-t" x="179" y="276" class="sm">keys 25–49</text>
+          <rect id="bl2" class="box" x="230" y="250" width="88" height="40" rx="6"/><text id="bl2-t" x="274" y="276" class="sm">keys 50–74</text>
+          <rect id="bl3" class="box" x="325" y="250" width="88" height="40" rx="6"/><text id="bl3-t" x="369" y="276" class="sm">keys 75–99</text>
+          <text x="670" y="40" fill="var(--muted)">Copy on node C</text>
+          <line x1="670" y1="100" x2="580" y2="150" stroke="var(--line)" stroke-width="2"/><line x1="670" y1="100" x2="760" y2="150" stroke="var(--line)" stroke-width="2"/><line x1="580" y1="190" x2="524" y2="250" stroke="var(--line)" stroke-width="2"/><line x1="580" y1="190" x2="619" y2="250" stroke="var(--line)" stroke-width="2"/><line x1="760" y1="190" x2="714" y2="250" stroke="var(--line)" stroke-width="2"/><line x1="760" y1="190" x2="809" y2="250" stroke="var(--line)" stroke-width="2"/>
+          <rect id="cr" class="box" x="620" y="60" width="100" height="40" rx="6"/><text id="cr-t" x="670.0" y="86" class="sm">hash</text>
+          <rect id="ca" class="box" x="510" y="150" width="140" height="40" rx="6"/><text id="ca-t" x="580.0" y="176" class="sm">hash</text>
+          <rect id="cb" class="box" x="690" y="150" width="140" height="40" rx="6"/><text id="cb-t" x="760.0" y="176" class="sm">hash</text>
+          <rect id="cl0" class="box" x="480" y="250" width="88" height="40" rx="6"/><text id="cl0-t" x="524" y="276" class="sm">keys 0–24</text>
+          <rect id="cl1" class="box" x="575" y="250" width="88" height="40" rx="6"/><text id="cl1-t" x="619" y="276" class="sm">keys 25–49</text>
+          <rect id="cl2" class="box" x="670" y="250" width="88" height="40" rx="6"/><text id="cl2-t" x="714" y="276" class="sm">keys 50–74</text>
+          <rect id="cl3" class="box" x="765" y="250" width="88" height="40" rx="6"/><text id="cl3-t" x="809" y="276" class="sm">keys 75–99</text>
+          <text id="rt" x="450" y="340" fill="var(--fg)"></text>
+          <text id="rt2" x="450" y="368" fill="var(--muted)" class="sm"></text>
+        </g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">sending or comparing</span>
+    <span style="--c:var(--ok)">up to date, or hashes match</span>
+    <span style="--c:var(--undo)">holding a hint for another node</span>
+    <span style="--c:var(--fail)">down, stale, or hashes differ</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cassandra and ScyllaDB run hinted handoff by default with a hint window you can tune. Cassandra's default window is three hours. Their repair command compares Merkle trees between copies and streams only the ranges that differ.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Treat hints as the fast path, not the only repair. After a node was down longer than the window, run a repair before trusting its reads. The same idea fits any stand-in that buffers for a missing peer.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Hinted handoff</th><th>Merkle-tree repair</th></tr>
+      <tr><td>When it runs</td><td>On every write while a node is down</td><td>On a schedule, or by hand after an outage</td></tr>
+      <tr><td>What it moves</td><td>Exactly the missed writes</td><td>Only the key ranges whose hashes differ</td></tr>
+      <tr><td>Fails when</td><td>The node stays down past the window, or the stand-in dies</td><td>Rarely, but it costs disk reads and network</td></tr>
+      <tr><td>Speed</td><td>Seconds after the node returns</td><td>Minutes to hours on big tables</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Hinted handoff lets a healthy neighbour hold a write for a node that is down and hand it over when it returns, with Merkle-tree repair as the backstop."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const tf={};["b","c"].forEach(p=>["r","a","b","l0","l1","l2","l3"].forEach(k=>tf[p+k]=N));
+const D={hand:{f:{an:N,co:N,na:N,nc:N,nd:N},x:{"nc-t":"Node C (copy)","nd-t":"Node D (next healthy)",wq:"needs W = 2 of 3"}},
+ repair:{f:tf,x:{rt:"",rt2:""}}};
+const allG=o=>{const r={};for(const k in tf)r[k]=G;return Object.assign(r,o||{});};
+const steps={
+hand:[
+ {t:"Three copies, one is rebooting",b:"Ana's cart has copies on nodes B, A and C, its preference list. Node C is rebooting after a kernel update, and has been down for less than a minute.",w:"Dynamo promised the cart always takes a write. It cannot wait for C.",f:{co:C,na:G,nc:R},x:{"nc-t":"Node C: rebooting"},pc:[2]},
+ {t:"Ana adds headphones",b:"Coordinator B loops over the owners. B is up: store. A is up: store. C is down. So far 2 answers: W = 2 is met, but the third copy is missing.",w:"Two answers are enough for Ana. The next check decides what happens to C's copy.",f:{an:C,co:C,na:G,nc:R},x:{"nc-t":"Node C: rebooting"},m:[[180,196,238,196,"add",C],[430,186,558,66,"",C],[430,196,558,196,"no answer",R,true,495,186]],pc:[1, 2, 3, 6]},
+ {t:"B picks a stand-in: node D",b:"For C, the check is 'has it been down less than 3 hours?'. Yes. So D, the next healthy node on the ring, stores the write as a hint: owner C, key cart, value headphones.",w:"D stores it apart from its own data, in a hint area. Ana sees 'added' at once.",f:{an:G,co:C,na:G,nc:R,nd:P},x:{"nc-t":"Node C: rebooting","nd-t":"Node D (stand-in)"},on:["hint"],m:[[430,206,558,316,"write + hint",P,false,470,290]],pc:[4, 5, 6]},
+ {t:"D waits for C",b:"Every few seconds D loops over its hints and asks 'is the owner up?'. C is still down, so 0 are delivered and the hint stays. Ana's cart reads come from B and A.",w:"The hint is a promise D keeps on C's behalf.",f:{co:G,na:G,nc:R,nd:P},x:{"nc-t":"Node C: rebooting","nd-t":"Node D (stand-in)"},on:["hint"],m:[[680,298,680,224,"alive?",N,true]],pc:[7, 8]},
+ {t:"C returns: hand over",b:"Twenty minutes later C is back. The same check now says yes. D sends the hinted write, and C stores the headphones: 1 delivered.",w:"This is the handoff. C catches up on exactly what it missed, in seconds.",f:{co:G,na:G,nc:Y,nd:P},x:{"nc-t":"Node C: catching up","nd-t":"Node D (stand-in)"},on:["hint"],m:[[700,298,700,224,"hinted write",P,false,760,262]],pc:[8]},
+ {t:"All three copies match",b:"C acknowledges, so D deletes the hint: 0 left. B, A and C all hold the headphones again.",w:"Nobody ran a repair, and Ana never saw an error.",f:{co:G,na:G,nc:G,nd:N},x:{"nc-t":"Node C (copy)"},pc:[8]}
+],
+repair:[
+ {t:"C was down for five hours",b:"This time C's disk was replaced and it was down for 5 hours, from hour 10. A write at hour 11 passes '1 < 3 hours' and gets a hint. A write at hour 14 fails '4 < 3', so it gets none.",w:"Cassandra's default hint window is three hours. Past it, stand-ins stop keeping hints for C, so they do not fill up their disks.",f:{cr:R},x:{rt:"node C down 5 hours, hint window 3 hours"},pc:[4, 9]},
+ {t:"The failure that matters: C comes back stale",b:"C returns and the one hint is delivered: k10 = v2. But k60, written at hour 14, was never hinted. C holds k60 = v1 while B holds v2. A read that asks C may get an old value.",w:"Hints are a fast path, not a guarantee. Something must find what C missed.",f:allG({cr:R,cb:R,cl2:R}),x:{rt:"C missed 2 hours of writes",rt2:"which keys? scanning everything would be slow"},pc:[8, 9]},
+ {t:"Repair: compare the top hashes",b:"Node B and node C each build a Merkle tree: a hash per key range (4 leaves of 25 keys here), then hashes of those hashes, up to one top hash. They compare the tops: 5180881d and 2beab034.",w:"If the top hashes matched, the copies would be identical and nothing more would be sent. They differ.",f:{br:C,cr:R},x:{rt:"top hashes differ",rt2:"one number tells us something is different"},pc:[10, 11, 12]},
+ {t:"Walk down only where they differ",b:"The check at each level is 'do these two hashes match?'. The left halves (keys 0 to 49) match, so they are skipped. The right halves differ, so the walk goes down there.",w:"Each level halves the search. A huge table needs only a few rounds of comparing hashes.",f:{br:C,cr:R,ba:G,ca:G,bb:C,cb:R},x:{rt:"left half equal: skip",rt2:"right half differs: look closer"},pc:[13]},
+ {t:"Find the one range",b:"Under the right half, keys 75 to 99 match. Keys 50 to 74 differ. That is the range holding k60. In all, 5 hashes were compared.",w:"Each level halves the search. A huge table needs only a few rounds of comparing hashes.",f:allG({br:C,cr:R,bb:C,cb:R,bl2:C,cl2:R}),x:{rt:"range 50–74 differs",rt2:"three other ranges already match"},pc:[13, 14]},
+ {t:"Copy only that range",b:"B streams keys 50 to 74 to C. The trees are rebuilt, and now the top hashes are equal.",w:"Repair is the backstop that makes the hint window safe. Run it after any node was down longer than the window.",f:allG(),x:{rt:"repaired: all hashes match",rt2:"only one range was copied"},pc:[14, 12]}
+]};
+const code={main:{"label": "Go", "dir": "11-hinted-handoff", "pc": ["write(key, value):", "  for owner in preference list [B, A, C]:", "    if owner is up: store at owner", "    else if now - owner.downSince < 3 hours:      # the hint window", "      next healthy node D stores (owner, key, value) as a hint", "  wait for W = 2 answers, then tell Ana \"added\"", "every few seconds, at D, for each hint:", "  if hint.owner is up: send it; on ack delete the hint   # the handoff", "past the window: no new hints for C        # so stand-ins do not fill up", "repair(B, C):", "  build a Merkle tree on each: a hash per key range, then hashes of hashes", "  if the top hashes match: done", "  walk down: skip every half whose hashes match", "  copy only the leaf ranges that differ"], "real": ["type Node struct {", "\tName      string", "\tUp        bool", "\tDownSince int // hour", "\tData      map[string]string", "\tHints     []Hint", "}", "", "func Write(owners []*Node, standIn *Node, hour int, k, v string) (acks int) {", "\tfor _, o := range owners {", "\t\tif o.Up {", "\t\t\to.Data[k] = v", "\t\t\tacks++", "\t\t} else if hour-o.DownSince < 3 {", "\t\t\tstandIn.Hints = append(standIn.Hints, Hint{o.Name, k, v})", "\t\t}", "\t}", "\treturn acks", "}", "", "func (d *Node) Deliver(owner *Node) (sent int) {", "\tvar keep []Hint", "\tfor _, h := range d.Hints {", "\t\tif h.Owner == owner.Name && owner.Up {", "\t\t\towner.Data[h.Key] = h.Value", "\t\t\tsent++", "\t\t} else {", "\t\t\tkeep = append(keep, h)", "\t\t}", "\t}", "\td.Hints = keep", "\treturn sent", "}", "", "// Tree holds hashes: index 1 is the top, 2 and 3 its halves, 4..7 the leaves.", "func Tree(n *Node) [8]uint32 {", "\tvar t [8]uint32", "\tfor i := 0; i < 4; i++ {", "\t\tt[4+i] = hashRange(n, i*25, i*25+24)", "\t}", "\tfor i := 3; i >= 1; i-- {", "\t\tt[i] = t[2*i] ^ t[2*i+1]*16777619", "\t}", "\treturn t", "}", "", "// Diff walks down from the top and returns the leaves that differ.", "func Diff(a, b [8]uint32, i int, compared *int) []int {", "\t*compared++", "\tif a[i] == b[i] {", "\t\treturn nil", "\t}", "\tif i >= 4 {", "\t\treturn []int{i}", "\t}", "\treturn append(Diff(a, b, 2*i, compared), Diff(a, b, 2*i+1, compared)...)", "}", ""], "map": {"1": [9], "2": [10], "3": [11, 12], "6": [13, 18], "4": [14], "9": [14], "5": [15], "7": [21, 23], "8": [24, 25, 26, 31], "10": [36], "11": [36, 38, 39, 41, 42], "12": [48, 50], "13": [48, 50, 51, 56], "14": [54]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

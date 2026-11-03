@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hash index</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Hash index: one probe for equality, nothing else</h1>
+  <p class="lede">A hash index on <code>tx_hash</code>, drawn as eight buckets. A key is hashed straight to its bucket. Watch an equality lookup, then a range.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="eq">Equality lookup</button>
+    <button role="tab" aria-selected="false" data-mode="range">Range fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 296" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">A lookup key, a hash function and eight buckets of keys</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="key" class="box" data-f="var(--line)" x="30" y="30" width="240" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="key-t" data-t="lookup" x="150" y="53" text-anchor="middle" font-size="13" fill="var(--fg)">lookup</text>
+<text id="key-u" data-t="" x="150" y="73" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="hf" class="box" data-f="var(--line)" x="330" y="30" width="200" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="hf-t" data-t="hash function" x="430" y="53" text-anchor="middle" font-size="13" fill="var(--fg)">hash function</text>
+<text id="hf-u" data-t="" x="430" y="73" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<path id="a1" class="msg" d="M270 58 L326 58" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text x="30" y="124" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">buckets of the hash index on tx_hash</text>
+<rect id="b0" class="box" data-f="var(--line)" x="30" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b0-t" data-t="bucket 0" x="79.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 0</text>
+<text id="b0-u" data-t="0x8dbd" x="79.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0x8dbd</text>
+<rect id="b1" class="box" data-f="var(--line)" x="137" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b1-t" data-t="bucket 1" x="186.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 1</text>
+<text id="b1-u" data-t="0x6426" x="186.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0x6426</text>
+<rect id="b2" class="box" data-f="var(--line)" x="244" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b2-t" data-t="bucket 2" x="293.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 2</text>
+<text id="b2-u" data-t="" x="293.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)"></text>
+<rect id="b3" class="box" data-f="var(--line)" x="351" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b3-t" data-t="bucket 3" x="400.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 3</text>
+<text id="b3-u" data-t="0xfcc1" x="400.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0xfcc1</text>
+<rect id="b4" class="box" data-f="var(--line)" x="458" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b4-t" data-t="bucket 4" x="507.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 4</text>
+<text id="b4-u" data-t="0x0561" x="507.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0x0561</text>
+<rect id="b5" class="box" data-f="var(--line)" x="565" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b5-t" data-t="bucket 5" x="614.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 5</text>
+<text id="b5-u" data-t="0x764c · 0x48e5" x="614.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0x764c · 0x48e5</text>
+<rect id="b6" class="box" data-f="var(--line)" x="672" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b6-t" data-t="bucket 6" x="721.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 6</text>
+<text id="b6-u" data-t="0x2f8b" x="721.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0x2f8b</text>
+<rect id="b7" class="box" data-f="var(--line)" x="779" y="134" width="99" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="b7-t" data-t="bucket 7" x="828.5" y="157" text-anchor="middle" font-size="12" fill="var(--fg)">bucket 7</text>
+<text id="b7-u" data-t="0xe2c9" x="828.5" y="177" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">0xe2c9</text>
+<path id="a2" class="msg" d="M430 86 L380 130" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="note" data-t="" x="30" y="226" text-anchor="start" font-size="14" font-weight="400" fill="var(--fg)"></text>
+<rect x="20" y="246" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="272" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="271" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-hash-index/main.go</code> (<code>go run .</code>). The program models the index in memory with a real FNV hash, so the bucket numbers here are what it prints.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">working</span>
+    <span style="--c:var(--ok)">found in one probe</span>
+    <span style="--c:var(--wait)">collision</span>
+    <span style="--c:var(--fail)">every bucket read</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL <code>CREATE INDEX ... USING hash</code> for pure equality on long keys. InnoDB builds an adaptive hash index by itself over hot B-tree pages. A hash join and a Redis key lookup run on the same idea.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Default to a B-tree. Add a hash index only when every query is exact equality and the key is long. Never for ranges, sorts or prefixes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Hash index</th><th>B-tree</th></tr>
+      <tr><td>Equality</td><td>about one probe</td><td>a few page reads</td></tr>
+      <tr><td>Range, sort, prefix</td><td>no</td><td>yes</td></tr>
+      <tr><td>Size on long keys</td><td>smaller</td><td>larger</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"A hash index finds one key in about one probe but keeps no order, so it serves equality and nothing else."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+eq:[
+ {"t": "An equality lookup", "b": "The table maps tx_hash to its block, and every query is tx_hash = :h. The lookup starts with the key 0xfcc1.", "w": "A hash index is built for exactly this question.", "f": {"key": "c"}, "x": {"key-u": "tx_hash = 0xfcc1", "sql": "WHERE tx_hash = :h"}, "pc": [1], "rl": [4, 5, 6]},
+ {"t": "Hash the key", "b": "The hash function turns the key into a big number. The bucket is that number modulo 8, the bucket count. For 0xfcc1 the answer is 3.", "w": "No tree to walk: the bucket number comes straight from the key.", "f": {"key": "c", "hf": "c"}, "on": ["a1"], "x": {"key-u": "tx_hash = 0xfcc1", "hf-u": "hash mod 8 = bucket 3", "big": "one hash, one bucket"}, "pc": [1, 2], "rl": [1, 4, 5, 6]},
+ {"t": "Read the bucket, compare the key", "b": "The engine reads bucket 3 and compares each key in it with the one it wants. The first key is 0xfcc1, so it matches after 1 comparison, and the pointer leads to the row.", "w": "In the program, 1,000 keys cost 1.53 comparisons per lookup and 1,000,000 keys cost 1.50. The size of the table does not matter.", "f": {"key": "c", "hf": "c", "b3": "ok"}, "on": ["a1", "a2"], "x": {"key-u": "tx_hash = 0xfcc1", "hf-u": "hash mod 8 = bucket 3", "big": "found after 1 comparison"}, "pc": [3, 4, 5], "rl": [6, 8, 9, 10]},
+ {"t": "Two keys in one bucket", "b": "0x48e5 hashes to bucket 5, which also holds 0x764c. Different keys can share a remainder. The lookup compares 0x764c: no. Then 0x48e5: yes. That is 2 comparisons.", "w": "Collisions are normal. The key comparison keeps the answer right.", "f": {"key": "c", "hf": "c", "b5": "w"}, "on": ["a1"], "x": {"key-u": "tx_hash = 0x48e5", "hf-u": "hash mod 8 = bucket 5", "big": "collision: compare 2 keys"}, "pc": [3, 4, 5], "rl": [1, 8]},
+ {"t": "Growing by splitting buckets", "b": "When buckets fill, the index doubles to 16 buckets. A key of bucket 5 now stays in 5 or moves to 13, the remainder modulo 16 decides. 0x764c stays. 0x48e5 moves to 13, drawn off the edge. Its lookup is back to 1 comparison.", "w": "Use it for pure equality on long keys, where it is smaller than a B-tree.", "f": {"b5": "ok"}, "x": {"b5-u": "0x764c", "note": "doubled to 16 buckets: 0x48e5 moved to bucket 13, not drawn", "big": "split keeps buckets short"}, "pc": [10, 11], "rl": [1, 12, 13]}
+],
+range:[
+ {"t": "A range of hashes", "b": "A new report asks WHERE tx_hash > 0x9c00. Buckets are placed by hash value, not by key order.", "w": "Keys next to each other land in buckets far apart.", "f": {"key": "c"}, "x": {"key-u": "tx_hash > 0x9c00", "sql": "WHERE tx_hash > 0x9c00"}, "pc": [6]},
+ {"t": "Every bucket must be read", "b": "There is no one key to hash, so no bucket number comes out. Any bucket could hold a key above 0x9c00. All 8 are read, and 2 keys match, in buckets 3 and 7.", "w": "A hash index has no idea of before or after.", "f": {"key": "c", "b0": "f", "b1": "f", "b2": "f", "b3": "f", "b4": "f", "b5": "f", "b6": "f", "b7": "f"}, "x": {"key-u": "tx_hash > 0x9c00", "hf-u": "no single bucket", "big": "reads 8 of 8: a scan"}, "pc": [6, 7]},
+ {"t": "Order is lost too", "b": "ORDER BY tx_hash needs keys in order. The buckets give them in remainder order, 0x8dbd then 0x6426, so the engine must sort. The plan shows an extra Sort step.", "w": "No range, no sort.", "f": {"b0": "f", "b1": "f", "b2": "f", "b3": "f", "b4": "f", "b5": "f", "b6": "f", "b7": "f"}, "x": {"key-u": "ORDER BY tx_hash", "big": "scan, then sort", "sql": "ORDER BY tx_hash"}, "pc": [8]},
+ {"t": "Prefix search fails as well", "b": "LIKE '0xfc%' is a range of keys. A good hash scatters neighbours on purpose: 0xfcc1 goes to bucket 3, and 0xfcc2 goes to bucket 6.", "w": "Anything but exact equality falls back to a scan.", "f": {"b0": "f", "b1": "f", "b2": "f", "b3": "f", "b4": "f", "b5": "f", "b6": "f", "b7": "f"}, "x": {"key-u": "tx_hash LIKE '0xfc%'", "big": "reads 8 of 8", "sql": "LIKE '0xfc%'"}, "pc": [9]},
+ {"t": "Fix: the right index for the question", "b": "Keep a B-tree for ranges, sorts and prefixes. Add a hash index only when every query is exact equality.", "w": "The B-tree is the default for a reason: it answers equality almost as fast, and everything else too.", "f": {"key": "ok", "b3": "ok"}, "x": {"key-u": "B-tree for range, hash for =", "big": "pick the index by the question", "sql": "CREATE INDEX ... USING btree"}, "pc": [12]}
+]
+};
+const base={};
+const code={
+"eq":{
+ label:"SQL",
+ pc:["get(key):", "  bucket = hash(key) mod bucket_count     # no tree to walk", "  for each entry in bucket:", "    if entry.key = key:                   # two keys can share a bucket", "      return entry.row_pointer", "range or LIKE 'x%':", "  no key to hash: read every bucket, compare every key", "ORDER BY: buckets have no key order, so scan, then sort", "prefix: neighbours hash far apart, so a scan again", "when buckets fill up:", "  double bucket_count; each key stays in b or moves to b + old count", "choose: B-tree by default, hash only when every query is exact equality"],
+ real:["CREATE INDEX tx_by_hash ON transfers USING hash (tx_hash);", "", "-- exact equality: the only question it answers", "SELECT block_height, amount", "FROM   transfers", "WHERE  tx_hash = '0xfcc1';", "", "-- Index Scan using tx_by_hash", "--   Index Cond: tx_hash = '0xfcc1'", "--   Rows Removed by Index Recheck: 0", "", "-- the size against a B-tree on the same long key", "SELECT pg_size_pretty(pg_relation_size('tx_by_hash'));"],
+ map:{"1": [4, 5, 6], "2": [8, 9], "3": [9], "4": [9, 10], "5": [8], "10": [1, 13], "11": [1, 13]}},
+"range":{
+ label:"SQL",
+ pc:["get(key):", "  bucket = hash(key) mod bucket_count     # no tree to walk", "  for each entry in bucket:", "    if entry.key = key:                   # two keys can share a bucket", "      return entry.row_pointer", "range or LIKE 'x%':", "  no key to hash: read every bucket, compare every key", "ORDER BY: buckets have no key order, so scan, then sort", "prefix: neighbours hash far apart, so a scan again", "when buckets fill up:", "  double bucket_count; each key stays in b or moves to b + old count", "choose: B-tree by default, hash only when every query is exact equality"],
+ real:["-- all three ignore the hash index", "SELECT * FROM transfers WHERE tx_hash > '0x9c00';", "-- Seq Scan   Filter: tx_hash > '0x9c00'", "", "SELECT * FROM transfers ORDER BY tx_hash;", "-- Sort   Sort Key: tx_hash", "--   Seq Scan on transfers", "", "SELECT * FROM transfers WHERE tx_hash LIKE '0xfc%';", "-- Seq Scan   Filter: tx_hash ~~ '0xfc%'", "", "-- the fix: a B-tree answers all of them, and equality too", "CREATE INDEX tx_by_hash_btree ON transfers USING btree (tx_hash);"],
+ map:{"6": [2], "7": [2, 3], "8": [5, 6, 7], "9": [9, 10], "12": [12, 13]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

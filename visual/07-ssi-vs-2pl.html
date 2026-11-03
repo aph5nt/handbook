@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2PL or SSI</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Serializable: two-phase locking or SSI</h1>
+  <p class="lede">Ana and Ben are on call. The rule: at least one stays. Both ask to go off at the same moment. Two engines both promise serializable, and both stop the bug, in opposite ways. Two-phase locking (2PL) makes them wait. Serializable Snapshot Isolation (SSI) lets them run, then aborts one.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pl">Two-phase locking (2PL)</button>
+    <button role="tab" aria-selected="false" data-mode="ssi">Serializable Snapshot Isolation (SSI)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">2PL or SSI: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a transaction</span>
+    <span style="--c:var(--coord)">a read, or a shared lock</span>
+    <span style="--c:var(--wait)">waiting, or an exclusive lock</span>
+    <span style="--c:var(--ok)">committed</span>
+    <span style="--c:var(--undo)">aborted by the engine</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL's <code>SERIALIZABLE</code> is SSI. MySQL InnoDB's <code>SERIALIZABLE</code> turns plain reads into locking reads, the 2PL style. CockroachDB is serializable by default, so every client needs a retry loop.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Wrap the whole transaction in a retry loop, not one statement: the retry must re-read and re-decide. Keep transactions short, so fewer pairs overlap. An abort under SSI is normal, and some aborted transactions were in fact safe.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Two-phase locking</th><th>SSI</th></tr>
+      <tr><td>Reads</td><td>Take shared locks, held to commit</td><td>Read a snapshot, no locks</td></tr>
+      <tr><td>Conflict shows up as</td><td>A wait, sometimes a deadlock</td><td>An abort at commit</td></tr>
+      <tr><td>Under many readers and writers</td><td>Slow: everyone queues</td><td>Fast until conflicts pile up, then many retries</td></tr>
+      <tr><td>The app must</td><td>Retry deadlock victims</td><td>Retry serialization failures</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Serializable is either locking, where readers and writers wait for each other, or SSI, where nobody waits and the engine aborts one of a dangerous pair, and both need a retry loop."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const sc=(o)=>[B(40,60,220,"T1: Ana goes off",o.ak||"s",44),B(40,270,220,"T2: Ben goes off",o.bk||"s",44),T(40,130,o.at||"","f"),T(40,250,o.bt||"","f"),
+ B(400,120,220,o.ar||"Ana: on call",o.ark||"n",44),B(400,200,220,o.br||"Ben: on call",o.brk||"n",44),T(640,148,o.al||"",o.alk||"m","start",14),T(640,228,o.bl||"",o.blk||"m","start",14)].concat(o.ex||[]);
+const r1=(k,d)=>[A(262,76,396,136,"",k||"r",d),A(262,88,396,212,"",k||"r",d)],r2=(k,d)=>[A(262,284,396,148,"",k||"r",d),A(262,296,396,224,"",k||"r",d)];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-ssi-vs-2pl/main.go</code> plays both requests twice: once with a lock manager (2PL), once with snapshots and a commit check (SSI). It prints every count, wait and error quoted here (<code>go run .</code>). The SQL views show what each engine runs, and are not run here.";
+const CODE={
+pl:{pc:["request(person):                       # one transaction",
+"  n = count on call                    # each read takes a shared lock",
+"  if n < 2: refuse",
+"  set person off                       # needs the exclusive lock",
+"  commit                               # releases every lock",
+"shared(row): granted unless another tx holds it exclusive",
+"exclusive(row): wait while another tx holds a shared lock",
+"deadlock: the waits-for edges form a cycle: abort one",
+"T1 counts 2: shared locks on Ana and Ben",
+"T2 counts 2: shared locks do not conflict",
+"T1 waits for T2 on Ana",
+"T2 waits for T1 on Ben",
+"abort T2: T1 sets Ana off and commits",
+"T2 retries: counts 1, refused"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// countOnCall is the read each request makes: SELECT count(*) WHERE on_call.", "func countOnCall(rows map[string]bool) int {", "\tn := 0", "\tfor _, p := range people {", "\t\tif rows[p] {", "\t\t\tn++", "\t\t}", "\t}", "\treturn n", "}"],[""],["// Shared is the lock a read takes. Readers never block readers.", "func (m *LockManager) Shared(tx, row string) bool {", "\tl := m.rows[row]", "\tif l.exclusive != \"\" && l.exclusive != tx {", "\t\treturn false", "\t}", "\tl.shared[tx] = true", "\treturn true", "}"],[""],["// Exclusive is the lock a write takes. Any other reader of the row blocks it.", "func (m *LockManager) Exclusive(tx, row string) (granted bool, waitsFor string) {", "\tl := m.rows[row]", "\tfor holder := range l.shared {", "\t\tif holder != tx {", "\t\t\tm.waitsFor[tx] = holder", "\t\t\treturn false, holder", "\t\t}", "\t}", "\tl.exclusive = tx", "\tdelete(m.waitsFor, tx)", "\treturn true, \"\"", "}"],[""],["// Deadlock follows the waits-for edges from tx. Coming back to tx is a cycle.", "func (m *LockManager) Deadlock(tx string) bool {", "\tnext, ok := m.waitsFor[tx]", "\tfor hops := 0; ok && hops <= len(m.waitsFor); hops++ {", "\t\tif next == tx {", "\t\t\treturn true", "\t\t}", "\t\tnext, ok = m.waitsFor[next]", "\t}", "\treturn false", "}"],[""],["// Release drops every lock of tx. It runs at commit or abort, never before.", "func (m *LockManager) Release(tx string) {", "\tfor _, l := range m.rows {", "\t\tdelete(l.shared, tx)", "\t\tif l.exclusive == tx {", "\t\t\tl.exclusive = \"\"", "\t\t}", "\t}", "\tdelete(m.waitsFor, tx)", "\tfor waiter, on := range m.waitsFor {", "\t\tif on == tx {", "\t\t\tdelete(m.waitsFor, waiter)", "\t\t}", "\t}", "}"],[""],["func twoPhase() {", "\tfmt.Println(\"== 2PL: locks held to commit\")", "\tonCall := map[string]bool{\"Ana\": true, \"Ben\": true}", "\tm := newLockManager()", "\tm.Shared(\"T1\", \"Ana\") // T1 reads both rows", "\tm.Shared(\"T1\", \"Ben\")", "\tfmt.Printf(\"T1 counts %d, holds shared on Ana: %s\\n\", countOnCall(onCall), holders(m.rows[\"Ana\"]))", "\tm.Shared(\"T2\", \"Ana\") // T2 reads both rows: shared locks do not conflict", "\tm.Shared(\"T2\", \"Ben\")", "\tfmt.Printf(\"T2 counts %d; shared on Ana: %s; shared on Ben: %s\\n\", countOnCall(onCall), holders(m.rows[\"Ana\"]), holders(m.rows[\"Ben\"]))", "", "\tok, on := m.Exclusive(\"T1\", \"Ana\")", "\tfmt.Printf(\"T1 asks exclusive on Ana: granted %v, waits for %s\\n\", ok, on)", "\tok, on = m.Exclusive(\"T2\", \"Ben\")", "\tfmt.Printf(\"T2 asks exclusive on Ben: granted %v, waits for %s\\n\", ok, on)", "", "\tif m.Deadlock(\"T2\") {", "\t\tfmt.Println(\"deadlock: T1 waits for T2, T2 waits for T1; the engine aborts T2\")", "\t\tm.Release(\"T2\") // abort: T2's locks go", "\t}", "\tok, _ = m.Exclusive(\"T1\", \"Ana\")", "\tonCall[\"Ana\"] = false", "\tm.Release(\"T1\") // commit", "\tfmt.Printf(\"T1 gets exclusive on Ana: %v, sets Ana off, commits\\n\", ok)", "", "\t// The app retries T2 from the start: new locks, a new count.", "\tfor _, p := range people {", "\t\tm.Shared(\"T2\", p)", "\t}", "\tn := countOnCall(onCall)", "\tif n < 2 {", "\t\tfmt.Printf(\"T2 retries: counts %d, refused; Ben on call: %v\\n\", n, onCall[\"Ben\"])", "\t}", "\tm.Release(\"T2\")", "}"]),
+  map:[["request(person):","onCall := map[string]bool","m := newLockManager()"],["n = count on call","// countOnCall is the read..return n"],["if n < 2: refuse","if n < 2 {..refused;"],
+   ["set person off","onCall[\"Ana\"] = false"],["commit  ","// Release drops..delete(m.waitsFor, waiter)","m.Release(\"T1\") // commit"],
+   ["shared(row):","// Shared is the lock..return true"],["exclusive(row):","// Exclusive is the lock..return false, holder"],["deadlock: the waits-for","// Deadlock follows..return true"],
+   ["T1 counts 2","m.Shared(\"T1\", \"Ana\")..T1 counts %d"],["T2 counts 2","m.Shared(\"T2\", \"Ana\")..T2 counts %d"],
+   ["T1 waits for T2 on Ana","ok, on := m.Exclusive(\"T1\"..T1 asks exclusive"],["T2 waits for T1 on Ben","ok, on = m.Exclusive(\"T2\"..T2 asks exclusive"],
+   ["abort T2: T1 sets","if m.Deadlock(\"T2\")..T1 gets exclusive on Ana"],["T2 retries: counts 1","// The app retries T2..refused;"]]},
+ {v:"pg",label:"MySQL InnoDB, not run here",lines:["-- InnoDB SERIALIZABLE: every plain read takes a shared lock",
+"SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+"START TRANSACTION;",
+"SELECT count(*) FROM on_call WHERE on_call;   -- shared locks, held to commit",
+"UPDATE on_call SET on_call = false",
+"WHERE name = 'Ana';                           -- waits for the exclusive lock",
+"COMMIT;                                       -- releases every lock",
+"-- the loser gets:",
+"-- ERROR 1213 (40001): Deadlock found when trying to get lock"],
+  map:[["request(person):","START TRANSACTION;"],["n = count on call","SELECT count(*)"],["if n < 2: refuse","SELECT count(*)"],["set person off","UPDATE on_call..waits for the exclusive"],["commit  ","=COMMIT;                                       -- releases every lock"],
+   ["shared(row):","SELECT count(*)"],["exclusive(row):","UPDATE on_call..waits for the exclusive"],["deadlock: the waits-for","-- the loser gets:..ERROR 1213"],
+   ["T1 counts 2","SELECT count(*)"],["T2 counts 2","SELECT count(*)"],["T1 waits for T2 on Ana","UPDATE on_call..waits for the exclusive"],["T2 waits for T1 on Ben","UPDATE on_call..waits for the exclusive"],
+   ["abort T2: T1 sets","ERROR 1213","=COMMIT;                                       -- releases every lock"],["T2 retries: counts 1","START TRANSACTION;","SELECT count(*)"]]}]},
+ssi:{pc:["request(person):                         # the same transaction",
+"  n = count on call from the snapshot    # no lock, the engine notes the read",
+"  if n < 2: refuse",
+"  set person off                         # its own copy, nothing waits",
+"  commit: abort if a tx that committed meanwhile",
+"    has read-write dependencies both ways with me",
+"T1 counts 2, T2 counts 2",
+"T1 writes Ana off, T2 writes Ben off",
+"T1 -> T2 on Ben, T2 -> T1 on Ana",
+"T1 commits, T2 gets SQLSTATE 40001",
+"no retry: the error reaches Ben",
+"on 40001: run request(person) again, fresh snapshot"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Begin takes a snapshot: a copy of the committed rows. No locks.", "func (db *DB) Begin(name string) *Tx {", "\tsnap := map[string]bool{}", "\tfor k, v := range db.rows {", "\t\tsnap[k] = v", "\t}", "\treturn &Tx{name: name, start: db.clock, snapshot: snap, reads: map[string]bool{}, writes: map[string]bool{}}", "}"],[""],["// Count reads every row from the snapshot. The engine notes each read.", "func (t *Tx) Count() int {", "\tfor _, p := range people {", "\t\tt.reads[p] = true", "\t}", "\tt.counted = countOnCall(t.snapshot)", "\treturn t.counted", "}"],[""],["// SetOff writes one row. Nothing waits: the write is the tx's own copy.", "func (t *Tx) SetOff(person string) {", "\tt.writes[person] = false", "}"],[""],["// rwDep lists rows a read that b then wrote: a read-write dependency a -> b.", "func rwDep(a, b *Tx) []string {", "\tvar rows []string", "\tfor _, p := range people {", "\t\t_, wrote := b.writes[p]", "\t\tif a.reads[p] && wrote {", "\t\t\trows = append(rows, p)", "\t\t}", "\t}", "\treturn rows", "}"],[""],["var errSerialization = errors.New(\"could not serialize access due to read/write dependencies among transactions (SQLSTATE 40001)\")"],[""],["// Commit checks for a dangerous pair: a transaction that committed while this", "// one ran, with read-write dependencies in both directions. No serial order", "// gives that result, so the later committer is aborted.", "func (db *DB) Commit(t *Tx) error {", "\tfor _, c := range db.committed {", "\t\tconcurrent := c.commit > t.start", "\t\tif concurrent && len(rwDep(t, c)) > 0 && len(rwDep(c, t)) > 0 {", "\t\t\treturn errSerialization", "\t\t}", "\t}", "\tfor row, v := range t.writes {", "\t\tdb.rows[row] = v", "\t}", "\tdb.clock++", "\tt.commit = db.clock", "\tdb.committed = append(db.committed, t)", "\treturn nil", "}"],[""],["// goOff is the whole request: count, decide, write.", "func goOff(t *Tx, person string) bool {", "\tif t.Count() < 2 {", "\t\treturn false // the rule refuses", "\t}", "\tt.SetOff(person)", "\treturn true", "}"],[""],["func ssi() {", "\tfmt.Println(\"== SSI: snapshots, checked at commit\")", "\tdb := &DB{rows: map[string]bool{\"Ana\": true, \"Ben\": true}}", "\tt1 := db.Begin(\"T1\")", "\tt2 := db.Begin(\"T2\")", "\tn1 := t1.Count()", "\tn2 := t2.Count()", "\tfmt.Printf(\"T1 counts %d, T2 counts %d, from their snapshots: no locks, no wait\\n\", n1, n2)", "", "\tt1.SetOff(\"Ana\")", "\tt2.SetOff(\"Ben\")", "\tfmt.Println(\"T1 writes Ana off, T2 writes Ben off: different rows, no wait\")", "", "\tfmt.Printf(\"rw dependencies: T1 -> T2 on %v, T2 -> T1 on %v\\n\", rwDep(t1, t2), rwDep(t2, t1))", "\terr1 := db.Commit(t1)", "\tfmt.Printf(\"T1 commit: error %v; Ana on call: %v\\n\", err1, db.rows[\"Ana\"])", "\terr2 := db.Commit(t2)", "\tfmt.Printf(\"T2 commit: ERROR: %v; Ben on call: %v\\n\", err2, db.rows[\"Ben\"])", "\tfmt.Println(\"no retry loop: Ben sees the error page\")", "", "\t// Fix: retry the whole transaction on SQLSTATE 40001.", "\tfor attempt := 2; attempt <= 3; attempt++ {", "\t\tt := db.Begin(\"T2\")", "\t\toff := goOff(t, \"Ben\")", "\t\tif err := db.Commit(t); errors.Is(err, errSerialization) {", "\t\t\tcontinue", "\t\t}", "\t\tfmt.Printf(\"retry attempt %d: fresh snapshot counts %d, goes off %v; Ben on call: %v\\n\", attempt, t.counted, off, db.rows[\"Ben\"])", "\t\tbreak", "\t}", "}"]),
+  map:[["request(person):","// goOff is the whole..func goOff("],["n = count on call from","// Begin takes a snapshot..return &Tx{","// Count reads every row..return t.counted"],["if n < 2: refuse","if t.Count() < 2 {..return false // the rule refuses"],
+   ["set person off","// SetOff writes..t.writes[person] = false"],["commit: abort if","// Commit checks..return errSerialization"],["has read-write dependencies","// rwDep lists..return rows"],
+   ["T1 counts 2, T2 counts 2","t1 := db.Begin..from their snapshots"],["T1 writes Ana off","t1.SetOff(\"Ana\")..different rows, no wait"],["T1 -> T2 on Ben","fmt.Printf(\"rw dependencies"],
+   ["T1 commits, T2 gets","err1 := db.Commit(t1)..T2 commit: ERROR"],["no retry: the error","no retry loop: Ben sees"],["on 40001: run request","// Fix: retry the whole..break"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["BEGIN ISOLATION LEVEL SERIALIZABLE;      -- SSI: a snapshot, no read locks",
+"SELECT count(*) FROM on_call WHERE on_call;",
+"UPDATE on_call SET on_call = false WHERE name = 'Ben';",
+"COMMIT;",
+"-- ERROR:  could not serialize access due to read/write",
+"--         dependencies among transactions",
+"-- SQLSTATE 40001: the app runs the whole transaction again"],
+  map:[["request(person):","BEGIN ISOLATION"],["n = count on call from","SELECT count(*)"],["if n < 2: refuse","SELECT count(*)"],["set person off","UPDATE on_call"],["commit: abort if","COMMIT;","-- ERROR:..dependencies among"],["has read-write dependencies","-- ERROR:..dependencies among"],
+   ["T1 counts 2, T2 counts 2","SELECT count(*)"],["T1 writes Ana off","UPDATE on_call"],["T1 -> T2 on Ben","-- ERROR:..dependencies among"],["T1 commits, T2 gets","COMMIT;","-- ERROR:..dependencies among"],["no retry: the error","-- ERROR:..dependencies among"],["on 40001: run request","SQLSTATE 40001"]]}]}};
+// CODE PANEL END
+const S={
+pl:{name:"locks held to commit",st:[
+ {t:"Start: two on call, one rule",pc:["request(person):", "n = count on call", "if n < 2: refuse"],b:"Ana and Ben are both on call. Each request counts who is on call, and goes off only if the count is 2.",w:"Under 2PL every read takes a shared lock, and every lock is held until commit.",d:sc({})},
+ {t:"T1 counts: shared locks",pc:["n = count on call", "shared(row):", "T1 counts 2"],b:"T1 reads both rows and counts 2. Each read asks for a shared lock. Nobody holds an exclusive lock, so both are granted: T1 holds shared on Ana's row and on Ben's row.",w:"A shared lock lets other readers in and keeps writers out.",d:sc({at:"count = 2",al:"shared: T1",alk:"r",bl:"shared: T1",blk:"r",ex:r1()})},
+ {t:"T2 counts too",pc:["shared(row):", "T2 counts 2"],b:"T2 reads both rows and also counts 2. The check for a shared lock is: does another transaction hold the row exclusive? No, so it is granted. Each row now has shared locks from T1 and T2.",w:"Both requests decided 'one may leave'. The locks will now decide who can act.",d:sc({at:"count = 2",bt:"count = 2",al:"shared: T1, T2",alk:"r",bl:"shared: T1, T2",blk:"r",ex:r1().concat(r2())})},
+ {t:"T1 wants to write: it waits",pc:["exclusive(row):", "T1 waits for T2 on Ana"],b:"T1 asks for an exclusive lock on Ana's row to set her off. The check: does any other transaction hold a lock on the row? T2 holds a shared lock there, so the lock is not granted and T1 waits for T2.",w:"A writer waits for every reader of the row. That is the price of 2PL.",d:sc({ak:"w",at:"waits for exclusive on Ana",bt:"count = 2",al:"shared: T1, T2",alk:"r",bl:"shared: T1, T2",blk:"r",ex:[A(262,80,396,138,"","w",1)]})},
+ {t:"T2 wants to write: a deadlock",pc:["exclusive(row):", "T2 waits for T1 on Ben", "deadlock: the waits-for"],b:"T2 asks for an exclusive lock on Ben's row. T1 holds a shared lock there, so T2 waits for T1. The engine follows the waits-for edges: T2 waits for T1, T1 waits for T2. Back at T2: a cycle.",w:"The rule is safe, because neither wrote. But neither can move.",d:sc({ak:"x",bk:"x",at:"waits for T2",bt:"waits for T1",al:"shared: T1, T2",alk:"x",bl:"shared: T1, T2",blk:"x",ex:[A(262,80,396,138,"","x",1),A(262,292,396,222,"","x",1),T(450,330,"deadlock: a cycle of waits","x","middle",16)]})},
+ {t:"The engine aborts T2",pc:["deadlock: the waits-for", "abort T2: T1 sets", "commit  "],b:"The engine aborts T2 to break the cycle, and releases all its locks. Now no other transaction holds Ana's row, so T1 gets the exclusive lock, sets Ana off and commits. Commit releases T1's locks.",w:"Ben's request is thrown away and must be retried.",d:sc({ak:"c",bk:"u",at:"committed",bt:"aborted: deadlock",ar:"Ana: off",ark:"c",al:"written by T1",alk:"c",ex:[A(262,80,396,138,"","c")]})},
+ {t:"T2 retries and is refused",pc:["T2 retries: counts 1", "if n < 2: refuse"],b:"The app retries T2 from the start, with new locks. It counts 1: only Ben is on call. The rule needs 2, so it refuses, and Ben stays on call.",w:"2PL kept the rule by making them wait, at the cost of a deadlock and a retry.",d:sc({ak:"c",bk:"c",at:"committed",bt:"retry: count = 1, refused",ar:"Ana: off",ark:"c",br:"Ben: on call",brk:"c",ex:r2()})}
+]},
+ssi:{name:"snapshots, checked at commit",st:[
+ {t:"Start: the same two requests",pc:["request(person):", "n = count on call from", "if n < 2: refuse"],b:"Same rule, same two requests. Now each transaction reads its own snapshot. No read locks.",w:"SSI is snapshot isolation plus a watcher that records who read what.",d:sc({})},
+ {t:"Both count 2, nobody waits",pc:["n = count on call from", "T1 counts 2, T2 counts 2"],b:"T1 and T2 each read both rows from their snapshot and count 2. No read takes a lock. The engine only notes each read: T1 read Ana and Ben, T2 read Ana and Ben.",w:"No locks were taken, so nothing waits.",d:sc({at:"count = 2",bt:"count = 2",al:"read by T1, T2",alk:"r",bl:"read by T1, T2",blk:"r",ex:r1().concat(r2())})},
+ {t:"Each writes its own row",pc:["set person off", "T1 writes Ana off"],b:"T1 sets Ana off. T2 sets Ben off. Each write goes into the transaction's own new version, so nothing waits. Different rows, so there is no write conflict either.",w:"Plain snapshot isolation would let both commit here. That is write skew.",d:sc({ak:"w",bk:"w",at:"wrote Ana off",bt:"wrote Ben off",ar:"Ana: off (T1)",ark:"w",br:"Ben: off (T2)",brk:"w",ex:[A(262,80,396,138,"","w"),A(262,292,396,222,"","w")]})},
+ {t:"The engine sees a dangerous pair",pc:["has read-write dependencies", "T1 -> T2 on Ben"],b:"The engine compares notes. T1 read Ben's row, which T2 then wrote: T1 must come before T2. T2 read Ana's row, which T1 then wrote: T2 must come before T1. Two read-write dependencies, one in each direction.",w:"No one-at-a-time order could give this result. One of them must go.",d:sc({ak:"w",bk:"w",at:"read Ben, wrote Ana",bt:"read Ana, wrote Ben",ar:"Ana: off (T1)",ark:"w",br:"Ben: off (T2)",brk:"w",al:"T2 read, T1 wrote",alk:"x",bl:"T1 read, T2 wrote",blk:"x"})},
+ {t:"T1 commits, T2 is aborted",pc:["commit: abort if", "has read-write dependencies", "T1 commits, T2 gets"],b:"T1 commits first: no transaction has committed beside it, so the check passes. At T2's commit the check finds T1, which committed while T2 ran, with dependencies both ways. It aborts T2 with SQLSTATE 40001, a serialization failure. Ben's change is undone.",w:"Nobody waited at any point. The conflict surfaced as an abort at the end.",d:sc({ak:"c",bk:"u",at:"committed",bt:"aborted: serialization failure",ar:"Ana: off",ark:"c",br:"Ben: on call",brk:"n"})},
+ {t:"The failure: no retry loop",pc:["T1 commits, T2 gets", "no retry: the error"],b:"The app has no retry. Ben gets an error page for a request that only needed to be re-run. Under load, many users see these errors.",w:"Under SSI an abort is normal, not a bug. SSI also aborts some transactions that were safe.",d:sc({ak:"c",bk:"x",at:"committed",bt:"error shown to Ben",ar:"Ana: off",ark:"c",br:"Ben: on call",brk:"n",ex:[T(450,330,"serialization failure shown as an error","x","middle",16)]})},
+ {t:"Fix: retry the whole transaction",pc:["on 40001: run request", "n = count on call from", "if n < 2: refuse"],b:"Wrap the transaction in a retry loop that catches SQLSTATE 40001. T2 runs again on a fresh snapshot, counts 1, and the rule refuses. Ben stays on call.",w:"Retry the whole transaction, so the read and the decision are made again.",d:sc({ak:"c",bk:"c",at:"committed",bt:"retry: count = 1, refused",ar:"Ana: off",ark:"c",br:"Ben: on call",brk:"c",ex:r2()})}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

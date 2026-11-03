@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The MCP lifecycle</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, controls, narration card, the JSON envelope of the step, then cards. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+.halo{paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>The MCP lifecycle</h1>
+  <p class="lede">An agent in Claude Code asks for the money trail of one wallet. Before the first answer, the host and the graph server must shake hands, agree on what each supports, and list the tools. Press <b>Next</b> and watch every JSON-RPC (JSON remote procedure call) message cross the pipe.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="life">One connection, start to end</button>
+    <button role="tab" aria-selected="false" data-mode="proxy">A local proxy in front of a remote lane</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Messages between the host, the client, the server and what sits behind it</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="actors" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="13" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card">
+    <h2>The message on the wire</h2>
+    <pre id="json"></pre>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays both tabs: <code>handbook/code/18-mcp-lifecycle/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--fg)">request (has an id)</span>
+    <span style="--c:var(--ok)">response or ready</span>
+    <span style="--c:var(--wait)">notification (no id, no reply)</span>
+    <span style="--c:var(--undo)">answered locally, from the cache</span>
+    <span style="--c:var(--fail)">failure</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet the lifecycle</h2>
+      <p>Every MCP server in Claude Code, Claude Desktop, Codex or Cursor runs this handshake once per start. A contract test replays it: initialize, initialized, <code>tools/list</code>, one <code>tools/call</code> per tool. That is how you catch a renamed tool or an empty description before any host sees it.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet the local proxy</h2>
+      <p>The Chain Insights proxy runs on the user's laptop over stdio. It keeps the wallet, the cache and small lookups, and forwards heavy graph queries to a remote lane. A new exchange in the lookup is a merged pull request to a public file, not a release.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Direct remote server</th><th>Local proxy, then remote</th></tr>
+      <tr><td>Transport from the host</td><td>Streamable HTTP with OAuth 2.1</td><td>stdio, the host owns the process</td></tr>
+      <tr><td>Personal state</td><td>Must live on the server, per user</td><td>Wallet, config and cache stay on the laptop</td></tr>
+      <tr><td>Small lookups</td><td>A network call each time</td><td>Answered locally from a cached file</td></tr>
+      <tr><td>Changing lookup data</td><td>Deploy the server</td><td>Merge a pull request to the public file</td></tr>
+      <tr><td>Cost</td><td>Nothing to install</td><td>A package to install and keep current</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Initialize, answer, initialized, then traffic. I put a local proxy in front when the user has personal state or cheap lookups, and keep heavy data remote."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+ life:[["Host (model)","var(--coord)"],["Client","var(--coord)"],["Graph server","var(--svc)"],["Graph database","var(--svc)"]],
+ proxy:[["Host + client","var(--coord)"],["Local proxy","var(--svc)"],["Public repo files","var(--undo)"],["Remote lane","var(--svc)"]]
+};
+const X=[110,340,570,800];
+const steps={
+"life":[
+ {t:"Start: the host spawns the server",b:"Claude Code reads its MCP configuration. It finds the graph server entry and starts it as a child process. The client and the server now share one stdio pipe.",w:"Nothing may be sent yet except initialize. The server does not know who is calling or what version they speak.",m:[],st:["running","starting","started","idle"],j:"$ graph-server   (spawned by the host, stdin and stdout are the pipe)"},
+ {t:"initialize, and the answer",b:"The client sends id 1 with protocolVersion 2025-06-18 and its capabilities: roots and elicitation. The server compares versions. It speaks 2025-06-18 too, so it echoes it. If not, it would answer its own newest version and the client would decide. It also lists its own capabilities: tools with listChanged, and resources.",w:"This is capability negotiation. From now on, nobody uses a feature the other side did not declare.",m:[[1,2,110,"initialize (id 1)","req"],[2,1,145,"result (id 1): capabilities","res"]],st:["running","negotiating","negotiating","idle"],j:'→ {"jsonrpc":"2.0","id":1,"method":"initialize",\n   "params":{"protocolVersion":"2025-06-18",\n     "capabilities":{"roots":{},"elicitation":{}},\n     "clientInfo":{"name":"claude-code"}}}\n← {"jsonrpc":"2.0","id":1,"result":{\n   "protocolVersion":"2025-06-18",\n   "capabilities":{"tools":{"listChanged":true},"resources":{}},\n   "serverInfo":{"name":"graph-server"},\n   "instructions":"Anchor every search on one address."}}'},
+ {t:"notifications/initialized",b:"The client sends notifications/initialized. It has no id, so the server sends nothing back. The server sets its ready flag. Any other request before this point gets an error instead of an answer.",w:"Only now may normal traffic start. A tools/list sent before this line is often rejected.",m:[[1,2,110,"notifications/initialized","note"]],st:["running","ready","ready","idle"],j:'→ {"jsonrpc":"2.0","method":"notifications/initialized"}\n   (no id, so no reply)'},
+ {t:"tools/list: what can I call?",b:"The client sends id 2, tools/list. The server is ready, so it answers with each tool's name, description and JSON Schema. The host puts this list in front of the model.",w:"The description is the one text every host puts in front of the model. Rules the model must follow go here.",m:[[1,2,110,"tools/list (id 2)","req"],[2,1,145,"tools: graph_query ...","res"],[1,0,180,"tool list for the model","res"]],st:["knows 3 tools","ready","ready","idle"],j:'→ {"jsonrpc":"2.0","id":2,"method":"tools/list"}\n← {"jsonrpc":"2.0","id":2,"result":{"tools":[{\n   "name":"graph_query",\n   "description":"Read the graph. Anchor on one address. Write every address in full.",\n   "inputSchema":{"type":"object",\n     "properties":{"query":{"type":"string"},"network":{"type":"string"}},\n     "required":["query","network"]},\n   "annotations":{"readOnlyHint":true}}]}}'},
+ {t:"tools/call, with progress",b:"The model picks graph_query. The client sends id 3 with the arguments and _meta.progressToken p3. The server checks the arguments against the schema and runs the query. It sends notifications/progress with token p3: progress 3, total 10.",w:"Progress and cancellation are notifications tied to the request. If the user hits stop, the client sends notifications/cancelled and the server must stop the database statement.",m:[[0,1,100,"call graph_query","req"],[1,2,130,"tools/call (id 3)","req"],[2,3,160,"query, page 1","req"],[3,2,190,"rows","res"],[2,1,220,"notifications/progress","note"]],st:["waiting","waiting","querying","busy"],j:'→ {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{\n   "name":"graph_query",\n   "arguments":{"network":"robinhood","query":"USE topology MATCH ..."},\n   "_meta":{"progressToken":"p3"}}}\n← {"jsonrpc":"2.0","method":"notifications/progress",\n   "params":{"progressToken":"p3","progress":3,"total":10}}'},
+ {t:"The result reaches the model",b:"The server answers id 3 with content blocks and isError false. The client matches the reply by id and hands the blocks to the host. The model writes the answer from them.",w:"Had the query been refused, this would still be a result, with isError true and a reason. The model can read a reason and retry. It cannot read a protocol error.",m:[[2,1,110,"result (id 3), isError false","res"],[1,0,145,"content for the model","res"]],st:["answering","ready","ready","idle"],j:'← {"jsonrpc":"2.0","id":3,"result":{\n   "content":[{"type":"text","text":"[{\\"to\\":\\"0x9f...\\",\\"amount\\":2.1}]"},\n              {"type":"text","text":"data is 40 blocks behind the head"}],\n   "isError":false}}'},
+ {t:"resources/read, then a list change",b:"The host sends id 4, resources/read for schema://robinhood, and attaches the text. The server had declared tools.listChanged, so when it adds a tool it sends notifications/tools/list_changed. The client sends tools/list again.",w:"Resources are app-controlled: the model never reads them on its own. listChanged was declared in initialize, so the client knows this notification can come.",m:[[1,2,100,"resources/read schema","req"],[2,1,130,"contents: labels and links","res"],[2,1,175,"notifications/tools/list_changed","note"],[1,2,210,"tools/list (id 5)","req"],[2,1,240,"tools: 4 now","res"]],st:["knows 4 tools","ready","ready","idle"],j:'→ {"jsonrpc":"2.0","id":4,"method":"resources/read",\n   "params":{"uri":"schema://robinhood"}}\n← {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n   (no id, then the client sends tools/list again)'},
+ {t:"Shutdown",b:"The user closes Claude Code. No JSON-RPC message is sent. The client closes the server's stdin, so the server's read loop ends. The server cleans up and exits. Over HTTP the client sends DELETE with its session id instead.",w:"Shutdown is the transport's job. A server must clean up when its input closes, or it leaves zombie processes behind.",m:[[1,2,120,"close stdin","bad"]],st:["closed","closed","exited","idle"],j:"(no JSON-RPC message: the client closes stdin, the server exits)"},
+ {t:"The failure that matters: a log on stdout",b:"The server prints DEBUG connected to db to stdout during initialize. The client reads every stdout line as one JSON-RPC message. json.Valid returns false, so it drops the connection. The model has no tools at all.",w:"In a stdio server every byte on stdout is a message. Logs go to standard error, or through the logging notification.",m:[[1,2,110,"initialize (id 1)","req"],[2,1,145,"DEBUG connected to db","bad"],["band",210,"parse error: connection dropped, no tools"]],st:["no tools","broken","running","idle"],crash:2,j:'→ {"jsonrpc":"2.0","id":1,"method":"initialize",...}\n← DEBUG connected to db      &lt;- not JSON, the client cannot parse it\n← {"jsonrpc":"2.0","id":1,"result":{...}}   (never read)'}
+],
+"proxy":[
+ {t:"Start: the proxy on the laptop",b:"Claude Desktop spawns the Chain Insights proxy over stdio. To the host it is one ordinary MCP server. Behind it sit a remote graph lane and public lookup files in a git repository.",w:"The host never talks to the lane directly. The proxy owns the user's wallet, config and cache.",m:[],st:["running","started","on GitHub","serving"],j:"$ chain-insights proxy   (spawned by Claude Desktop over stdio)"},
+ {t:"The same handshake, with the proxy",b:"initialize, the answer, initialized, tools/list. The proxy lists both kinds of tool: graph_query, which it forwards, and meta_dex_lookup, which it answers itself.",w:"The host cannot tell local tools from forwarded ones. That is the point: one server, one list.",m:[[0,1,110,"initialize ... tools/list","req"],[1,0,145,"graph_query, meta_dex_lookup","res"]],st:["knows tools","ready","on GitHub","serving"],j:'← {"tools":[\n   {"name":"graph_query","description":"Forwarded to the lane. Anchor on one address."},\n   {"name":"meta_dex_lookup","description":"Find an exchange by name. Call this first when a question names an exchange."}]}'},
+ {t:"Lookup, cache miss",b:"The model calls meta_dex_lookup(Aerodrome). The check: is the cache empty? Yes. So the proxy fetches the public JSON file, stores it and answers with router 0x8f..2c11, 12 pools, marked fetched.",w:"The lookup data lives in a public file. A new exchange is a merged pull request. No npm release, no lane roll.",m:[[0,1,100,"tools/call meta_dex_lookup","req"],[1,2,135,"GET exchanges.json","req"],[2,1,165,"file","res"],[1,0,205,"Aerodrome: router, pools","undo"]],st:["answering","cached 1 file","on GitHub","serving"],j:'→ {"method":"tools/call","params":{"name":"meta_dex_lookup",\n   "arguments":{"name":"Aerodrome"}}}\n← {"result":{"content":[{"type":"text",\n   "text":"Aerodrome: router 0x8f..2c11, 12 pools"}],"isError":false}}'},
+ {t:"Lookup again, cache hit",b:"Same call. The cache is not empty, so the fetch is skipped. The proxy answers the same 12 pools, marked cache hit. Nothing leaves the laptop.",w:"Cheap lookups stay local and fast. They never become a database table or a graph property that nothing reads.",m:[[0,1,110,"tools/call meta_dex_lookup","req"],[1,0,150,"from cache","undo"]],st:["answering","cache hit","on GitHub","serving"],j:'← {"result":{"content":[{"type":"text","text":"Aerodrome: router 0x8f..2c11, 12 pools"}]}}\n   (served from the cache, no fetch)'},
+ {t:"graph_query is forwarded",b:"Now the model traces money from one wallet. The proxy forwards the anchored query to the remote lane over HTTPS with the user's bearer token, then passes the rows back as a normal tool result.",w:"Heavy data stays remote. The lane is stateless, so any replica can answer. The token stays between the proxy and the lane.",m:[[0,1,100,"tools/call graph_query","req"],[1,3,135,"POST /mcp, Bearer token","req"],[3,1,170,"rows","res"],[1,0,210,"result, isError false","res"]],st:["answering","forwarding","on GitHub","busy"],j:'→ POST https://lane.example/mcp   Authorization: Bearer ...\n   {"method":"tools/call","params":{"name":"graph_query",\n     "arguments":{"network":"robinhood","query":"USE topology MATCH (a {address:\\"0x18...\\"}) ..."}}}'},
+ {t:"A refusal is still a result",b:"The model sends graph_query with an empty address. The lane refuses it. The proxy returns content with anchor_missing: anchor the search on one address and isError true, not a JSON-RPC error. The model can read the reason.",w:"The model reads the reason, adds an address, and the next call works. A protocol error would have hidden the reason.",m:[[0,1,100,"tools/call graph_query","req"],[1,3,135,"forward","req"],[3,1,170,"refused: anchor_missing","bad"],[1,0,210,"result, isError true + reason","bad"]],st:["retrying","ready","on GitHub","serving"],j:'← {"result":{"content":[{"type":"text",\n   "text":"anchor_missing: anchor the search on one address"}],\n   "isError":true}}'},
+ {t:"The failure that matters: the repository is down",b:"The cache is empty and the fetch returns an error: GitHub does not answer. The rule: on a fetch error, parse the packaged copy instead. It says 11 pools, a little old, marked packaged copy. The tool still answers.",w:"Fetch at run time, cache, and ship a packaged copy as the fallback. The data can be a little old. It is never missing.",m:[[0,1,100,"tools/call meta_dex_lookup","req"],[1,2,135,"GET exchanges.json","req"],[2,1,165,"timeout","bad"],[1,0,210,"from the packaged copy","undo"]],st:["answering","packaged copy","offline","serving"],crash:2,j:'GET exchanges.json   -> timeout\n← {"result":{"content":[{"type":"text",\n   "text":"Aerodrome: router 0x8f..2c11, 11 pools (packaged copy)"}],"isError":false}}'}
+]};
+const kindCol={req:"var(--fg)",res:"var(--ok)",note:"var(--wait)",bad:"var(--fail)",undo:"var(--undo)"};
+const chipCol=v=>/broken|exited|closed|offline|no tools/.test(v)?"var(--fail)":/waiting|negotiating|starting|querying|busy|forwarding|retrying/.test(v)?"var(--wait)":/cache|packaged/.test(v)?"var(--undo)":/idle|on GitHub/.test(v)?"var(--line)":"var(--ok)";
+let mode="life",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+function drawActors(crash){
+  const g=$("actors");g.innerHTML="";
+  actors[mode].forEach(([name,col],k)=>{
+    const x=X[k],fill=k===crash?"var(--fail)":col;
+    g.insertAdjacentHTML("beforeend",`<rect class="box" x="${x-95}" y="20" width="190" height="50" rx="8" fill="${fill}"/><text x="${x}" y="51" text-anchor="middle" fill="#fff">${name}</text><line x1="${x}" y1="70" x2="${x}" y2="320" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`);
+  });
+}
+const CODE={"life": {"label": "Go", "pc": ["host: spawn the server, its stdin and stdout are the pipe", "server: for each line on stdin (ends when stdin closes):", "  on initialize: reply agreed version + capabilities", "  on notifications/initialized: mark ready, send no reply", "  if not ready yet: refuse the request", "  on tools/list: reply each tool's name + description", "  on tools/call: send progress under the client's token", "    reply content + isError false", "  on resources/read: reply the contents", "    a tool changed: send notifications/tools/list_changed", "client: close stdin (there is no shutdown message)", "server: stdin closed, clean up, exit", "(bug) debug print on stdout", "client: a line that is not JSON: drop the connection"], "real": ["func server(in io.Reader, out io.Writer, debugOnStdout bool) {", "\tinitialized := false", "\treply := func(id *int, result string) {", "\t\tfmt.Fprintf(out, `{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":%s}`+\"\\n\", *id, result)", "\t}", "\tsc := bufio.NewScanner(in)", "\tfor sc.Scan() { // ends when the client closes stdin: that is shutdown", "\t\tvar m Msg", "\t\tjson.Unmarshal(sc.Bytes(), &m)", "\t\tswitch {", "\t\tcase m.Method == \"initialize\":", "\t\t\tif debugOnStdout {", "\t\t\t\tfmt.Fprintln(out, \"DEBUG connected to db\") // (bug) stdout is the wire", "\t\t\t}", "\t\t\treply(m.ID, `{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{\"listChanged\":true},\"resources\":{}},\"serverInfo\":{\"name\":\"graph-server\"},\"instructions\":\"Anchor every search on one address.\"}`)", "\t\tcase m.Method == \"notifications/initialized\": // no id, no reply", "\t\t\tinitialized = true", "\t\tcase !initialized:", "\t\t\tfmt.Fprintf(out, `{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32002,\"message\":\"not initialized\"}}`+\"\\n\", *m.ID)", "\t\tcase m.Method == \"tools/list\":", "\t\t\treply(m.ID, `{\"tools\":[{\"name\":\"graph_query\",\"description\":\"Read the graph. Anchor on one address. Write every address in full.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"},\"network\":{\"type\":\"string\"}},\"required\":[\"query\",\"network\"]},\"annotations\":{\"readOnlyHint\":true}}]}`)", "\t\tcase m.Method == \"tools/call\":", "\t\t\tfmt.Fprintln(out, `{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"p3\",\"progress\":3,\"total\":10}}`)", "\t\t\treply(m.ID, `{\"content\":[{\"type\":\"text\",\"text\":\"[{\\\"to\\\":\\\"0x9f...\\\",\\\"amount\\\":2.1}]\"},{\"type\":\"text\",\"text\":\"data is 40 blocks behind the head\"}],\"isError\":false}`)", "\t\tcase m.Method == \"resources/read\":", "\t\t\treply(m.ID, `{\"contents\":[{\"uri\":\"schema://robinhood\",\"text\":\"labels: Address\"}]}`)", "\t\t\tfmt.Fprintln(out, `{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}`)", "\t\t}", "\t}", "\tfmt.Println(\"  server: stdin closed, cleaning up, exit\")", "}", "", "// ...", "\tgo func() { server(inR, outW, debug); outW.Close(); close(done) }()", "// ...", "\t\t\tif !json.Valid(rd.Bytes()) {", "\t\t\t\tgot <- \"parse error: \" + rd.Text() + \" -> connection dropped, no tools\"", "\t\t\t\tcontinue", "\t\t\t}", "// ...", "\tinW.Close() // shutdown: there is no shutdown message", "\t<-done"], "map": {"1": [34], "2": [6, 7], "3": [11, 15], "4": [16, 17], "5": [18, 19], "6": [20, 21], "7": [22, 23], "8": [24], "9": [25, 26], "10": [27], "11": [41], "12": [30], "13": [12, 13], "14": [36, 37]}, "pcs": [[1], [2, 3], [4], [6], [7], [8], [9, 10], [11, 12], [13, 14]]}, "proxy": {"label": "Go", "pc": ["the host spawns the proxy over stdio: one server to it", "same handshake and tools/list (as in one connection, not repeated here)", "dexLookup(name): if the cache is empty:", "  fetch the public JSON file", "  if the fetch fails: use the packaged copy", "  parse it into the cache", "answer from the cache", "graphQuery(address): forward to the lane with the token", "  if the lane refuses: a result with isError true", "client: a normal tool result either way"], "real": ["const packaged = `{\"Aerodrome\":\"router 0x8f..2c11, 11 pools\"}`", "", "type Proxy struct {", "\tcache map[string]string", "\tfetch func() ([]byte, error)", "}", "", "func (p *Proxy) dexLookup(name string) string {", "\tsrc := \"cache hit\"", "\tif p.cache == nil {", "\t\tb, err := p.fetch()", "\t\tsrc = \"fetched\"", "\t\tif err != nil { // the repository is down", "\t\t\tb, src = []byte(packaged), \"packaged copy\"", "\t\t}", "\t\tjson.Unmarshal(b, &p.cache)", "\t}", "\treturn fmt.Sprintf(\"%s: %s (%s)\", name, p.cache[name], src)", "}", "", "// graphQuery forwards to the lane. A refusal stays a result the model can read.", "func (p *Proxy) graphQuery(address string) string {", "\tif address == \"\" {", "\t\treturn `{\"content\":[{\"type\":\"text\",\"text\":\"anchor_missing: anchor the search on one address\"}],\"isError\":true}`", "\t}", "\treturn `{\"content\":[{\"type\":\"text\",\"text\":\"rows from the lane\"}],\"isError\":false}`", "}", "// ...", "\tp := &Proxy{fetch: func() ([]byte, error) { return []byte(`{\"Aerodrome\":\"router 0x8f..2c11, 12 pools\"}`), nil }}", "\tfmt.Println(\" \", p.dexLookup(\"Aerodrome\"))", "\tfmt.Println(\" \", p.dexLookup(\"Aerodrome\"))", "\tfmt.Println(\" \", p.graphQuery(\"0x18..cb24\"))", "\tfmt.Println(\" \", p.graphQuery(\"\"))", "\tdown := &Proxy{fetch: func() ([]byte, error) { return nil, errors.New(\"GitHub does not answer\") }}", "\tfmt.Println(\" \", down.dexLookup(\"Aerodrome\"))"], "map": {"1": [29], "3": [8, 10], "4": [11], "5": [13, 14, 34], "6": [16], "7": [18], "8": [22, 26], "9": [23, 24], "10": [26]}, "pcs": [[1], [2], [3, 4, 6, 7], [7], [8, 10], [8, 9, 10], [3, 4, 5, 6, 7]]}};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode],lines=view==="pc"?c.pc:c.real,pcs=c.pcs[i]||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  drawCode();
+  drawActors(s.crash);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("json").innerHTML=s.j;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("msgs");g.innerHTML="";
+  s.st.forEach((v,k)=>{const c=chipCol(v),light=c==="var(--line)";
+    g.insertAdjacentHTML("beforeend",`<rect class="box" x="${X[k]-75}" y="334" width="150" height="28" rx="14" fill="${c}"/><text x="${X[k]}" y="353" text-anchor="middle" font-weight="700" fill="${light?"var(--fg)":"#fff"}">${v}</text>`);});
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      el.innerHTML=`<rect x="20" y="${m[1]-16}" width="860" height="26" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${m[1]+3}" text-anchor="middle" fill="var(--fail)" font-weight="700">${m[2]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m,x1=X[a],x2=X[b],col=kindCol[kind],dash=kind==="note"?' stroke-dasharray="7 5"':"";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}"${dash} marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-7}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

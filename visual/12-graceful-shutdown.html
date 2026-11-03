@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Graceful shutdown</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Graceful shutdown: drain, then exit</h1>
+  <p class="lede">A rolling update replaces a pod of the MCP (Model Context Protocol) proxy. Kubernetes sends the old pod a SIGTERM signal and gives it 30 seconds. Watch it stop taking new queries, finish the ones in flight and exit cleanly. Then watch a pod that just dies. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="drain">Drain, then exit</button>
+    <button role="tab" aria-selected="false" data-mode="kill">Exit at once: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A balancer, an old and a new proxy pod, the graph, and the 30-second grace period</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-lb" class="box" x="20" y="150" width="170" height="62" rx="8"/><text id="b-lb-t" x="105" y="178">Balancer</text><text id="b-lb-l" x="105" y="198" class="sm"></text>
+        <rect id="b-old" class="box" x="300" y="40" width="250" height="130" rx="10"/><text id="b-old-t" x="425" y="66">Old pod</text><text id="b-old-l" x="425" y="88" class="sm"></text>
+        <rect id="b-new" class="box" x="300" y="220" width="250" height="70" rx="8"/><text id="b-new-t" x="425" y="252">New pod</text><text id="b-new-l" x="425" y="272" class="sm"></text>
+        <rect id="b-gr" class="box" x="700" y="150" width="180" height="62" rx="8"/><text id="b-gr-t" x="790" y="178">Graph</text><text id="b-gr-l" x="790" y="198" class="sm"></text>
+        <line x1="60" y1="336" x2="840" y2="336" stroke="var(--line)" stroke-width="14" stroke-linecap="round"/>
+        <text x="60" y="362" text-anchor="start" class="sm" fill="var(--muted)">SIGTERM at 0 s</text><text x="840" y="362" text-anchor="end" class="sm" fill="var(--fail)">SIGKILL at 30 s</text>
+        <text id="cap" x="450" y="24" class="sm" fill="var(--fg)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-graceful-shutdown/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">a query in flight</span>
+    <span style="--c:var(--ok)">serving, or exited cleanly</span>
+    <span style="--c:var(--wait)">draining: no new work</span>
+    <span style="--c:var(--fail)">cut off: an error to the agent</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every Kubernetes rolling update, scale-down and node drain. A Go server: <code>signal.NotifyContext</code> for SIGTERM, then <code>http.Server.Shutdown</code> with a deadline. A Go indexer that must finish and commit its current batch before it exits, so the next pod resumes from a clean checkpoint.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Catch SIGTERM. Fail readiness first, and wait a few seconds (a preStop sleep) for the balancer to stop sending. Stop accepting, finish in-flight work under a deadline shorter than the grace period, flush and close, then exit 0. Make writes idempotent for the case where SIGKILL still comes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Graceful shutdown</th><th>Exit at once</th></tr>
+      <tr><td>Queries in flight</td><td>Finish and answer</td><td>Cut: 502 errors</td></tr>
+      <tr><td>New queries after SIGTERM</td><td>Sent to other pods</td><td>Connection refused</td></tr>
+      <tr><td>A half-done write</td><td>Committed or rolled back cleanly</td><td>Left half-done</td></tr>
+      <tr><td>Every deploy</td><td>Invisible to users</td><td>A burst of errors</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"On SIGTERM I fail readiness, wait for the balancer to stop sending, finish in-flight work under a deadline shorter than the grace period, then exit, so a deploy never cuts a request."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LO=[190,168,298,110],LN=[190,196,298,255],OG=[550,110,698,170],NG=[550,255,698,192];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const D={drain:{f:{"b-lb":C,"b-old":G,"b-new":G,"b-gr":S},x:{"b-old-l":"","b-new-l":"ready","b-gr-l":"","cap":""}},kill:{f:{"b-lb":C,"b-old":G,"b-new":G,"b-gr":S},x:{"b-old-l":"","b-new-l":"ready","b-gr-l":"","cap":""}}};
+const steps={
+drain:[
+ {t:"SIGTERM arrives",b:"A rolling update starts. Kubernetes sends SIGTERM to the old pod and starts a 30-second clock. Six agent queries are in flight, needing 1, 2, 4, 6, 9 and 12 more seconds. The pod's signal handler catches SIGTERM, so the process does not end.",w:"SIGTERM is a polite request to stop. SIGKILL, at the end of the grace period, is not.",x:{"b-old-l":"6 in flight: SIGTERM received"},inf:6,tm:0,m:[a(LO,"",C),a(LN,"",C),a(OG,"",C)]},
+ {t:"Fail readiness, keep serving",b:"The handler's first act: set ready = false, so /ready answers 503. It keeps serving, because the balancer takes about 3 seconds to notice. A preStop sleep of 5 seconds covers that gap, so nothing is refused while the balancer catches up.",w:"Endpoint lists update asynchronously. A pod that stops listening at once refuses queries the balancer is still sending.",f:{"b-old":Y},x:{"b-old-l":"not ready, still serving"},inf:6,tm:4,m:[a(LO,"a few more",C),a(LN,"",C),a(OG,"",C)]},
+ {t:"The balancer stops sending",b:"At 3 seconds the balancer has seen the 503 and dropped the pod. Every new query goes to the new pod. At 5 seconds the sleep ends and the pod stops accepting connections. From here its work only shrinks.",w:"From here the old pod's work only shrinks.",f:{"b-old":Y},x:{"b-old-l":"draining: 3 left"},inf:3,tm:6,m:[a(LN,"all new queries",C,0,240,250),a(OG,"",C),a(NG,"",C)]},
+ {t:"In-flight work finishes",b:"The drain waits for each in-flight query. Its deadline is the query timeout, 25 seconds, under the 30-second grace. The slowest of the six needs 12 seconds, which is under 25, so all six finish and answer: 6 finished, 0 lost.",w:"The drain needs a deadline shorter than the grace period, or the slow query decides when the pod dies.",f:{"b-old":Y},x:{"b-old-l":"draining: 0 left"},inf:0,tm:12,m:[a(LN,"",C),a(NG,"",C)]},
+ {t:"Flush, close, exit 0",b:"With no query left at 12 seconds, the pod spends 1 second flushing logs and metrics and closing its graph connections. It exits with code 0 at 13 seconds. 17 seconds of grace go unused, and nobody saw an error.",w:"Seventeen seconds of grace left unused. Nobody saw an error.",f:{"b-old":N},x:{"b-old-l":"exited cleanly","cap":"exited at 13 s, inside the 30 s grace period"},inf:0,tm:13,m:[a(LN,"",C),a(NG,"",C)]}
+],
+kill:[
+ {t:"Exit on SIGTERM",b:"This proxy has no signal handler, so the default rule applies: SIGTERM ends the process at once. All 6 queries in flight are lost. Those agents get a 502 Bad Gateway or a reset connection.",w:"The six agents get a 502 Bad Gateway or a reset connection. Their work is lost.",f:{"b-old":R},x:{"b-old-l":"died at once: 6 cut"},inf:0,cut:6,tm:0,m:[a(LO,"502",R),a(LN,"",C)]},
+ {t:"New queries still arrive",b:"The balancer has not heard yet. It takes about 3 seconds to notice, and it keeps sending 20 queries a second to a closed port: 60 connections refused. The order must be: fail readiness first, wait, then stop.",w:"Those queries meet a closed port: connection refused. Fail readiness first and wait, then stop.",f:{"b-old":R},x:{"b-old-l":"port closed: refused"},inf:0,tm:3,m:[a(LO,"refused",R),a(LN,"",C)]},
+ {t:"The failure that matters: SIGKILL mid-write",b:"An indexer pod ignores SIGTERM and keeps working. At 30 seconds the clock runs out and Kubernetes sends SIGKILL, which no handler can catch. The pod dies halfway through writing a batch. Without a checkpoint, the next pod leaves a gap or writes duplicates.",w:"SIGKILL cannot be caught. A half-written batch without a checkpoint means a gap or a duplicate when the next pod resumes.",f:{"b-old":R,"b-gr":R},x:{"b-old-l":"SIGKILL: batch half-written","b-gr-l":"half a batch"},inf:0,tm:30,m:[a(OG,"half a write",R)]},
+ {t:"Drain with no deadline",b:"A second version drains politely with no deadline. One graph walk needs 40 seconds. The pod waits for it, and at 30 seconds SIGKILL ends the pod mid-answer. With a 25-second query timeout the walk ends at 25 s with an error answer, and the pod exits 0 at 26 s.",w:"The drain deadline must be shorter than the grace period. Bound every in-flight call with a timeout.",f:{"b-old":R},x:{"b-old-l":"one 40 s walk: killed at 30 s"},inf:0,cut:1,tm:30,m:[a(OG,"40 s walk",R)]},
+ {t:"The fix",b:"Catch SIGTERM. Fail readiness, sleep 5 seconds, stop accepting, finish in-flight work under a 25-second deadline, flush, exit 0. Check the sum: 25 + 1 is under 30. Make writes idempotent, safe to repeat, for the day SIGKILL still comes.",w:"Then every deploy, scale-down and node drain is invisible to the agents.",f:{"b-old":N},x:{"b-old-l":"drained, exited cleanly","cap":"drain deadline 20 s, grace period 30 s"},inf:0,tm:13,m:[a(LN,"",C),a(NG,"",C)]}
+]};
+function draw(s,g){let h="";
+ for(let k=0;k<(s.inf||0);k++)h+=`<circle class="dot" cx="${345+k*32}" cy="125" r="11" fill="var(--coord)"/>`;
+ for(let k=0;k<(s.cut||0);k++)h+=`<circle class="dot" cx="${345+k*32}" cy="125" r="11" fill="var(--fail)"/>`;
+ const x=60+(s.tm||0)/30*780;h+=`<line x1="60" y1="336" x2="${x}" y2="336" stroke="${s.tm>=30?R:Y}" stroke-width="14" stroke-linecap="round"/><circle cx="${x}" cy="336" r="10" fill="var(--fg)"/><text x="${Math.min(Math.max(x,90),810)}" y="308" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">${s.tm} s</text>`;
+ g.innerHTML=h;}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["on SIGTERM:                  # the 30 s clock starts", "  ready = false              # /ready answers 503", "  sleep 5 s                  # the balancer takes about 3 s to notice", "  stop accepting connections", "  for each query in flight:", "    if it needs more than 25 s: end it at 25 s with an error answer", "    else: wait for it", "  flush logs, close connections   # 1 s", "  exit 0", "# BUG: no handler -> SIGTERM ends the process, in-flight queries lost", "#   the balancer still sends for 3 s -> connections refused", "# BUG: no deadline -> at 30 s SIGKILL, which nothing can catch"], "real": ["func Drain(inFlight []int, timeout int) (exitAt, finished, lost int, killed bool) {", "\tlast := preStop // the pod stops accepting after the preStop sleep", "\tfor _, need := range inFlight {", "\t\tend := need", "\t\tif timeout > 0 && end > timeout {", "\t\t\tend = timeout // the query's own timeout ends it with an error answer", "\t\t\tlost++", "\t\t} else {", "\t\t\tfinished++", "\t\t}", "\t\tif end > last {", "\t\t\tlast = end", "\t\t}", "\t}", "\texitAt = last + flush", "\tif exitAt > grace { // SIGKILL cannot be caught", "\t\treturn grace, finished - countOver(inFlight, grace), lost + countOver(inFlight, grace), true", "\t}", "\treturn exitAt, finished, lost, false", "}", "", "func NoHandler(inFlight, newPerSecond int) (lost, refused int) {", "\treturn inFlight, newPerSecond * balancerDrops", "}", "", "func Real() {", "\tctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)", "\t// ...", "\tmux.HandleFunc(\"/ready\", func(w http.ResponseWriter, _ *http.Request) {", "\t\tif !ready.Load() {", "\t\t\tw.WriteHeader(http.StatusServiceUnavailable) // the balancer takes the pod out", "\t\t}", "\t})", "\t// ...", "\tsyscall.Kill(syscall.Getpid(), syscall.SIGTERM)", "\t<-ctx.Done()", "\t// ...", "\tready.Store(false) // 1. fail readiness, keep serving", "\t// ...", "\tdrain, cancel := context.WithTimeout(context.Background(), 5*time.Second)", "\tdefer cancel()", "\terr = srv.Shutdown(drain) // 2. stop accepting, wait for in-flight work under a deadline", "\t// ...", "}", "", "func main() {", "\texit, done, lost, killed := Drain(queries, queryTimeout)", "\tlost, refused := NoHandler(6, 20)", "\texit, done, lost, killed = Drain([]int{1, 2, 4, 6, 9, 40}, 0)", "\texit, done, lost, killed = Drain([]int{1, 2, 4, 6, 9, 40}, queryTimeout)", "}"], "map": {"1": [27, 36], "2": [38, 31], "3": [2], "4": [42], "5": [3], "6": [5, 6], "7": [9, 12], "8": [15], "9": [19], "10": [23, 48], "11": [23], "12": [16, 17, 49]}}},PCS={"drain": [[1], [2, 3], [3, 4], [5, 6, 7], [8, 9]], "kill": [[10], [11], [12], [6, 12], [1, 2, 3, 4, 5, 6, 8, 9]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

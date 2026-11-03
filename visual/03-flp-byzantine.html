@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLP and Byzantine faults</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>What consensus cannot do: FLP and Byzantine faults</h1>
+  <p class="lede">Two famous limits sit under every consensus system. With no clock, a silent node may be dead or just slow. And Raft trusts every node to tell the truth. Press <b>Next</b> to see both limits, and what real systems do about them.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="flp" id="tab-flp">FLP: crashed or slow?</button>
+    <button role="tab" aria-selected="false" data-mode="byz" id="tab-byz">Byzantine: a node lies</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Consensus nodes, a silent node, and a lying node</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-flp-byzantine/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">honest node</span>
+    <span style="--c:var(--wait)">unsure, waiting</span>
+    <span style="--c:var(--ok)">decided</span>
+    <span style="--c:var(--fail)">silent, lying, or a split decision</span>
+    <span style="--c:var(--line)">node with no answer yet</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>etcd, Consul and a graph database cluster assume crash faults only and run Raft inside one trust domain. Ethereum proof of stake and Tendermint-based chains are Byzantine fault tolerant, and need two thirds of the stake to finalise a block.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Inside one company, use Raft with 2f + 1 nodes and timeouts. Between parties that do not trust each other, use a BFT (Byzantine fault tolerance) protocol with 3f + 1 nodes and signed messages, or a public chain.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Crash faults</th><th>Byzantine faults</th></tr>
+      <tr><td>A faulty node</td><td>Stops</td><td>Lies, or tells peers different things</td></tr>
+      <tr><td>Nodes to survive f faults</td><td>2f + 1</td><td>3f + 1</td></tr>
+      <tr><td>Messages</td><td>Plain</td><td>Signed</td></tr>
+      <tr><td>Protocols</td><td>Raft, Paxos, ZAB</td><td>PBFT, Tendermint, proof-of-stake finality</td></tr>
+      <tr><td>Trust</td><td>One organisation</td><td>Strangers and attackers</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"FLP says consensus can stall but need not lie, so we add timeouts. Raft handles crashes with 2f + 1 nodes, and liars need BFT with 3f + 1."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const POS={flp:{n1:[200,90],n2:[200,270],n3:[620,180]},byz:{n1:[160,90],n2:[160,270],n3:[480,90],n4:[480,270]}};
+function scene(s){
+  const P=POS[mode];let b="";const msgs=[];
+  for(const k in s.n){const[x,y]=P[k],[f,sub]=s.n[k];const tc=LIGHT(KC[f]||"var(--"+f+")")?"var(--fg)":"#fff";
+    b+=`<circle cx="${x}" cy="${y}" r="44" fill="${KC[f]||"var(--"+f+")"}" class="box"/>`+T(x,y-4,"node "+k.slice(1),{c:tc,s:16})+T(x,y+16,sub,{c:tc,s:12,w:400});}
+  if(s.side)b+=R(640,60,240,240,"var(--panel)",{st:"var(--line)"})+s.side.map((l,k)=>T(660,92+k*30,l[0],{a:"start",s:14,c:KC[l[1]||"n"],w:l[2]?700:400})).join("");
+  (s.m||[]).forEach(([a,c,l,kd,off=0])=>{const[x1,y1]=P[a],[x2,y2]=P[c],d=Math.hypot(x2-x1,y2-y1),ux=(x2-x1)/d,uy=(y2-y1)/d,px=-uy*off,py=ux*off;
+    msgs.push(ARROW(x1+ux*48+px,y1+uy*48+py,x2-ux*50+px,y2-uy*50+py,l,KC[kd||"n"],{dash:kd==="lost",lx:(x1+x2)/2+px*4.5,ly:(y1+y2)/2+py*4.5-7}))});
+  if(s.note)msgs.push(`<rect x="20" y="352" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--coord)" stroke-dasharray="6 4"/>`+T(450,371,s.note,{}));
+  if(s.ban)msgs.push(BANNER(370,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+flp:[
+ {t:"Three nodes must decide",b:"Three nodes must agree who holds a lock. Line 2: nodes 1 and 2 send their vote, 'node 1', to everyone. Node 1 has its own vote at tick 0 and node 2's at tick 1. Node 3 has gone quiet.",w:"FLP (Fischer, Lynch and Paterson, 1985) studies exactly this: no clock, messages may be delayed, and even one node may crash.",n:{n1:["svc","wants: node 1"],n2:["svc","wants: node 1"],n3:["line","silent"]},m:[["n1","n2","vote: node 1"]],pc:[1,2]},
+ {t:"Crashed, or only slow?",b:"Line 5 asks at every tick: have all 3 replied? Only 2 have. Line 6: node 3 may have crashed, or its reply may be on its way in a busy network.",w:"Without a clock, 'very slow' and 'dead' look identical forever.",n:{n1:["wait","waiting for 3"],n2:["wait","waiting for 3"],n3:["line","crashed? slow?"]},m:[["n1","n3","are you there?","lost"]],pc:[3,4,5,6]},
+ {t:"Wait for node 3? Maybe forever",b:"If lines 4 to 6 keep waiting and node 3 has crashed, nobody decides. The program runs 1,000 ticks and is still waiting. Going on without node 3 risks missing a view it holds, if it was only slow.",w:"Every algorithm hits one of these two cases on some run.",n:{n1:["wait","still waiting"],n2:["wait","still waiting"],n3:["line","no answer"]},pc:[4,5,7]},
+ {t:"The FLP result: no algorithm can always decide",b:"FLP proves that with no clock and even one crash, no algorithm can promise to always decide. Line 7 is not a bug in this loop: some timing always keeps any algorithm undecided.",w:"Something must give: either safety, or the promise to finish.",n:{n1:["fail","undecided"],n2:["fail","undecided"],n3:["fail","unknown"]},ban:"No clock and one crash: no algorithm can always decide.",pc:[7]},
+ {t:"What real systems do: a timeout",b:"Lines 8 to 12 add a timeout of 5 ticks. At tick 5, line 11 checks: 2 replies, more than 3 / 2? Yes. Line 12 decides 'node 1' with the majority. If node 3 was only slow, it learns the decision later (line 13).",w:"Raft and Paxos never decide wrongly. Under bad timing they may stall for a while. The timeout makes them finish in practice.",n:{n1:["ok","chose node 1"],n2:["ok","chose node 1"],n3:["line","learns later"]},m:[["n1","n2","timeout: decide as 2 of 3","ok"]],note:"safety always, progress when timing is reasonable",pc:[8,9,10,11,12,13]}
+],
+byz:[
+ {t:"Crash faults: nodes stop, never lie",b:"Raft assumes a faulty node simply stops. Line 3 decides when 2 of 3 votes match, trusting each one. With 2f + 1 nodes it survives f crashes: three nodes survive one.",w:"That is a strong assumption: every node that answers tells the truth.",n:{n1:["svc","honest"],n2:["svc","honest"],n3:["svc","honest"]},side:[["Crash faults",0,1],["2f + 1 nodes survive f"],["3 nodes survive 1 crash"],["every answer is true"]],pc:[1,2,3]},
+ {t:"A Byzantine node lies",b:"Node 3 is run by an attacker. Node 1 votes commit and node 2 votes abort, honestly. Line 5: node 3 tells node 1 'commit' and node 2 'abort'.",w:"A Byzantine fault is a node that lies, or says different things to different peers.",n:{n1:["svc","honest"],n2:["svc","honest"],n3:["fail","liar"]},m:[["n3","n1","yes, commit","fail"],["n3","n2","no, abort","fail"]],pc:[4,5]},
+ {t:"The failure: honest nodes split",b:"Line 2 on node 1: its own commit plus the liar's commit is 2. Line 3: 2 of 3 match, decide commit. On node 2: its own abort plus the liar's abort is 2: decide abort.",w:"Line 3 trusts every vote, so one liar tips each honest node a different way. Raft breaks completely.",n:{n1:["fail","decided: commit"],n2:["fail","decided: abort"],n3:["fail","liar"]},ban:"Three nodes, one liar: the two honest nodes decide opposite things.",pc:[2,3]},
+ {t:"BFT: 3f + 1 nodes and signed votes",b:"Add a fourth node, and the honest nodes 1, 2 and 4 vote commit. Line 7: every vote is signed and relayed to all. Line 8 records what each node signed: node 3 signed both commit and abort.",w:"Byzantine fault tolerance (BFT) needs 3f + 1 nodes to survive f liars: four nodes survive one.",n:{n1:["svc","honest"],n2:["svc","honest"],n3:["fail","liar"],n4:["svc","new, honest"]},m:[["n3","n1","yes (signed)","fail"],["n3","n2","no (signed)","fail"],["n1","n2","I heard 'yes'","n",14],["n2","n1","I heard 'no'","n",14]],pc:[6,7,8]},
+ {t:"The honest three agree",b:"Line 9: node 3 signed two values, so it is ignored. Line 10 counts commit: 3. Line 11: is 3 times 3 more than 2 times 4, that is 9 > 8? Yes. Decide commit.",w:"The liar alone can never reach more than two thirds. This is how Tendermint and proof-of-stake chains finalise a block: two thirds of the stake must sign it.",n:{n1:["ok","decided"],n2:["ok","decided"],n3:["fail","ignored"],n4:["ok","decided"]},m:[["n1","n4","commit, signed","ok"],["n2","n4","commit, signed","ok"]],note:"3 honest of 4: more than two thirds agree, the liar cannot tip it",pc:[9,10,11,12]}
+]};
+const code={"flp": {"label": "Go", "pc": ["decide(me), crash faults only:", "  send my vote to all; collect replies", "wait for all, no clock:", "  loop:", "    if every node replied: decide", "    a silent node: crashed or slow?       # nothing can tell", "  runs forever if one node crashed        # FLP: may never decide", "wait with a timeout:", "  loop:", "    if every node replied: decide", "    if now >= timeout and replies > n / 2:", "      decide with the majority            # give up on the silent node", "  if node 3 was only slow, it learns the decision later"], "real": ["// WaitAll waits for every reply before deciding. It returns the tick it", "// decided, or never if it ran out of ticks still waiting.", "func WaitAll(arrival []int, maxTicks int) int {", "\tfor t := 0; t < maxTicks; t++ {", "\t\tgot := 0", "\t\tfor _, a := range arrival {", "\t\t\tif a != never && a <= t {", "\t\t\t\tgot++", "\t\t\t}", "\t\t}", "\t\tif got == len(arrival) {", "\t\t\treturn t", "\t\t}", "\t}", "\treturn never // crashed or slow: without a clock it cannot tell", "}", "", "// WaitTimeout waits until the timeout, then decides with a majority.", "func WaitTimeout(arrival []int, timeout int) int {", "\tfor t := 0; ; t++ {", "\t\tgot := 0", "\t\tfor _, a := range arrival {", "\t\t\tif a != never && a <= t {", "\t\t\t\tgot++", "\t\t\t}", "\t\t}", "\t\tif got == len(arrival) || (t >= timeout && got > len(arrival)/2) {", "\t\t\treturn t // give up on the silent node, decide as a majority", "\t\t}", "\t}", "}"], "map": {"1": [19], "2": [6], "3": [3], "4": [4], "5": [11], "6": [7], "7": [15], "8": [19], "9": [20], "10": [27], "11": [27], "12": [28], "13": [28]}}, "byz": {"label": "Go", "pc": ["crash-only rule (Raft), n = 3:", "  count my own vote and every vote I receive", "  decide when 2 of 3 match                # trusts every vote", "a Byzantine node:", "  sends 'commit' to node 1 and 'abort' to node 2", "BFT rule, n = 3f + 1 (4 for f = 1):", "  every vote is signed and relayed to all", "  for each node: the set of values it signed", "    two different signed values: a liar, ignore it", "  count the votes of the honest nodes", "  decide only if a value has more than 2/3 of n", "                                          # 3 of 4: the liar cannot tip it"], "real": ["// DecideMajority is the crash-only rule: 2 of 3 matching votes decide.", "// It trusts every vote, so a liar can tip each honest node a different way.", "func DecideMajority(me int, own string, inbox []Vote) string {", "\tcount := map[string]int{own: 1}", "\tfor _, v := range inbox {", "\t\tif v.to == me {", "\t\t\tcount[v.value]++", "\t\t\tif count[v.value] >= 2 {", "\t\t\t\treturn v.value", "\t\t\t}", "\t\t}", "\t}", "\treturn \"undecided\"", "}", "", "// DecideBFT: votes are signed and relayed, so every node sees every vote.", "// A node that signed two different values is a liar and is ignored.", "// Decide only with matching votes from more than two thirds of n nodes.", "func DecideBFT(all []Vote, n int) string {", "\tsaid := map[int]map[string]bool{}", "\tfor _, v := range all {", "\t\tif said[v.from] == nil {", "\t\t\tsaid[v.from] = map[string]bool{}", "\t\t}", "\t\tsaid[v.from][v.value] = true", "\t}", "\tcount := map[string]int{}", "\tfor _, vals := range said {", "\t\tif len(vals) > 1 {", "\t\t\tcontinue // two different signed votes: a liar", "\t\t}", "\t\tfor val := range vals {", "\t\t\tcount[val]++", "\t\t}", "\t}", "\tfor val, c := range count {", "\t\tif 3*c > 2*n {", "\t\t\treturn val", "\t\t}", "\t}", "\treturn \"undecided\"", "}"], "map": {"1": [3], "2": [4, 7], "3": [8, 9], "4": [3], "5": [6], "6": [19], "7": [21], "8": [25], "9": [29, 30], "10": [33], "11": [37], "12": [38]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

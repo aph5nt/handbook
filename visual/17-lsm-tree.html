@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LSM tree versus B-tree</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,opacity .35s}
+.hl{animation:pop .45s ease-out}
+@keyframes pop{from{opacity:.25}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.box{transition:none}.hl{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.codetabs{display:flex;gap:8px;flex-wrap:wrap}
+.codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>LSM tree versus B-tree</h1>
+  <p class="lede">An indexer writes tens of thousands of rows a second. An LSM tree (log-structured merge tree) never updates a page in place. It writes to a log and a sorted table in memory, flushes sorted files, and merges them later. Watch writes, a read, compaction, and the stall.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="lsm">Write, flush, read, compact</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 290" aria-labelledby="stage-title">
+      <title id="stage-title">A memtable, a write-ahead log and sorted files on disk</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, with a run of this exact story, is in <code>handbook/code/17-lsm-tree/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs codetabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">key in memory or on disk</span>
+    <span style="--c:var(--wait)">touched in this step</span>
+    <span style="--c:var(--ok)">found, or freshly merged</span>
+    <span style="--c:var(--line)">skipped by its Bloom filter</span>
+    <span style="--c:var(--fail)">old version, or the stall</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet LSM trees</h2>
+      <p>RocksDB, LevelDB, Cassandra and ScyllaDB. Pick one for write-heavy loads. A columnar warehouse such as StarRocks also writes new data as versions and compacts them in the background.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet B-trees</h2>
+      <p>Postgres and MySQL InnoDB. One copy of each key, updated in place. Pick one for read-heavy loads with point updates. Watch for tombstones when an LSM table sees constant deletes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>LSM tree</th><th>B-tree</th></tr>
+      <tr><td>Write</td><td>Sequential append, then flush</td><td>Random page write in place</td></tr>
+      <tr><td>Read</td><td>Memtable, then several files</td><td>One tree walk</td></tr>
+      <tr><td>Background work</td><td>Compaction</td><td>Page splits</td></tr>
+      <tr><td>Delete</td><td>Tombstone until compaction</td><td>Removed from the page</td></tr>
+      <tr><td>Fits</td><td>Write-heavy loads</td><td>Read-heavy loads</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A B-tree updates in place and reads in one walk. An LSM tree turns writes into sequential appends and pays later, in compaction and in reads that check several files."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const F1=["k2","k5","k7","k9"],F2=["k1","k3","k5*","k8"];
+const steps={"lsm":[
+ {t:"Start",b:"LSM() opens with limit 4: an empty memtable, an empty log, and no files on disk. A memtable is a sorted table in memory. A log, or write-ahead log, is a file that is only appended to.",w:"Nothing has run yet. put is the door every write goes through.",mem:[],wal:0,files:[],pc:[1]},
+ {t:"Write k5, k2, k9",b:"Each put asks: is the memtable full? 0, then 1, then 2 keys out of 4, so no. It appends to the log, then sets the key in the memtable. After each write the check again says not full, so no flush. Sorted order: k2, k5, k9.",w:"The log comes first, so a crash loses nothing. The disk only sees appends.",mem:["k2","k5","k9"],wal:3,files:[],hm:[0,1,2],pc:[1,2,4,5,6]},
+ {t:"Write k7: full, flush",b:"k7 makes 4 keys. Now 4 == limit, and 0 files < 7, so the flush rule fires. The memtable is written as one sorted file: k2, k5, k7, k9. Memtable and log both empty.",w:"A flush is one big sequential write. The file is safe on disk, so the log's job is done.",mem:[],wal:0,files:[F1],hf:[0],pc:[4,5,6,7,8]},
+ {t:"Four more writes, flush again",b:"k5 gets a new value, written k5*, then k1, k8, k3. No lookup in file 1 and no rewrite: put never reads the disk. The fourth write fills the memtable and flushes file 2. File 1 still holds the old k5.",w:"An update is just a newer write. The old version stays on disk for now.",mem:[],wal:0,files:[F1,F2],hf:[1],old:["k5"],pc:[4,5,6,7,8]},
+ {t:"Read k7",b:"get asks in order, newest first. Is k7 in the memtable? No. File 2's Bloom filter has a bit missing for k7, so it says absent and the file is skipped with no disk read. File 1's filter says maybe. A binary search finds k7.",w:"A read may check several places. That is read amplification. Bloom filters keep it cheap, because absent is always true.",mem:[],wal:0,files:[F1,F2],skip:[1],find:[0,"k7"],read:1,pc:[9,10,11,12,13]},
+ {t:"Compaction",b:"compact merges the files oldest first, so file 2's k5* overwrites file 1's k5 in merged. One sorted file comes out with 7 keys, not 8. The old k5 is gone.",w:"The order of the loop is the rule: newest wins. It frees space and shortens reads, but it rewrites data already on disk: write amplification.",mem:[],wal:0,files:[["k1","k2","k3","k5*","k7","k8","k9"]],merged:1,pc:[15,16,17,18]},
+ {t:"The failure that matters",b:"Now compaction is not running. 28 writes make 7 files. 4 more fill the memtable, but 7 < 7 is false, so the flush is refused. Write number 33 meets a full memtable and gets stalled. RocksDB does the same: it slows or stops writes.",w:"A write stall. Fix it with more compaction threads, faster disks, or smoother writes. Deletes make it worse: each one is a tombstone until compaction.",mem:["x28","x29","x30","x31"],wal:4,files:Array.from({length:7},()=>["…"]),stall:1,pc:[2,3,6]}
+]};
+function chips(keys,x,y,w,o={}){let h="";const cw=Math.min(52,(w-12)/Math.max(1,keys.length));keys.forEach((k,i)=>{let f="var(--coord)";if((o.h||[]).includes(i))f="var(--wait)";if(o.find===k)f="var(--ok)";if((o.old||[]).includes(k))f="var(--fail)";if(o.skip)f="var(--line)";if(o.merged)f="var(--ok)";if(o.stall)f="var(--fail)";
+  h+=R(x+6+i*cw,y+8,cw-4,30,f,{rx:4,hl:f!=="var(--coord)"&&f!=="var(--line)"})+T(x+6+i*cw+(cw-4)/2,y+28,k,{c:f==="var(--line)"?"var(--muted)":"#fff",s:13});});return h;}
+function draw(s){let h="";
+ h+=T(40,30,"memory",{a:"start",c:"var(--muted)",s:14})+R(40,40,260,46,"var(--panel)",{st:s.stall?"var(--fail)":"var(--coord)"})+T(170,104,"memtable, sorted, holds 4",{c:"var(--muted)",s:13})+chips(s.mem,40,40,240,{h:s.hm});
+ h+=T(360,30,"write-ahead log on disk",{a:"start",c:"var(--muted)",s:14})+R(360,46,500,32,"var(--panel)",{st:"var(--line)"});
+ for(let i=0;i<s.wal;i++)h+=R(366+i*54,52,48,20,"var(--wait)",{rx:3});
+ h+=T(40,140,"sorted files on disk",{a:"start",c:"var(--muted)",s:14});
+ const n=s.files.length,fw=n>3?110:n===1?420:260;
+ s.files.forEach((f,j)=>{const x=40+j*(fw+12),hot=(s.hf||[]).includes(j);
+  h+=R(x,150,fw,46,"var(--panel)",{st:s.stall?"var(--fail)":hot?"var(--wait)":"var(--line)",hl:hot})+T(x+fw/2,214,n>1&&!s.stall?`file ${j+1}${j===n-1?", newest":""}`:s.stall?`file ${j+1}`:"merged file",{c:"var(--muted)",s:13});
+  h+=chips(f,x,150,fw,{old:s.old,skip:(s.skip||[]).includes(j),find:s.find&&s.find[0]===j?s.find[1]:null,merged:s.merged,stall:s.stall});});
+ if(s.read)h+=T(450,260,"read k7: memtable miss → file 2 skipped by Bloom → file 1 hit",{s:17});
+ if(s.stall)h+=T(450,260,"compaction behind: 7 files per read, writes stalled",{s:18,c:"var(--fail)"});
+ if(s.merged)h+=T(450,260,"one file, old k5 dropped",{s:18,c:"var(--ok)"});
+ return h;}
+const code={"lsm": {"label": "Python","pc": ["put(key, value):","  if memtable is full:","    return stalled                          # no room, and the flush was refused","  log.append(key, value)                    # first: this survives a crash","  memtable[key] = value                     # then the sorted table in memory","  if memtable is full and files < limit:","    files.add(sorted memtable)              # flush: one sequential write","    empty the memtable and the log","get(key):","  if key in memtable: return its value","  for file in files, newest first:","    if file's Bloom filter says absent: skip it","    if key is in file: return its value","  return not found","compact():","  merged = empty","  for file in files, oldest first: merged.update(file)   # newer values win","  files = [sorted merged]                   # the old versions are gone"],"real": ["class LSM:","    def __init__(self, limit=4, stall_at=7):","        self.limit, self.stall_at = limit, stall_at","        self.wal, self.mem, self.files = [], {}, []  # files: newest last","","    def put(self, key, value):","        if len(self.mem) == self.limit:          # no room, and the flush was refused","            return \"stalled\"","        self.wal.append((key, value))            # append first: survives a crash","        self.mem[key] = value                    # then the sorted table in memory","        if len(self.mem) == self.limit and len(self.files) < self.stall_at:","            self.files.append(SSTable(self.mem)) # full: one big sequential write","            self.mem, self.wal = {}, []          # the log's job is done","        return \"ok\"","","    def get(self, key):","        checked = []","        if key in self.mem:                      # newest data first","            return self.mem[key], [\"memtable\"]","        for n in range(len(self.files) - 1, -1, -1):  # newest file first","            f = self.files[n]","            if not all(b in f.filter for b in bloom_bits(key)):","                checked.append(f\"file {n + 1} filter says absent\")","                continue                         # no disk read for this file","            checked.append(f\"file {n + 1} read\")","            value = f.get(key)","            if value is not None:","                return value, checked","        return None, checked","","    def compact(self):","        merged = {}","        for f in self.files:                     # oldest first, so newer values win","            merged.update(f.items)","        self.files = [SSTable(merged)]           # the old k5 is dropped here"],"map": {"1": [6],"2": [7],"4": [9],"5": [10],"6": [11],"7": [12],"8": [13],"9": [16],"10": [18],"11": [20],"12": [22,24],"13": [26,27,28],"14": [29],"15": [31],"16": [32],"17": [33,34],"18": [35],"3": [8]}}};
+let view="pc";
+function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(key,pcs){
+  const c=code[key]||code[Object.keys(code)[0]],box=document.getElementById("codebox");if(!c||!box)return;
+  const lines=view==="pc"?c.pc:c.real;pcs=pcs||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Python";
+  box.innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));if(typeof redrawCode==="function")redrawCode();});
+function T(x,y,txt,o={}){return `<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" font-size="${o.s||15}" font-weight="${o.w||700}" fill="${o.c||"var(--fg)"}">${txt}</text>`}
+function R(x,y,w,h,fill,o={}){return `<rect class="box${o.hl?" hl":""}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??6}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?' stroke-dasharray="6 4"':""}/>`}
+function A(x1,y1,x2,y2,c="var(--fg)",lab="",o={}){return `<line class="${o.hl?"hl":""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${o.sw||2.5}"${o.dash?' stroke-dasharray="6 4"':""}${o.nohead?"":' marker-end="url(#arr)"'}/>`+(lab?T((x1+x2)/2+(o.dx||0),(y1+y2)/2+(o.dy??-8),lab,{c:o.lc||c,s:o.s||14}):"")}
+function C(x,y,r,fill,txt,o={}){return `<circle class="box${o.hl?" hl":""}" cx="${x}" cy="${y}" r="${r}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="3"`:""}/>`+T(x,y+6,txt,{c:o.fg||"#fff",s:o.s||17})}
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s,mode);
+  if(typeof code!=="undefined")drawCode(mode,s.pc);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+function redrawCode(){if(typeof code!=="undefined")drawCode(mode,steps[mode][i].pc);}
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

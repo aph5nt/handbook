@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service mesh and sidecars</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.nd rect{transition:fill .35s,stroke .35s}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.nd rect{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Service mesh and sidecars</h1>
+  <p class="lede">The API calls the graph query service. The team wants every call encrypted, timed out and measured, and a way to send 10 percent to a new version. Press <b>Next</b>, then open the second tab for retries stacked in two places.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="mesh">What the mesh adds</button>
+    <button role="tab" aria-selected="false" data-mode="rt">Retries in two places</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Service mesh and sidecars, step by step</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle">
+        <rect x="20" y="110" width="250" height="250" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <rect x="560" y="105" width="320" height="120" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <rect x="560" y="245" width="320" height="115" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <text id="p1" data-t class="lb" x="30" y="128" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">Pod: API</text>
+        <text id="p2" data-t class="lb" x="570" y="123" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">Pod: graph query v1</text>
+        <text id="p3" data-t class="lb" x="570" y="263" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">Pod: graph query v2</text>
+        <g id="cp" class="nd" data-s="ghost"><rect x="300" y="20" width="300" height="56" rx="8" stroke-width="3"/><text id="cp-t" data-t x="450.0" y="45.0" font-size="15" font-weight="700">Mesh control plane</text><text id="cp-s" data-t x="450.0" y="63.0" font-size="12">not installed</text></g>
+        <g id="app" class="nd" data-s="coord"><rect x="35" y="140" width="220" height="70" rx="8" stroke-width="3"/><text id="app-t" data-t x="145.0" y="172.0" font-size="15" font-weight="700">API code</text><text id="app-s" data-t x="145.0" y="190.0" font-size="12">own TLS, own retries</text></g>
+        <g id="sa" class="nd" data-s="ghost"><rect x="35" y="270" width="220" height="70" rx="8" stroke-width="3"/><text id="sa-t" data-t x="145.0" y="302.0" font-size="15" font-weight="700">Sidecar proxy</text><text id="sa-s" data-t x="145.0" y="320.0" font-size="12">not injected</text></g>
+        <g id="sv1" class="nd" data-s="ghost"><rect x="575" y="135" width="140" height="75" rx="8" stroke-width="3"/><text id="sv1-t" data-t x="645.0" y="169.5" font-size="14" font-weight="700">Sidecar</text><text id="sv1-s" data-t x="645.0" y="187.5" font-size="12">none</text></g>
+        <g id="g1" class="nd" data-s="coord"><rect x="730" y="135" width="135" height="75" rx="8" stroke-width="3"/><text id="g1-t" data-t x="797.5" y="169.5" font-size="14" font-weight="700">Graph code</text><text id="g1-s" data-t x="797.5" y="187.5" font-size="12">v1</text></g>
+        <g id="sv2" class="nd" data-s="ghost"><rect x="575" y="275" width="140" height="75" rx="8" stroke-width="3"/><text id="sv2-t" data-t x="645.0" y="309.5" font-size="14" font-weight="700">Sidecar</text><text id="sv2-s" data-t x="645.0" y="327.5" font-size="12">none</text></g>
+        <g id="g2" class="nd" data-s="ghost"><rect x="730" y="275" width="135" height="75" rx="8" stroke-width="3"/><text id="g2-t" data-t x="797.5" y="309.5" font-size="14" font-weight="700">Graph code</text><text id="g2-s" data-t x="797.5" y="327.5" font-size="12">v2, not live</text></g>
+        <g id="a-dir" class="msg"><path d="M255 160H797V137" fill="none" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text x="400" y="152" font-size="13" font-weight="700" fill="var(--fg)">plain call, coded in each service</text></g>
+        <g id="a-loc" class="msg"><line x1="145" y1="212" x2="145" y2="268" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-loc-l" data-t x="155" y="245" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">localhost</text></g>
+        <g id="a-m1" class="msg"><line x1="255" y1="295" x2="573" y2="180" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-m2" class="msg"><line x1="255" y1="315" x2="573" y2="312" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-r" class="msg"><line x1="255" y1="305" x2="573" y2="190" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-cp" class="msg"><path d="M450 78V95M450 95H145V138M450 95H645V133" fill="none" stroke="var(--coord)" stroke-width="2" stroke-dasharray="5 4"/></g>
+        <text id="w1" data-t class="lb" x="420" y="228" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ok)"></text>
+        <text id="w2" data-t class="lb" x="420" y="330" text-anchor="middle" font-size="14" font-weight="700" fill="var(--ok)"></text>
+        <text id="note" data-t class="lb" x="290" y="375" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter" aria-live="polite"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/15-service-mesh/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">code or control plane</span>
+    <span style="--c:var(--svc)">sidecar proxy</span>
+    <span style="--c:var(--ok)">healthy traffic</span>
+    <span style="--c:var(--wait)">under strain</span>
+    <span style="--c:var(--fail)">overloaded</span>
+    <span style="--c:var(--line)">not present</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: many services</h2>
+      <p>When many teams own many services and every call must be encrypted, Istio or Linkerd gives mTLS, retries, timeouts and per-version metrics with no code change.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: canary by weight</h2>
+      <p>The mesh splits traffic between versions by percentage, and its per-version metrics decide whether the new version gets more.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Library in the code</th><th>Service mesh</th></tr>
+      <tr><td>Where rules live</td><td>In each service, per language</td><td>In the mesh, once</td></tr>
+      <tr><td>Encryption</td><td>Each team sets up TLS</td><td>mTLS for every call</td></tr>
+      <tr><td>Cost</td><td>Developer time, drift between services</td><td>A proxy per pod, a control plane to run</td></tr>
+      <tr><td>Good for</td><td>A few services, one language</td><td>Many services, many teams</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A service mesh puts a proxy beside every pod, so encryption, retries, timeouts and traffic splits are configured once instead of coded in every service."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps={
+"mesh":[
+ {"t": "Before the mesh", "b": "The API code calls the graph query service directly. Encryption, timeouts and retries are written by hand in the API code, and again in every other service, each a little differently.", "w": "Every team solves the same network problems in its own code.", "c": {}, "a": ["a-dir"], "x": {}, "h": ["app"], "pc": [1]},
+ {"t": "A sidecar beside every pod", "b": "The mesh injects a small proxy, a sidecar container, into each pod. The API code now sends plain HTTP to localhost. The sidecar carries the call onward.", "w": "The code gets simpler. The network rules move out of it.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc"}, "a": ["a-loc"], "x": {"cp": "injecting sidecars", "sa": "Envoy", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost"}, "h": ["sa", "sv1"], "pc": [2, 3]},
+ {"t": "Mutual TLS, both sides proven", "b": "The control plane gives each sidecar a certificate tied to its service identity. The sidecars talk mutual TLS (mTLS): each proves who it is, and the traffic is encrypted.", "w": "Encryption and identity everywhere, with no change to the code.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc"}, "a": ["a-loc", "a-m1", "a-cp"], "x": {"cp": "certificates and rules", "sa": "Envoy", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost"}, "h": ["cp"], "pc": [5]},
+ {"t": "Timeouts and retries, set once", "b": "A mesh rule says: calls to graph query time out after 2 seconds and make up to 3 tries. Between tries the sidecar waits 100 ms, then 200 ms, with some jitter so that all callers do not retry together. Every caller's sidecar applies it.", "w": "One rule, in one place, for every caller.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc"}, "a": ["a-loc", "a-m1"], "x": {"cp": "certificates and rules", "sa": "timeout 2 s, 3 tries", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost"}, "h": ["sa"], "pc": [6, 8, 9]},
+ {"t": "A traffic split for a new version", "b": "graph query v2 goes live. A rule sends 90 percent of calls to v1 and 10 percent to v2. The API code knows nothing about it.", "w": "A canary by weight is a mesh rule, not a code change.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc", "g2": "coord"}, "a": ["a-loc", "a-m1", "a-m2"], "x": {"cp": "certificates and rules", "sa": "Envoy", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost", "g2": "v2, 10 percent", "w1": "90%", "w2": "10%"}, "h": ["g2"], "pc": [4]},
+ {"t": "Every call is measured", "b": "Each sidecar records every call: rate, errors, duration, and a trace span. The v2 error rate can be compared with v1 on a board.", "w": "The mesh gives per-version metrics for free, which is what a canary needs.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc", "g2": "coord"}, "a": ["a-loc", "a-m1", "a-m2"], "x": {"cp": "certificates and rules", "sa": "Envoy", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost", "g2": "v2, 10 percent", "w1": "90%: 0.1% errors", "w2": "10%: 0.1% errors"}, "h": [], "pc": [11]}
+],
+"rt":[
+ {"t": "The graph service slows down", "b": "graph query v1 is under strain and some calls time out. The mesh rule retries each failed call up to 3 times.", "w": "Retries help with a blip. They hurt a service that is already overloaded.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc", "g1": "wait"}, "a": ["a-loc", "a-m1"], "x": {"cp": "certificates and rules", "sa": "3 retries", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost", "g1": "slow"}, "h": [], "pc": [6, 8, 10]},
+ {"t": "The failure that matters", "b": "The API code still has its old retry loop: 3 tries. Each of those tries goes through the sidecar, which makes 3 tries of its own. 3 times 3: one user request becomes up to 9 calls.", "w": "Retries stacked in two layers multiply. The slow service gets nine times the load.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc", "g1": "fail", "app": "fail"}, "a": ["a-loc", "a-r"], "x": {"cp": "certificates and rules", "sa": "mesh retries 3", "sv1": "Envoy", "sv2": "Envoy", "app": "code retries 3", "g1": "9 calls per request", "note": "3 × 3 = 9 tries"}, "h": ["app", "sa"], "pc": [12]},
+ {"t": "A slow service becomes a dead one", "b": "The extra calls push graph query over the edge. Now every call fails, and every failure is retried nine times.", "w": "This is a retry storm, and it is self-made.", "c": {"cp": "coord", "sa": "svc", "sv1": "fail", "sv2": "svc", "g1": "fail", "app": "fail"}, "a": ["a-loc", "a-r"], "x": {"cp": "certificates and rules", "sa": "mesh retries 3", "sv1": "overloaded", "sv2": "Envoy", "app": "code retries 3", "g1": "down"}, "h": [], "pc": [12]},
+ {"t": "Retries live in one place", "b": "The retry loop is deleted from the API code. Only the mesh retries, with a retry budget: retries may be at most 20 percent of the calls. 1,000 requests to a dead service now make 1,200 calls, not 3,000. The service recovers.", "w": "Decide once where retries live. With a mesh, that place is the mesh.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc", "g1": "ok"}, "a": ["a-loc", "a-m1"], "x": {"cp": "certificates and rules", "sa": "retries with a 20% budget", "sv1": "Envoy", "sv2": "Envoy", "app": "plain HTTP to localhost", "g1": "recovered", "note": "at most 1.2 calls per request"}, "h": [], "pc": [7]},
+ {"t": "The cost of a mesh", "b": "Every pod now runs a proxy, which takes memory and adds a little latency to each call. A control plane must be upgraded and watched.", "w": "For many services and many teams that is cheap. For three services, plain TLS and a client library may be enough.", "c": {"cp": "coord", "sa": "svc", "sv1": "svc", "sv2": "svc"}, "a": [], "x": {"cp": "certificates and rules", "sa": "memory per pod", "sv1": "memory per pod", "sv2": "memory per pod", "app": "plain HTTP to localhost", "note": "a proxy in every pod is a real cost"}, "h": [], "pc": [3]}
+]
+};
+const code={
+ "mesh":{"label":"Go",
+  "pc":["before: each service hand-writes its own TLS, timeouts and retries", "the API code: call localhost, the sidecar takes over", "the sidecar, on each outgoing call:", "  v = pick v1 for 90 percent, v2 for 10 percent", "  open mutual TLS: each side proves its service identity", "  for try in 1 .. 3:", "    if this is a retry and the budget is spent: stop    # 20 percent extra", "    send with a 2 s timeout", "    success: stop", "    wait a backoff: 100 ms, doubled each try, with jitter", "  record rate, errors, duration and a trace span", "calls per request = app tries * sidecar tries     # 3 * 3 = 9"],
+  "real":["// Budget allows retries up to 20 percent of the calls.", "type Budget struct{ Calls, Retries int }", "", "func (b *Budget) allow() bool { return float64(b.Retries) < 0.2*float64(b.Calls) }", "", "// pick is the traffic split: 90 percent to v1, 10 percent to v2.", "func (s *Sidecar) pick() string {", "\tif s.Rand.Intn(100) < 90 {", "\t\treturn \"v1\"", "\t}", "\treturn \"v2\"", "}", "", "// tlsConfig is mutual TLS: show this service's certificate, demand the peer's.", "func (s *Sidecar) tlsConfig() *tls.Config {", "\treturn &tls.Config{", "\t\tCertificates: []tls.Certificate{s.Cert}, // its service identity", "\t\tClientCAs:    s.MeshCA,", "\t\tClientAuth:   tls.RequireAndVerifyClientCert,", "\t}", "}", "", "// Call tries up to MaxTries, waiting 100 ms, then doubling, with jitter.", "func (s *Sidecar) Call(send func() error) error {", "\tbackoff := 100 * time.Millisecond", "\tvar err error", "\tfor try := 1; try <= s.MaxTries; try++ {", "\t\tif try > 1 {", "\t\t\tif s.Budget != nil && !s.Budget.allow() {", "\t\t\t\treturn err // the budget is spent: fail fast", "\t\t\t}", "\t\t\tif s.Budget != nil {", "\t\t\t\ts.Budget.Retries++", "\t\t\t}", "\t\t\tjitter := time.Duration(s.Rand.Int63n(int64(backoff / 2)))", "\t\t\ts.Waited += backoff + jitter // a real sidecar sleeps here", "\t\t\tbackoff *= 2", "\t\t}", "\t\ts.Sent++", "\t\tif s.Budget != nil && try == 1 {", "\t\t\ts.Budget.Calls++", "\t\t}", "\t\tif err = send(); err == nil {", "\t\t\treturn nil", "\t\t}", "\t}", "\treturn err", "}", "", "// appCall is the old retry loop in the API code: 3 tries of 3 tries.", "func appCall(tries int, s *Sidecar, send func() error) error {", "\tvar err error", "\tfor i := 0; i < tries; i++ {", "\t\tif err = s.Call(send); err == nil {", "\t\t\treturn nil", "\t\t}", "\t}", "\treturn err", "}"],
+  "map":{"1": [51, 53, 54], "2": [24], "3": [24], "4": [7, 8, 9, 11], "5": [15, 16, 17, 18, 19], "6": [27], "7": [4, 29, 30, 31], "8": [43], "9": [43, 44], "10": [35, 36, 37], "11": [39], "12": [53, 54]}},
+ "rt":{"label":"Go",
+  "pc":["before: each service hand-writes its own TLS, timeouts and retries", "the API code: call localhost, the sidecar takes over", "the sidecar, on each outgoing call:", "  v = pick v1 for 90 percent, v2 for 10 percent", "  open mutual TLS: each side proves its service identity", "  for try in 1 .. 3:", "    if this is a retry and the budget is spent: stop    # 20 percent extra", "    send with a 2 s timeout", "    success: stop", "    wait a backoff: 100 ms, doubled each try, with jitter", "  record rate, errors, duration and a trace span", "calls per request = app tries * sidecar tries     # 3 * 3 = 9"],
+  "real":["// Budget allows retries up to 20 percent of the calls.", "type Budget struct{ Calls, Retries int }", "", "func (b *Budget) allow() bool { return float64(b.Retries) < 0.2*float64(b.Calls) }", "", "// pick is the traffic split: 90 percent to v1, 10 percent to v2.", "func (s *Sidecar) pick() string {", "\tif s.Rand.Intn(100) < 90 {", "\t\treturn \"v1\"", "\t}", "\treturn \"v2\"", "}", "", "// tlsConfig is mutual TLS: show this service's certificate, demand the peer's.", "func (s *Sidecar) tlsConfig() *tls.Config {", "\treturn &tls.Config{", "\t\tCertificates: []tls.Certificate{s.Cert}, // its service identity", "\t\tClientCAs:    s.MeshCA,", "\t\tClientAuth:   tls.RequireAndVerifyClientCert,", "\t}", "}", "", "// Call tries up to MaxTries, waiting 100 ms, then doubling, with jitter.", "func (s *Sidecar) Call(send func() error) error {", "\tbackoff := 100 * time.Millisecond", "\tvar err error", "\tfor try := 1; try <= s.MaxTries; try++ {", "\t\tif try > 1 {", "\t\t\tif s.Budget != nil && !s.Budget.allow() {", "\t\t\t\treturn err // the budget is spent: fail fast", "\t\t\t}", "\t\t\tif s.Budget != nil {", "\t\t\t\ts.Budget.Retries++", "\t\t\t}", "\t\t\tjitter := time.Duration(s.Rand.Int63n(int64(backoff / 2)))", "\t\t\ts.Waited += backoff + jitter // a real sidecar sleeps here", "\t\t\tbackoff *= 2", "\t\t}", "\t\ts.Sent++", "\t\tif s.Budget != nil && try == 1 {", "\t\t\ts.Budget.Calls++", "\t\t}", "\t\tif err = send(); err == nil {", "\t\t\treturn nil", "\t\t}", "\t}", "\treturn err", "}", "", "// appCall is the old retry loop in the API code: 3 tries of 3 tries.", "func appCall(tries int, s *Sidecar, send func() error) error {", "\tvar err error", "\tfor i := 0; i < tries; i++ {", "\t\tif err = s.Call(send); err == nil {", "\t\t\treturn nil", "\t\t}", "\t}", "\treturn err", "}"],
+  "map":{"1": [51, 53, 54], "2": [24], "3": [24], "4": [7, 8, 9, 11], "5": [15, 16, 17, 18, 19], "6": [27], "7": [4, 29, 30, 31], "8": [43], "9": [43, 44], "10": [35, 36, 37], "11": [39], "12": [53, 54]}}
+};
+const COL={idle:["var(--line)","var(--fg)"],coord:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],wait:["var(--wait)","#1f2320"],undo:["var(--undo)","#fff"],ghost:["none","var(--muted)"],hide:["none","transparent"]};
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)");
+const nodes=[...document.querySelectorAll(".nd")],msgs=[...document.querySelectorAll(".msg")],labs=[...document.querySelectorAll(".lb")];
+document.querySelectorAll("[data-t]").forEach(t=>t.dataset.d=t.textContent);
+const saved={};
+Object.values(steps).flat().forEach(s=>Object.entries(s.at||{}).forEach(([id,o])=>Object.keys(o).forEach(k=>{const key=id+"|"+k;if(!(key in saved))saved[key]=$(id).getAttribute(k);})));
+const vis=el=>{const t=el.dataset.tab;return !t||t.split(" ").includes(mode);};
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-t]").forEach(t=>t.textContent=t.dataset.d);
+  for(const[k,v]of Object.entries(s.x)){const el=$(k+"-s")||$(k);if(el&&el.tagName==="text")el.textContent=v;}
+  nodes.forEach(g=>{g.style.display=vis(g)?"":"none";const st=s.c[g.id]||g.dataset.s;const[f,tc]=COL[st];const r=g.querySelector("rect");
+    r.setAttribute("fill",f);r.setAttribute("stroke",s.h.includes(g.id)?"var(--fg)":(st==="ghost"?"var(--line)":"none"));
+    r.setAttribute("stroke-dasharray",st==="ghost"?"5 5":"none");g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",tc));});
+  labs.forEach(l=>l.style.display=vis(l)?"":"none");
+  msgs.forEach((m,k)=>{m.style.display=vis(m)?"":"none";const on=s.a.includes(m.id);
+    if(!on)return m.classList.remove("on");if(m.classList.contains("on"))return;
+    RM.matches?m.classList.add("on"):setTimeout(()=>{if(steps[mode][i].a.includes(m.id))m.classList.add("on")},40+60*s.a.indexOf(m.id));});
+  for(const[key,v]of Object.entries(saved)){const[id,k]=key.split("|");v===null?$(id).removeAttribute(k):$(id).setAttribute(k,v);}
+  for(const[id,o]of Object.entries(s.at||{}))for(const[k,v]of Object.entries(o))$(id).setAttribute(k,v);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

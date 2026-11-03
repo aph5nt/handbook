@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Location Transparency</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Location transparency: one reference, any machine</h1>
+  <p class="lede">The dashboard API holds a reference to device actor 42. On Monday device 42 lives on the same node. On Tuesday sharding moved it to node 3. The API code is the same both days. Press <b>Next</b>, then open the last tab to see what a remote send can do that a local one never does.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="local">Monday: same node</button>
+    <button role="tab" aria-selected="false" data-mode="remote">Tuesday: other node</button>
+    <button role="tab" aria-selected="false" data-mode="fail">What the network adds</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Node 1 with the dashboard API and a reference, the network, and node 3</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g fill="none" stroke="var(--line)" stroke-width="2">
+        <rect x="15" y="12" width="385" height="300" rx="10"/><rect x="500" y="12" width="385" height="300" rx="10"/>
+      </g>
+      <rect x="412" y="12" width="76" height="300" rx="6" fill="var(--line)" opacity=".35"/>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <text x="30" y="36" text-anchor="start" fill="var(--fg)">Node 1</text><text x="515" y="36" text-anchor="start" fill="var(--fg)">Node 3</text>
+        <text x="450" y="36" fill="var(--muted)" font-size="13">network</text>
+        <rect id="c-api" class="box" x="30" y="55" width="160" height="56" rx="8" fill="var(--coord)"/><text id="t-api" x="110" y="88" fill="#fff">Dashboard API</text>
+        <rect id="c-ref" class="box" x="215" y="55" width="170" height="56" rx="8" fill="var(--coord)"/><text id="t-ref" x="300" y="79" fill="#fff">ActorRef 42</text><text id="s-ref" x="300" y="100" fill="#fff" font-size="12">address: local</text>
+        <rect id="c-ser" class="box" x="215" y="140" width="170" height="40" rx="20" fill="var(--line)"/><text id="t-ser" x="300" y="165" fill="var(--fg)" font-size="13">serializer: idle</text>
+        <g id="g-loc" class="msg on"><rect id="c-loc" class="box" x="60" y="215" width="250" height="70" rx="8" fill="var(--svc)"/><text id="t-loc" x="185" y="243" fill="#fff">device 42</text><text id="s-loc" x="185" y="267" fill="#fff" font-size="13">mailbox: 0</text></g>
+        <rect id="c-des" class="box" x="590" y="140" width="210" height="40" rx="20" fill="var(--line)"/><text id="t-des" x="695" y="165" fill="var(--fg)" font-size="13">deserializer: idle</text>
+        <g id="g-rem" class="msg"><rect id="c-rem" class="box" x="570" y="215" width="250" height="70" rx="8" fill="var(--svc)"/><text id="t-rem" x="695" y="243" fill="#fff">device 42</text><text id="s-rem" x="695" y="267" fill="#fff" font-size="13">mailbox: 0</text></g>
+        <rect id="c-note" class="box" x="15" y="322" width="870" height="32" rx="16" fill="var(--line)"/><text id="t-note" x="450" y="343" fill="var(--fg)" font-size="13">the API's code: ref.Tell(GetState)</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">sender and its reference</span>
+    <span style="--c:var(--svc)">device actor</span>
+    <span style="--c:var(--wait)">bytes on the way</span>
+    <span style="--c:var(--ok)">delivered</span>
+    <span style="--c:var(--fail)">failed or lost</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Akka Remote and Akka Cluster, Orleans grains, Erlang distribution: the same send works across machines. In the IoT backend, sharding moved device actors between ingest nodes, and no sender knew or cared.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Design every message as if it crosses a network. Small immutable records, a fixed serializer, no connections or lambdas inside. Assume at most once delivery. Turn on serialize-every-message in tests, and test on a real multi-node cluster.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Same node</th><th>Other node</th></tr>
+      <tr><td>What a tell does</td><td>Puts the message object in the mailbox</td><td>Serializes it, sends bytes over TCP, deserializes, then puts it in the mailbox</td></tr>
+      <tr><td>Cost</td><td>A write to a queue in memory</td><td>Serialization plus a network round of latency</td></tr>
+      <tr><td>Can it be lost?</td><td>Almost never</td><td>Yes: a blip, a full buffer, a dead node</td></tr>
+      <tr><td>A message that will not serialize</td><td>Works, the bug hides</td><td>Fails the day the actor moves</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Location transparency means the same reference works locally or remotely, so I design every message as if it crosses a network: small, immutable, serializable, and possibly lost."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-location-transparency/main.go";
+const code={_:{pc:`
+ref = reference to device 42   # an address, never the object
+ref.tell(msg):
+  if ref.address is local:
+    device42.mailbox.put(msg)   # the object itself, nothing copied
+  else:
+    bytes = serialize(msg)      # only data can be serialized
+    if that fails: log, drop the message   # the sender is not told
+    send bytes over TCP to ref.address
+node 3 receive(bytes):
+  msg = deserialize(bytes); device42.mailbox.put(msg)
+device 42 on GetState(replyTo): tell(replyTo, state)   # same road back
+# the fix:
+test: serialize(every message type) must succeed
+api: ask(ref, GetState, timeout), on timeout retry or answer an error`,go:`
+type Ref struct { //@1
+	addr    string        // "local" or "node3:4053" //@1
+	mailbox chan GetState // used when local
+	wire    chan []byte   // used when remote
+}
+func (r Ref) Tell(m GetState) error { //@2
+	if r.addr == "local" { //@3
+		r.mailbox <- m // the object itself //@4
+		return nil
+	}
+	b, err := json.Marshal(m) // serialize first //@5,6
+	if err != nil { //@7
+		return err // Akka logs it, the sender never hears //@7
+	}
+	r.wire <- b // the network hop //@8
+	return nil
+}
+for b := range wire { // node 3 //@9
+	var m GetState
+	_ = json.Unmarshal(b, &m) //@10
+	mailbox <- m //@10
+}
+for range mailbox { //@11
+	replies <- State{"device 42", node} //@11
+}
+_, testErr := json.Marshal(GetState{ReplyTo: "api@node1"}) // test //@13
+select { //@14
+case s := <-replies: //@14
+	return s, nil //@14
+case <-time.After(timeout): //@14
+	return State{}, errors.New("ask timed out") //@14
+}`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET: the same line for local and remote.
+IActorRef device42 = shardRegion; // address hidden //@1
+device42.Tell(new GetState()); // local: this enqueues the object //@2,4
+bool local = device42.Path.Address.HasLocalScope; // true on Monday //@3
+// Local: the runtime puts the object itself in the mailbox. //@4
+// Remote path: HOCON picks the serializer per type.
+akka.actor.serialization-bindings { //@5,6
+  "MyApp.Messages.IMessage, MyApp" = hyperion } //@5,6
+var ser = system.Serialization.FindSerializerFor(msg); //@6
+byte[] bytes = ser.ToBinary(msg); // throws for a live connection //@6,7
+// Akka.Remote catches it: logged, the message dropped. //@7
+akka.remote.dot-netty.tcp { hostname = "node3", port = 4053 } //@8
+var back = system.Serialization.Deserialize(bytes, ser.Identifier, typeof(GetState)); //@9,10
+Receive<GetState>(_ => Sender.Tell(_state)); // same road back //@11
+// A test that serializes every message, even locally:
+akka.actor.serialize-messages = on //@13
+var s = await device42.Ask<DeviceState>(new GetState(), //@14
+    TimeSpan.FromSeconds(2)); // AskTimeoutException on loss //@14`}};
+const tabInit={
+ local:{on:["g-loc"],off:["g-rem"]},
+ remote:{off:["g-loc"],on:["g-rem"],x:{"s-ref":"address: node 3, port 4053"}},
+ fail:{off:["g-loc"],on:["g-rem"],x:{"s-ref":"address: node 3, port 4053"}}
+};
+const steps={
+local:[
+ {pc:[1],t:"The API holds a reference",b:"The dashboard API never holds device 42 itself. It holds an ActorRef. The reference carries an address, and on Monday that address is local.",w:"Every actor is reached through a reference. That one rule is what makes location transparency possible."},
+ {pc:[2,3],t:"Tell through the reference",b:"The API calls ref.Tell(GetState). Tell checks one thing first: is the address local? On Monday it is.",w:"The sender's code does not mention where the actor lives.",a:[[190,83,215,83,""]],f:{"c-ref":"wait"},x:{"s-ref":"address: local, deliver"}},
+ {pc:[4],t:"Straight into the mailbox",b:"For a local address the message object goes straight into device 42's mailbox. Nothing is copied or encoded.",w:"A local tell is a write into a queue in memory. It almost never fails.",a:[[270,111,200,215,"put in mailbox","ok"]],f:{"c-ref":"coord","c-loc":"wait"},x:{"s-ref":"address: local","s-loc":"mailbox: 1"}},
+ {pc:[11],t:"The actor answers the same way",b:"Device 42 handles GetState and tells the reply to the API's own reference, which is local too.",w:"Replies are ordinary sends through references, in both directions.",a:[[120,215,100,111,"reply","ok"]],f:{"c-loc":"svc"},x:{"s-loc":"replied"}},
+ {pc:[3,4],t:"The hidden bug",b:"Suppose the message also carried a database connection. The address check says local, so the serialize branch never runs. The object is passed along and nothing warns you.",w:"A local send never serializes, so a message that cannot cross a network looks fine until the actor moves.",f:{"c-note":"fail"},x:{"t-note":"GetState(dbConnection) works on Monday, by luck"}}
+],
+remote:[
+ {pc:[1],t:"Device 42 has moved",b:"Overnight sharding moved device 42 to node 3. The API's reference now holds a remote address: host and port.",w:"The API was not told and did not change.",f:{"c-ref":"coord"}},
+ {pc:[2,3],t:"The same tell",b:"The API calls ref.Tell(GetState), the same line as on Monday. The address check now says remote: node 3, port 4053. So Tell takes the other branch.",w:"Same code, different path underneath.",a:[[190,83,215,83,""]],f:{"c-ref":"wait"},x:{"s-ref":"remote: serialize first"}},
+ {pc:[5,6],t:"Serialize",b:"The remote branch first turns GetState into bytes with the configured serializer. In the program that is JSON, and GetState becomes 23 bytes.",w:"Only data can be serialized. A connection, a lock or a lambda cannot.",a:[[300,111,300,140,"to bytes"]],f:{"c-ser":"wait","c-ref":"coord"},x:{"t-ser":"serializer: 23 bytes","s-ref":"address: node 3, port 4053"}},
+ {pc:[8],t:"Across the network",b:"The bytes go over TCP (Transmission Control Protocol) to node 3.",w:"This hop costs network latency and can fail. A local send had neither.",a:[[385,160,590,160,"TCP","wait"]],f:{"c-ser":"line"},x:{"t-ser":"serializer: idle"}},
+ {pc:[9,10],t:"Deserialize, into the real mailbox",b:"Node 3 turns the bytes back into GetState and puts it into device 42's mailbox.",w:"From here on, device 42 sees an ordinary message.",a:[[695,180,695,215,"into mailbox","ok"]],f:{"c-des":"ok","c-rem":"wait"},x:{"t-des":"deserializer: GetState","s-rem":"mailbox: 1"}},
+ {pc:[11],t:"The reply takes the same road back",b:"Device 42 tells the reply to the API's reference. It is remote from node 3, so it is serialized, sent and decoded the same way.",w:"Location transparency hides where the actor is, not what the network costs.",a:[[590,250,400,90,"reply over TCP","ok"]],f:{"c-rem":"svc","c-des":"line"},x:{"s-rem":"replied","t-des":"deserializer: idle"}}
+],
+fail:[
+ {pc:[2,3],t:"A message with a connection inside",b:"The Monday bug comes back: the API sends GetState with a database connection inside. Device 42 is on node 3 now.",w:"The send must serialize, and a connection is not data.",a:[[190,83,215,83,""]],f:{"c-note":"fail"},x:{"t-note":"GetState(dbConnection)"}},
+ {pc:[6],t:"The serializer throws",b:"The address is remote, so serialize runs. It cannot turn a live connection into bytes. Go's JSON says: unsupported type: chan int. The send fails on node 1.",w:"The bug was there on Monday. Only the move made it visible.",a:[[300,111,300,140,"to bytes?","fail"]],f:{"c-ser":"fail"},x:{"t-ser":"cannot serialize"}},
+ {pc:[7],t:"Nobody tells the sender",b:"In Akka a tell returns nothing. The failure is logged on node 1 and the message is dropped. The API waits for a reply that will never come. The Go program returns the error only so you can see it.",w:"Remote sends are at most once. The sender learns only through a timeout.",f:{"c-api":"fail"},x:{"t-api":"waits for nothing"}},
+ {pc:[8],t:"Even a good message can be lost",b:"Now a clean GetState is sent, and a network blip drops it between the nodes.",w:"A local send almost never fails. A remote one can, and you cannot tell lost from slow.",a:[[385,200,450,200,"lost ✕","fail",true]],f:{"c-ser":"line","c-api":"coord","c-note":"line"},x:{"t-ser":"serializer: idle","t-api":"Dashboard API","t-note":"GetState: small, immutable"}},
+ {pc:[13],t:"The fix: messages built to travel",b:"Messages become small immutable records with a fixed serializer. Tests serialize every message, even local ones, so a bad one fails on the first test run.",w:"Design for the network from day one, then moving an actor changes nothing.",a:[[385,160,590,160,"TCP","wait"],[695,180,695,215,"delivered","ok"]],f:{"c-note":"ok","c-rem":"svc"},x:{"t-note":"tests serialize every message, cluster tests on several nodes"}},
+ {pc:[14],t:"And the sender plans for loss",b:"The API asks with a timeout of 500 ms. The first try was lost, so the wait ends with a timeout and the API retries. The retry gets an answer from node 3. Important commands use at least once with ids.",w:"Every design assumes at most once, and adds more only where it matters.",a:[[590,250,400,90,"reply, or a timeout","ok"]],f:{"c-api":"ok"},x:{"t-api":"timeout handled"}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

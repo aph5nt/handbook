@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snowflake versus star</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Snowflake schema versus star</h1>
+  <p class="lede">A report wants swap volume per exchange. The exchange name can live in a flat pool dimension, in its own table, or copied into every swap row. Press <b>Next</b> and count the joins, then watch what a rename does.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="star" id="tab-star">Star</button>
+    <button role="tab" aria-selected="false" data-mode="snow" id="tab-snow">Snowflake</button>
+    <button role="tab" aria-selected="false" data-mode="wide" id="tab-wide">Wide table</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Fact and dimension tables joined for a report, with the join count</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-snowflake-schema/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">fact table or query</span>
+    <span style="--c:var(--svc)">dimension</span>
+    <span style="--c:var(--wait)">being joined</span>
+    <span style="--c:var(--ok)">answer</span>
+    <span style="--c:var(--undo)">repeated or derived</span>
+    <span style="--c:var(--fail)">the cost that hurts</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a star</h2>
+      <p>A chain warehouse in StarRocks: swap and transfer facts with pool, token and day dimensions. One join per axis, and the dimensions are small.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet a snowflake or a wide table</h2>
+      <p>A snowflake arrives when an OLTP model is copied over as it is. A wide table backs one fast dashboard, built from the star and rebuilt when a dimension changes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Star</th><th>Snowflake</th><th>Wide table</th></tr>
+      <tr><td>Joins per axis</td><td>One</td><td>One per level</td><td>None</td></tr>
+      <tr><td>Repetition</td><td>A little, in dimensions</td><td>Least</td><td>Most: values copied into every fact</td></tr>
+      <tr><td>A rename</td><td>Edit dimension rows</td><td>Edit one row</td><td>Rewrite fact rows</td></tr>
+      <tr><td>Fits</td><td>The default in a column store</td><td>A large dimension with a big repeated group</td><td>One fast scan, values fixed at the event</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A star is the default, a snowflake trades joins for less repetition, and a wide table trades history for speed."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"star": {"label": "SQL", "pc": ["report volume per exchange, last 30 days:", "  rows = swap_fact where day in the last 30 days", "  join rows to pool_dim on pool_id          # join 1, a small table", "  group by pool.exchange_name, sum amount", "rename exchange E:", "  update every pool_dim row named E         # the name repeats in 10 rows", "rule: one flat dimension per axis"], "real": ["-- star: the pool dimension is flat", "SELECT p.exchange_name,", "       sum(f.amount) AS volume", "FROM   swap_fact f", "JOIN   pool_dim p ON p.pool_id = f.pool_id      -- join 1", "WHERE  f.day >= current_date - INTERVAL 30 DAY", "GROUP  BY p.exchange_name;", "", "-- a rename touches every pool row of that exchange", "UPDATE pool_dim SET exchange_name = 'Aero'", "WHERE  exchange_name = 'Velodrome';             -- 10 rows"], "map": {"1": [1, 2, 3], "2": [4, 6], "3": [5], "4": [7], "5": [9], "6": [10, 11], "7": [1, 5]}}, "snow": {"label": "SQL", "pc": ["split pool_dim: pool(pool_id, exchange_id, fee), exchange(id, name)", "rename exchange E: update one exchange row", "report volume per exchange:", "  join swap_fact to pool on pool_id         # join 1", "  join pool to exchange on exchange_id      # join 2", "  group by exchange.name, sum amount", "space saved: repeated names in a small dimension only", "# every dimension split: one report needs 7 joins", "fix: flatten exchange back into pool_dim for reads"], "real": ["-- snowflake: exchange moved to its own table", "SELECT e.name,", "       sum(f.amount) AS volume", "FROM   swap_fact f", "JOIN   pool_dim p     ON p.pool_id = f.pool_id          -- join 1", "JOIN   exchange_dim e ON e.exchange_id = p.exchange_id  -- join 2", "WHERE  f.day >= current_date - INTERVAL 30 DAY", "GROUP  BY e.name;", "", "-- a rename is one row", "UPDATE exchange_dim SET name = 'Aero' WHERE exchange_id = 7;", "", "-- fix: flatten back into a star for reads", "CREATE TABLE pool_dim_flat AS", "SELECT p.pool_id, e.name AS exchange_name, p.fee", "FROM   pool_dim p JOIN exchange_dim e ON e.exchange_id = p.exchange_id;"], "map": {"1": [1], "2": [10, 11], "3": [2, 3], "4": [5], "5": [6], "6": [8], "7": [10, 11], "8": [4, 5, 6], "9": [13, 14, 15, 16]}}, "wide": {"label": "SQL", "pc": ["on each new swap: copy pool.exchange_name into the swap row", "report: group swap_wide by exchange_name, sum amount   # no join", "rename exchange: only new rows get the new name", "old rows keep the old name forever", "# missing: a rebuild from the star after a dimension change", "fix: rebuild swap_wide from swap_fact join pool_dim"], "real": ["-- wide table: exchange name copied into every swap row at write time", "INSERT INTO swap_wide", "SELECT f.pool_id, f.amount, f.day, p.exchange_name, p.fee", "FROM   swap_fact f JOIN pool_dim p ON p.pool_id = f.pool_id;", "", "-- the report: zero joins", "SELECT exchange_name, sum(amount) FROM swap_wide GROUP BY exchange_name;", "", "-- after a rename, old rows keep 'Velodrome': two lines for one exchange", "-- fix: rebuild the derived table from the star", "INSERT OVERWRITE swap_wide", "SELECT f.pool_id, f.amount, f.day, p.exchange_name, p.fee", "FROM   swap_fact f JOIN pool_dim p ON p.pool_id = f.pool_id;"], "map": {"1": [1, 2, 3, 4], "2": [6, 7], "3": [2, 3, 9], "4": [3, 9], "6": [11, 12, 13]}}};
+
+const FACT=(c)=>[40,130,240,70,c||"c","swap fact","pool_id, amount, day"];
+const POOL=(c)=>[340,40,240,70,c||"s","pool dimension","pool, exchange name, fee"];
+const POOLK=(c)=>[340,40,240,70,c||"s","pool dimension","pool, exchange_id, fee"];
+const EXCH=(c)=>[640,40,220,70,c||"s","exchange dimension","exchange_id, name, chain"];
+const Q="Swap volume per exchange, last 30 days";
+const steps={
+"star":[
+ {pc:[1],t:"The question",b:"A report wants swap volume per exchange. The swap fact table holds a pool id and an amount for every swap.",w:"The exchange name is not in the fact. It lives in a dimension.",bx:[FACT(),POOL()],bar:Q},
+ {pc:[2, 3],t:"One join",b:"In a star, the pool dimension is flat: it holds the pool, its exchange name and its fee. The report joins the fact to it once.",w:"One join per axis. Dimensions are small, so the join is cheap.",bx:[FACT(),POOL("w")],ln:[[280,165,338,90,"c","join 1"]],bar:Q},
+ {pc:[4],t:"The answer",b:"Each swap row looks up its pool_id in the pool dimension and takes the exchange name from that row. Then the rows are grouped by name and summed: Velodrome 150, Uniswap 30.",w:"A star is the default shape for a column store: simple to read, few joins.",bx:[FACT("o"),POOL("o")],ln:[[280,165,338,90,"o","join 1"]],tx:[[450,270,"joins: 1","o"]],bar:Q},
+ {pc:[5, 6],t:"Exchange name repeats",b:"Velodrome has ten pools, so its name sits in ten pool rows. Renaming it to Aero is an UPDATE WHERE exchange_name = Velodrome, and it changes all ten rows.",w:"That repetition is what a snowflake removes. It is small, because dimensions are small.",bx:[FACT(),POOL("u")],tx:[[460,140,"same exchange name in 10 pool rows","u"]],bar:"Rename one exchange"},
+ {pc:[7],t:"The interview point",b:"A star repeats a little in its dimensions and saves a join in every query. In a column store that is almost always the right trade.",w:"Default to a star. Snowflake only when a dimension is large and a repeated group is big.",bx:[FACT("o"),POOL("o")],ln:[[280,165,338,90,"o"]],bar:Q}
+],
+"snow":[
+ {pc:[1, 2],t:"Split the dimension",b:"In a snowflake, exchange moves into its own table. The pool dimension keeps only an exchange id.",w:"Now a rename changes one row in one place.",bx:[FACT(),POOLK(),EXCH("w")],bar:"Normalise the pool dimension"},
+ {pc:[3, 4, 5, 6],t:"Two joins",b:"Each swap looks up its pool_id in the pool table and gets exchange_id 7. Then exchange_id 7 is looked up in the exchange table to get the name. Same answer, Velodrome 150, but two lookups per row.",w:"Each extra level of the snowflake adds a join to every query on that axis.",bx:[FACT(),POOLK("w"),EXCH("w")],ln:[[280,165,338,90,"c","join 1"],[580,75,638,75,"c","join 2"]],bar:Q},
+ {pc:[7],t:"Space saved",b:"The saving is a few repeated names in a dimension of a few thousand rows. The fact table, with a billion rows, is unchanged.",w:"Tiny saving. Measure it against the join every report now pays.",bx:[FACT(),POOLK(),EXCH()],tx:[[600,180,"saved: a few repeated names","u"]],bar:Q},
+ {pc:[8],t:"The failure that matters",b:"Every dimension was snowflaked: pool, token, day, address. A simple report now joins seven tables, and analysts start writing wrong joins.",w:"Fix: flatten back into a star. Snowflake only a big dimension with a big repeated group.",bx:[FACT("f"),POOLK("f"),EXCH("f"),[340,220,240,50,"f","token, day, address dims"],[640,220,220,50,"f","and their sub-tables"]],ln:[[280,150,338,90,"f"],[580,75,638,75,"f"],[280,175,338,240,"f"],[580,245,638,245,"f"]],tx:[[160,250,"joins: 7","f"]],bar:"Every report pays the joins",fail:true},
+ {pc:[9],t:"Where it fits",b:"An old OLTP (Online Transaction Processing) model copied into the warehouse often arrives snowflaked. It is normalised for writes.",w:"In the warehouse, flatten it into a star for reads.",bx:[FACT("o"),POOL("o")],ln:[[280,165,338,90,"o","join 1"]],bar:"Flatten to a star"}
+],
+"wide":[
+ {pc:[1],t:"Copy everything in",b:"A third team builds a wide table. Each swap row carries the exchange name copied in when it was written.",w:"No joins at all. One scan answers the report.",bx:[[40,130,820,70,"c","wide swap row","pool_id, amount, day, exchange name, fee, chain"]],bar:Q},
+ {pc:[2],t:"Fastest scan",b:"The report reads two columns of one table: exchange name and amount.",w:"For a dashboard that needs one fast scan, this is hard to beat.",bx:[[40,130,820,70,"o","wide swap row","pool_id, amount, day, exchange name, fee, chain"]],tx:[[450,250,"joins: 0","o"]],bar:Q},
+ {pc:[3, 4],t:"The exchange is renamed",b:"Velodrome is renamed Aero. The name was copied in when each row was written, so a new swap of 70 gets Aero and the old swaps keep Velodrome. Nothing rewrites them.",w:"The same exchange now shows as two lines in the report.",bx:[[40,60,820,60,"l","old rows","exchange name: Velodrome"],[40,150,820,60,"s","new rows","exchange name: Aero"]],bar:"Rename an exchange"},
+ {pc:[4, 5],t:"The failure that matters",b:"To fix it, someone rewrites a billion fact rows. Or nobody does, and history is split forever.",w:"A wide table copies values that can change. Build it from the star, and rebuild it when a dimension changes.",bx:[[40,60,820,60,"f","old rows","exchange name: Velodrome"],[40,150,820,60,"f","new rows","exchange name: Aero"]],bar:"History split in two",fail:true},
+ {pc:[6],t:"The fix",b:"Keep the star as the truth. Build the wide table from it as a derived table, and rebuild it after dimension changes.",w:"A star is the default, a snowflake trades joins for less repetition, and a wide table trades history for speed.",bx:[FACT("o"),POOL("o"),[640,140,220,60,"u","wide table","rebuilt from the star"]],ln:[[580,90,700,138,"u","rebuild"]],bar:Q}
+]};
+
+const C={c:"var(--coord)",s:"var(--svc)",o:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",p:"var(--panel)"};
+function draw(s){
+  let o="";
+  (s.ln||[]).forEach(([x1,y1,x2,y2,c,lab,d])=>o+=L(x1,y1,x2,y2,C[c]||c,lab||"",d));
+  (s.bx||[]).forEach(([x,y,w,h,c,a,b,dash])=>{const f=C[c];o+=B(x,y,w,h,f,8,dash?'stroke="var(--fail)" stroke-width="2" stroke-dasharray="6 4"':(c==="p"?'stroke="var(--line)"':""))+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:dash?"var(--fail)":ink(f),s:14})+(b?T(x+w/2,y+h/2+14,b,{c:dash?"var(--fail)":ink(f),w:400,s:12}):"");});
+  (s.tx||[]).forEach(([x,y,t,c,a])=>o+=T(x,y,t,{c:C[c]||"var(--muted)",a:a||"middle"}));
+  if(s.bar)o+=B(20,s.barY||320,860,40,s.fail?"var(--fail)":"var(--coord)")+T(450,(s.barY||320)+26,s.bar,{c:"#fff",s:15});
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

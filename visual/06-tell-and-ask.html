@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tell and Ask</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Tell and ask: fire and forget, or wait for a reply</h1>
+  <p class="lede">An IoT (Internet of Things) backend on Akka.NET runs one actor per device. Telemetry is told to device actor 42 and nobody waits. The dashboard API needs the device's state for an HTTP request, so it asks and waits up to two seconds. Press <b>Next</b>. The last tab shows the trap: an ask awaited inside a handler.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="tell">Tell</button>
+    <button role="tab" aria-selected="false" data-mode="ask">Ask at the edge</button>
+    <button role="tab" aria-selected="false" data-mode="inside">Ask awaited inside a handler</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 370" aria-labelledby="stage-title">
+      <title id="stage-title">Four actors on lifelines, with the messages between them</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-d" class="box" x="25" y="20" width="170" height="52" rx="8" fill="var(--coord)"/><text id="t-d" x="110" y="52" fill="#fff">Dashboard API</text>
+        <rect id="c-t" class="box" x="255" y="20" width="170" height="52" rx="8" fill="var(--line)"/><text id="t-t" x="340" y="52" fill="var(--fg)">Temp reply actor</text>
+        <rect id="c-a" class="box" x="485" y="20" width="170" height="52" rx="8" fill="var(--svc)"/><text id="t-a" x="570" y="52" fill="#fff">Device actor 42</text>
+        <rect id="c-r" class="box" x="715" y="20" width="170" height="52" rx="8" fill="var(--svc)"/><text id="t-r" x="800" y="52" fill="#fff">Rules actor</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="318"/><line x1="340" y1="72" x2="340" y2="318"/>
+        <line x1="570" y1="72" x2="570" y2="318"/><line x1="800" y1="72" x2="800" y2="318"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" text-anchor="middle">
+        <rect id="c-sd" class="box" x="30" y="325" width="160" height="30" rx="15" fill="var(--line)"/><text id="t-sd" x="110" y="345" fill="var(--fg)">idle</text>
+        <rect id="c-st" class="box" x="260" y="325" width="160" height="30" rx="15" fill="var(--line)"/><text id="t-st" x="340" y="345" fill="var(--fg)"></text>
+        <rect id="c-sa" class="box" x="490" y="325" width="160" height="30" rx="15" fill="var(--line)"/><text id="t-sa" x="570" y="345" fill="var(--fg)">mailbox: 0</text>
+        <rect id="c-sr" class="box" x="720" y="325" width="160" height="30" rx="15" fill="var(--line)"/><text id="t-sr" x="800" y="345" fill="var(--fg)">mailbox: 0</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--svc)">actor ready</span>
+    <span style="--c:var(--coord)">caller, or the helper ask creates</span>
+    <span style="--c:var(--wait)">waiting, holding something</span>
+    <span style="--c:var(--ok)">done</span>
+    <span style="--c:var(--fail)">failed or stuck</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet tell</h2>
+      <p>Everywhere inside an actor system. Akka <code>Tell</code>, Erlang <code>cast</code>, an Orleans one-way call. In the IoT backend every reading was a tell. The sender moves on at once and the receiver works at its own pace.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet ask</h2>
+      <p>At the edge, where a caller outside the actors needs an answer: an HTTP handler, a gRPC endpoint. Akka <code>Ask</code>, Erlang <code>call</code>. Set the ask timeout shorter than the client's timeout. Inside a handler, tell with a reply-to and pipe futures back as messages.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Tell</th><th>Ask</th></tr>
+      <tr><td>Returns</td><td>At once, nothing</td><td>A future that completes with the reply, or fails at the timeout</td></tr>
+      <tr><td>Extra cost</td><td>None</td><td>A temporary reply actor and a timer per call</td></tr>
+      <tr><td>Blocks a thread</td><td>Never</td><td>Only if you await it. Inside a handler that is the bug</td></tr>
+      <tr><td>Use it</td><td>Inside the system, always</td><td>At the edge only, for a caller that must have an answer</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Tell is the default, ask is a tell with a reply and a timeout, and I use ask only at the edge, never awaited inside a handler."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-tell-and-ask/main.go";
+const code={_:{
+pc:`
+tell(actor, msg):
+  actor.mailbox.put(msg); return        # never waits for anything
+device actor loop: take the next message m, one at a time
+  on Telemetry(r): state.last = r; state.count += 1; tell(rules, ReadingStored(r))
+  on GetState(replyTo): tell(replyTo, copy(state))
+ask(actor, msg, timeout):
+  reply = new temporary mailbox         # the temporary reply actor
+  tell(actor, msg with replyTo = reply) # the message carries the reply address
+  wait on reply, at most timeout
+  if a reply arrived: return it         # the future completes
+  else: fail the future                 # timeout; a late reply goes nowhere
+# the trap, inside a handler:
+  on Telemetry(r): limit = ask(rules, GetLimit, 2 s)   # this actor stops here
+  after 2 s the ask fails: the handler throws, the reading is lost
+# the fix:
+  on Telemetry(r): tell(rules, GetLimit, replyTo = self)
+  on LimitIs(l): check(state.last, l)   # the answer is just another message`,
+go:`
+func (a *Actor) Tell(m Msg) { a.mailbox <- m } // returns at once //@1,2
+go func() { //@3
+	for m := range a.mailbox { // one message at a time //@3
+		handle(a, m)
+	}
+}()
+case Telemetry: //@4
+	st.Last, st.Count = v.C, st.Count+1 //@4
+	rules.Tell(ReadingStored{v.C}) //@4
+case GetState: //@5
+	v.ReplyTo <- st // a copy, never the live state //@5
+func Ask(a *Actor, build func(replyTo chan Msg) Msg, timeout time.Duration) (Msg, error) { //@6
+	reply := make(chan Msg, 1) // the temporary reply actor //@7
+	a.Tell(build(reply))       // carries the reply address //@8
+	select { //@9
+	case r := <-reply: //@10
+		return r, nil // the future completes //@10
+	case <-time.After(timeout): //@11
+		return nil, errTimeout // the future fails //@11
+	}
+}
+// the trap: blocks the handler, and its thread
+case Telemetry: //@13
+	_, err := Ask(rules2, func(rt chan Msg) Msg { return GetLimit{rt} }, askTimeout) // blocks device //@13
+	fmt.Printf("%s device: ask GetLimit inside handler -> %v\\n", at(), err) //@14
+// the fix: reply to my own mailbox
+case Telemetry: //@16
+	rules3.Tell(GetLimit{ReplyTo: self.mailbox}) //@16
+case LimitIs: //@17
+	fmt.Printf("%s device: LimitIs %.0f C arrived as a message, handler never blocked\\n", at(), v.C) //@17`,
+cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET. Tell: fire and forget.
+deviceRef.Tell(new TelemetryReceived(42, 21.5)); //@1,2
+Receive<TelemetryReceived>(r => { //@4
+    _last = r.Reading; rules.Tell(new ReadingStored(r.Reading)); }); //@4
+Receive<GetState>(_ => Sender.Tell(new DeviceState(_last))); //@5
+// Ask at the edge, with a timeout shorter than the client's.
+var state = await deviceRef.Ask<DeviceState>( //@6,7,8
+    new GetState(), TimeSpan.FromSeconds(2)); //@9,10
+// AskTimeoutException when the 2 s pass //@11
+// The trap: awaiting an ask inside a handler.
+ReceiveAsync<TelemetryReceived>(async r => //@13
+    await rules.Ask<LimitIs>(new GetLimit(), TimeSpan.FromSeconds(2))); // throws after 2 s //@13,14
+// The fix: tell with a reply-to, or PipeTo(Self).
+Receive<TelemetryReceived>(r => rules.Tell(new GetLimit(), Self)); //@16
+Receive<LimitIs>(l => Check(_last, l.Value)); //@17`}};
+const tabInit={
+ tell:{x:{"t-t":"(not used)","t-st":""}},
+ ask:{x:{"t-st":"not created"}},
+ inside:{f:{"c-d":"line","c-t":"coord"},x:{"t-d":"(not used)","t-t":"Thread pool, 8","t-st":"busy: 0 of 8"}}
+};
+const steps={
+tell:[
+ {pc:[1,6],t:"Two ways to send",b:"The dashboard API talks to device actor 42. The device actor talks to the rules actor. Every one of them has a mailbox.",w:"Tell is one arrow with no reply. It is the default way to send."},
+ {pc:[1,2],t:"Tell: one arrow, no reply",b:"The API tells device 42 TelemetryReceived, 21.5 C. Tell does one thing: it puts the message in the mailbox. It does not wait for the actor, so the API returns at once and takes the next request.",w:"The sender never waits. It does not even know when the message is handled.",a:[[110,120,570,120,"tell TelemetryReceived"]],f:{"c-sd":"ok","c-sa":"wait"},x:{"t-sd":"free at once","t-sa":"mailbox: 1"}},
+ {pc:[3,4],t:"The actor takes it when it can",b:"The actor's loop takes the next message only after the current handler returns. The mailbox held 1 message, so it takes the reading now: last becomes 21.5 C and count goes from 0 to 1.",w:"The sender and the receiver now run at their own speed. That is what makes millions of actors cheap.",f:{"c-sa":"svc"},x:{"t-sa":"state: 21.5 C"}},
+ {pc:[4],t:"Tell onward",b:"The device actor tells the rules actor ReadingStored. It too returns at once and takes its next message.",w:"A chain of tells never blocks a thread. Each actor does a little work and passes it on.",a:[[570,170,800,170,"tell ReadingStored"]],f:{"c-sr":"wait"},x:{"t-sr":"mailbox: 1"}},
+ {pc:[1,2],t:"The limit of tell: no answer",b:"Now an HTTP client wants device 42's state. A tell of GetState goes in, but there is no road back to the API. The API has nothing to return.",w:"Reading the actor's state from outside, through a shared variable, would bring the races back. When the caller needs an answer, use ask.",a:[[110,230,570,230,"tell GetState"],[570,275,110,275,"no road back to the caller","fail",true]],f:{"c-sd":"fail"},x:{"t-sd":"no answer"}}
+],
+ask:[
+ {pc:[6],t:"An HTTP request needs an answer",b:"A client calls the dashboard API: what is device 42 doing now? The API must answer this request, so a tell is not enough.",w:"Ask is a tell with a reply address and a timeout.",f:{"c-sd":"wait"},x:{"t-sd":"HTTP request open"}},
+ {pc:[6,7],t:"Ask creates a temporary actor",b:"The API asks GetState with a 2 second timeout. Akka creates a small temporary actor to catch the reply, and a future the API can wait on.",w:"The temporary actor is the reply address. Its timer starts now.",a:[[110,120,340,120,"ask GetState, 2 s"]],f:{"c-t":"coord","c-st":"wait","c-sd":"wait"},x:{"t-st":"timer: 2 s","t-sd":"future pending"}},
+ {pc:[8],t:"The message carries the reply address",b:"The temporary actor sends GetState to device 42, with itself as the reply-to address. It lands in the mailbox like any message.",w:"Device 42 does not know an ask is waiting. To it, this is a normal message.",a:[[340,165,570,165,"GetState, reply to temp"]],f:{"c-sa":"wait"},x:{"t-sa":"mailbox: 1"}},
+ {pc:[5],t:"The actor answers like any send",b:"Device 42 takes GetState from its mailbox. The handler for GetState tells the address inside the message a copy of its state: last 21.5 C, count 1.",w:"It sends an immutable snapshot, never a reference to its live state.",a:[[570,210,340,210,"state snapshot"]],f:{"c-sa":"svc"},x:{"t-sa":"replied"}},
+ {pc:[9,10],t:"The future completes",b:"The wait asks: did a reply arrive before 2 seconds passed? It arrived after a few milliseconds, so yes. The future completes with the snapshot, the temporary actor stops, and the API answers the client.",w:"The API thread waited only at the edge, where a reply is the whole point.",a:[[340,255,110,255,"future completes"]],f:{"c-sd":"ok","c-st":"line","c-t":"line"},x:{"t-sd":"HTTP answered","t-st":"stopped"}},
+ {pc:[9,11],t:"The failure that matters: the timeout",b:"Replay it with device 42 busy: 50 messages are ahead of GetState, each taking 50 ms. GetState is reached after 2.5 s. The wait asks at 2 s: did a reply arrive? No. The future fails and the API returns an error. The reply at 2.5 s has nobody waiting, so it goes to dead letters.",w:"An ask can always time out. Its timeout must be shorter than the client's, so the API answers before the client gives up.",a:[[110,120,340,120,"ask GetState, 2 s"],[340,165,570,165,"GetState"],[340,230,110,230,"timeout: future fails","fail"],[570,285,340,285,"late reply: dead letters","fail",true]],f:{"c-t":"fail","c-st":"fail","c-sa":"wait","c-sd":"fail"},x:{"t-st":"timed out","t-sa":"mailbox: 50","t-sd":"error returned"}}
+],
+inside:[
+ {pc:[13],t:"A handler needs a value",b:"Device 42 is handling a reading. To check it, it needs the alert limit, which the rules actor owns.",w:"The tempting code is: ask the rules actor and await the answer, right here in the handler.",f:{"c-sa":"svc"},x:{"t-sa":"handling a reading"}},
+ {pc:[13],t:"It asks and awaits",b:"Device 42 asks GetLimit and awaits inside its handler. The loop takes the next message only after the handler returns, and the handler is now waiting inside that ask. It also keeps the thread it borrowed: 1 of 8 is busy doing nothing.",w:"Nothing else for device 42 can run while it waits, and one of eight shared threads does nothing.",a:[[570,120,800,120,"ask GetLimit, await"]],f:{"c-sa":"wait","c-st":"wait"},x:{"t-sa":"awaiting, blocked","t-st":"busy: 1 of 8"}},
+ {pc:[13],t:"The rules actor asks back",b:"At the same moment, inside its own handler, the rules actor asks device 42 for its last reading and awaits too.",w:"Each actor now waits on the other. Each holds a thread.",a:[[800,165,570,165,"ask GetLast, await"]],f:{"c-sr":"wait"},x:{"t-sr":"awaiting, blocked","t-st":"busy: 2 of 8"}},
+ {pc:[3,13],t:"Deadlock",b:"GetLimit sits in the rules actor's mailbox. GetLast sits in device 42's mailbox. Each loop takes its next message only when the current handler returns, and each handler waits for the other's answer. Neither condition can ever become true.",w:"An actor handles one message at a time. An await inside the handler means the reply can never be handled.",band:[225,"deadlock: each waits for a reply it cannot take"],f:{"c-sa":"fail","c-sr":"fail"},x:{"t-sa":"GetLast stuck","t-sr":"GetLimit stuck"}},
+ {pc:[14],t:"Rescued only by the timeout",b:"At 2 seconds each wait checks: did a reply arrive? No, so both asks fail. Both handlers throw. The two readings they were handling are lost, and both threads come back. The program shows both timeouts at the same moment.",w:"The system looks slow and loses work, and no log line says deadlock.",a:[[800,215,570,215,"timeout","fail",true],[570,260,800,260,"timeout","fail",true]],f:{"c-st":"line"},x:{"t-sa":"ask failed","t-sr":"ask failed","t-st":"busy: 0 of 8"}},
+ {pc:[16,17],t:"The fix: tell with a reply-to",b:"Device 42 tells GetLimit with its own address as reply-to and finishes the handler. The answer, LimitIs 30, arrives later as a normal message. The rules actor does the same.",w:"Handle the answer as a message. To use a future inside an actor, pipe its result back to yourself as a message.",a:[[570,110,800,110,"tell GetLimit, reply to 42"],[800,150,570,150,"tell LimitIs 30"],[800,200,570,200,"tell GetLast, reply to rules"],[570,240,800,240,"tell LastIs 21.5 C"]],f:{"c-sa":"ok","c-sr":"ok","c-st":"line"},x:{"t-sa":"free, reply is a message","t-sr":"free","t-st":"busy: 0 of 8"}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

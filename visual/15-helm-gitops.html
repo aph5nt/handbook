@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helm and GitOps</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.nd rect{transition:fill .35s,stroke .35s}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.nd rect{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Helm and GitOps</h1>
+  <p class="lede">An engineer wants two API replicas instead of one. They change one line in a values file, not the cluster. Press <b>Next</b> to follow the change from pull request to pods, then open the second tab for the hand fix that disappears.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="git">Change through git</button>
+    <button role="tab" aria-selected="false" data-mode="hand">The hand fix that vanishes</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Helm and GitOps, step by step</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle">
+        <g id="eng" class="nd" data-s="coord"><rect x="20" y="30" width="170" height="60" rx="8" stroke-width="3"/><text id="eng-t" data-t x="105.0" y="57.0" font-size="15" font-weight="700">Engineer</text><text id="eng-s" data-t x="105.0" y="75.0" font-size="12">wants 2 replicas</text></g>
+        <g id="pr" class="nd" data-s="idle"><rect x="220" y="30" width="210" height="60" rx="8" stroke-width="3"/><text id="pr-t" data-t x="325.0" y="57.0" font-size="15" font-weight="700">Pull request</text><text id="pr-s" data-t x="325.0" y="75.0" font-size="12">no change yet</text></g>
+        <g id="git" class="nd" data-s="coord"><rect x="460" y="30" width="250" height="60" rx="8" stroke-width="3"/><text id="git-t" data-t x="585.0" y="57.0" font-size="15" font-weight="700">Git: values-lane-b.yaml</text><text id="git-s" data-t x="585.0" y="75.0" font-size="12">replicas: 1</text></g>
+        <g id="chart" class="nd" data-s="coord"><rect x="740" y="30" width="140" height="60" rx="8" stroke-width="3"/><text id="chart-t" data-t x="810.0" y="57.0" font-size="15" font-weight="700">Helm chart</text><text id="chart-s" data-t x="810.0" y="75.0" font-size="12">templates</text></g>
+        <g id="ctrl" class="nd" data-s="coord"><rect x="460" y="150" width="250" height="60" rx="8" stroke-width="3"/><text id="ctrl-t" data-t x="585.0" y="177.0" font-size="15" font-weight="700">GitOps controller</text><text id="ctrl-s" data-t x="585.0" y="195.0" font-size="12">Argo CD or Flux</text></g>
+        <g id="kc" class="nd" data-s="ghost"><rect x="20" y="150" width="170" height="60" rx="8" stroke-width="3"/><text id="kc-t" data-t x="105.0" y="177.0" font-size="15" font-weight="700">kubectl by hand</text><text id="kc-s" data-t x="105.0" y="195.0" font-size="12">nobody yet</text></g>
+        <text id="cl" data-t class="lb" x="712" y="305" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">Cluster, lane B</text>
+        <g id="a-pr" class="msg"><line x1="190" y1="60" x2="218" y2="60" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-mg" class="msg"><line x1="430" y1="60" x2="458" y2="60" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-pull" class="msg"><line x1="585" y1="92" x2="585" y2="148" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-pull-l" data-t x="595" y="125" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">pull</text></g>
+        <g id="a-rend" class="msg"><line x1="800" y1="92" x2="712" y2="170" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-rend-l" data-t x="800" y="135" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">render</text></g>
+        <g id="a-app" class="msg"><line x1="585" y1="212" x2="585" y2="268" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-app-l" data-t x="595" y="248" text-anchor="start" font-size="13" font-weight="700" fill="var(--ok)">apply</text></g>
+        <g id="a-drift" class="msg"><line x1="710" y1="268" x2="710" y2="212" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-drift-l" data-t x="720" y="248" text-anchor="start" font-size="13" font-weight="700" fill="var(--fail)">drift found</text></g>
+        <g id="a-kc" class="msg"><line x1="105" y1="212" x2="228" y2="268" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-kc-l" data-t x="120" y="250" text-anchor="start" font-size="13" font-weight="700" fill="var(--undo)">scale to 4</text></g>
+        <text id="log" data-t class="lb" x="20" y="355" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <g id="p0" class="nd" data-s="ghost"><rect x="230" y="272" width="105" height="56" rx="8" stroke-width="3"/><text id="p0-t" data-t x="282.5" y="297.0" font-size="14" font-weight="700">pod 1</text><text id="p0-s" data-t x="282.5" y="315.0" font-size="12">empty</text></g>
+        <g id="p1" class="nd" data-s="ghost"><rect x="350" y="272" width="105" height="56" rx="8" stroke-width="3"/><text id="p1-t" data-t x="402.5" y="297.0" font-size="14" font-weight="700">pod 2</text><text id="p1-s" data-t x="402.5" y="315.0" font-size="12">empty</text></g>
+        <g id="p2" class="nd" data-s="ghost"><rect x="470" y="272" width="105" height="56" rx="8" stroke-width="3"/><text id="p2-t" data-t x="522.5" y="297.0" font-size="14" font-weight="700">pod 3</text><text id="p2-s" data-t x="522.5" y="315.0" font-size="12">empty</text></g>
+        <g id="p3" class="nd" data-s="ghost"><rect x="590" y="272" width="105" height="56" rx="8" stroke-width="3"/><text id="p3-t" data-t x="642.5" y="297.0" font-size="14" font-weight="700">pod 4</text><text id="p3-s" data-t x="642.5" y="315.0" font-size="12">empty</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter" aria-live="polite"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The first tab shows the controller in Go. The second shows the Helm chart you write. The full program, with a run of both stories, is in <code>handbook/code/15-helm-gitops/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">declared state: git, chart, controller</span>
+    <span style="--c:var(--ok)">pod matches git</span>
+    <span style="--c:var(--wait)">in progress</span>
+    <span style="--c:var(--undo)">changed by hand or reverted</span>
+    <span style="--c:var(--fail)">removed or broken</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a production switch</h2>
+      <p>A switch of the serving lane is a pull request with the operator as a required reviewer. Nobody holds a production write credential on a laptop.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: choosing a controller</h2>
+      <p>Argo CD gives a user interface and the app-of-apps pattern. Flux is lighter and git-native. Both pull, both revert drift.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Push pipeline</th><th>GitOps pull</th></tr>
+      <tr><td>Who changes the cluster</td><td>CI, with cluster credentials</td><td>A controller inside the cluster</td></tr>
+      <tr><td>Drift</td><td>Never seen</td><td>Found and reverted</td></tr>
+      <tr><td>Audit log</td><td>CI run logs</td><td>Git history</td></tr>
+      <tr><td>Rollback</td><td>Re-run an old pipeline</td><td>Revert the commit</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The cluster pulls its state from git, so every change is a reviewed commit and drift is reverted on its own."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps={
+"git":[
+ {"t": "A change starts as a pull request", "b": "The engineer wants two API replicas instead of one. They do not touch the cluster. They open a pull request that changes one line: replicas from 1 to 2.", "w": "The change is now a diff someone can read, review and revert.", "c": {"p0": "ok", "p1": "ghost", "p2": "ghost", "p3": "ghost", "pr": "wait"}, "a": ["a-pr"], "x": {"pr": "replicas: 1 → 2", "p0": "running"}, "h": ["pr"], "pc": [1]},
+ {"t": "Review and merge", "b": "A reviewer approves. The pull request merges. Git now says replicas: 2. The cluster has not changed yet.", "w": "The merge is the approval. Git history records who, when and why.", "c": {"p0": "ok", "p1": "ghost", "p2": "ghost", "p3": "ghost", "pr": "ok"}, "a": ["a-pr", "a-mg"], "x": {"pr": "merged", "git": "replicas: 2", "log": "git log: replicas 2, by the engineer, reason in the PR", "p0": "running"}, "h": ["git"], "pc": [1]},
+ {"t": "The controller pulls", "b": "The GitOps controller inside the cluster pulls the latest commit. Nobody pushed into the cluster, and CI holds no cluster password.", "w": "Pull, not push: the cluster reaches out to git, so no laptop or pipeline needs write access.", "c": {"p0": "ok", "p1": "ghost", "p2": "ghost", "p3": "ghost", "pr": "ok", "ctrl": "wait"}, "a": ["a-pull"], "x": {"pr": "merged", "git": "replicas: 2", "ctrl": "new commit found", "log": "git log: replicas 2, by the engineer, reason in the PR", "p0": "running"}, "h": ["ctrl"], "pc": [2, 3]},
+ {"t": "Render the chart, apply", "b": "The controller fills the Helm chart templates with the lane B values file: replicas: 2. It reads the live Deployment: replicas 1. The two differ, so it applies the rendered object, and a second pod starts.", "w": "Chart plus values plus git is the whole declared state.", "c": {"p0": "ok", "p1": "ok", "p2": "ghost", "p3": "ghost", "pr": "ok"}, "a": ["a-pull", "a-rend", "a-app"], "x": {"pr": "merged", "git": "replicas: 2", "ctrl": "applied commit", "log": "git log: replicas 2, by the engineer, reason in the PR", "p0": "running", "p1": "running"}, "h": [], "pc": [4, 6, 7]},
+ {"t": "Someone scales by hand", "b": "On a busy night someone runs kubectl scale to 4 pods. The cluster now runs 4, while git still says 2.", "w": "This is drift: the cluster no longer matches git.", "c": {"p0": "ok", "p1": "ok", "p2": "undo", "p3": "undo", "pr": "ok", "kc": "undo"}, "a": ["a-kc"], "x": {"pr": "merged", "git": "replicas: 2", "kc": "kubectl scale 4", "p2": "not in git", "p3": "not in git", "log": "git log: nothing about 4 pods", "p0": "running", "p1": "running"}, "h": ["kc"], "pc": [5]},
+ {"t": "Drift is reverted", "b": "On its next pass, the controller renders replicas: 2 again and reads replicas 4 from the cluster. The two differ, so it applies 2, and the two extra pods are removed.", "w": "Git wins. If 4 pods are really needed, that is a one-line pull request.", "c": {"p0": "ok", "p1": "ok", "p2": "fail", "p3": "fail", "pr": "ok", "ctrl": "wait"}, "a": ["a-drift", "a-app"], "x": {"pr": "merged", "git": "replicas: 2", "ctrl": "drift: 4 is not 2", "p2": "removed", "p3": "removed", "log": "git log: replicas 2", "p0": "running", "p1": "running"}, "h": ["ctrl"], "pc": [5, 6, 7]},
+ {"t": "Rollback is a revert", "b": "Two replicas turn out to overload the database. The engineer reverts the commit. The controller pulls it and the cluster goes back to one pod.", "w": "Rollback uses the same path as a change: a reviewed commit, applied by the controller.", "c": {"p0": "ok", "p1": "ghost", "p2": "ghost", "p3": "ghost", "pr": "undo"}, "a": ["a-mg", "a-pull", "a-app"], "x": {"pr": "revert merged", "git": "replicas: 1", "log": "git log: revert, with the reason", "p0": "running"}, "h": ["git"], "pc": [1, 3, 4, 6, 7]}
+],
+"hand":[
+ {"t": "No GitOps: a busy night", "b": "This time there is no controller. The team deploys with helm upgrade by hand. On a busy night someone runs kubectl scale to 4 pods.", "w": "The fix works. The cluster runs 4 pods and the load is absorbed.", "c": {"p0": "ok", "p1": "undo", "p2": "undo", "p3": "undo", "kc": "undo", "ctrl": "idle"}, "a": ["a-kc"], "x": {"kc": "kubectl scale 4", "ctrl-t": "Helm by hand", "ctrl": "no controller", "p1": "by hand", "p2": "by hand", "p3": "by hand", "eng": "runs helm by hand", "p0": "running"}, "h": ["kc"], "pc": [4]},
+ {"t": "Git never heard of it", "b": "The values file still says replicas: 1. Nothing records the change or why it was made.", "w": "The only copy of this fix lives inside the running cluster.", "c": {"p0": "ok", "p1": "undo", "p2": "undo", "p3": "undo", "ctrl": "idle", "kc": "undo"}, "a": [], "x": {"ctrl-t": "Helm by hand", "ctrl": "no controller", "git": "replicas: 1", "p1": "by hand", "p2": "by hand", "p3": "by hand", "log": "git log: replicas 1", "eng": "runs helm by hand", "kc": "kubectl scale 4", "p0": "running"}, "h": ["git"], "pc": [4]},
+ {"t": "Next day: an unrelated upgrade", "b": "An engineer ships a new image digest with helm upgrade. The chart renders from the values file, which says 1.", "w": "Helm applies the whole declared state, not only the line you changed.", "c": {"p0": "ok", "p1": "undo", "p2": "undo", "p3": "undo", "ctrl": "wait", "pr": "ok", "kc": "undo"}, "a": ["a-rend", "a-app"], "x": {"ctrl-t": "Helm by hand", "ctrl": "helm upgrade: new image", "pr": "new image digest", "git": "replicas: 1", "eng": "runs helm by hand", "kc": "kubectl scale 4", "p0": "running", "p1": "running", "p2": "running", "p3": "running"}, "h": ["ctrl"], "pc": [1, 2]},
+ {"t": "The failure that matters", "b": "helm upgrade renders the chart from the values file, which says replicas: 1, and applies it. The live 4 becomes 1. Three pods stop. The night's fix is gone, the load is back, and nobody knows why the API is slow again.", "w": "A hand-made change is erased by the next upgrade. The cluster had drifted, and nobody could see it.", "c": {"p0": "wait", "p1": "fail", "p2": "fail", "p3": "fail", "ctrl": "idle", "pr": "ok", "kc": "undo"}, "a": ["a-app"], "x": {"ctrl-t": "Helm by hand", "ctrl": "replicas reset to 1", "pr": "new image digest", "git": "replicas: 1", "p0": "overloaded", "p1": "removed", "p2": "removed", "p3": "removed", "eng": "runs helm by hand", "kc": "kubectl scale 4"}, "h": [], "pc": [5]},
+ {"t": "The fix: every change is a values change", "b": "The scale goes into the values file in a pull request. With a GitOps controller, the cluster pulls it and reverts any hand change. The same rule holds for cloud resources in Terraform or Pulumi.", "w": "Speed comes from automation, not from a bypass. A hotfix takes the same path.", "c": {"p0": "ok", "p1": "ok", "p2": "ok", "p3": "ok", "pr": "ok"}, "a": ["a-mg", "a-pull", "a-app"], "x": {"pr": "replicas: 1 → 4", "git": "replicas: 4", "log": "git log: replicas 4, reason in the PR", "eng": "runs helm by hand", "p0": "running", "p1": "running", "p2": "running", "p3": "running"}, "h": ["git"], "pc": [6]}
+]
+};
+const code={
+ "git":{"label":"Go",
+  "pc":["every change, a revert too: a pull request to main, merged on review", "every minute, the GitOps controller:", "  head = pull the newest commit of main       # nobody pushes in", "  desired = render the chart with its values  # replicas: 2", "  actual = read the live objects from the cluster", "  if desired != actual:", "    apply desired                             # a hand change is reverted here", "  record: in sync with head"],
+  "real":["// render is what helm template does.", "func render(v Values) string {", "\tvar b bytes.Buffer", "\ttemplate.Must(template.New(\"chart\").Parse(chart)).Execute(&b, v)", "\treturn b.String()", "}", "", "// reconcile is one pass of the controller: pull, render, compare, apply.", "func reconcile(mainBranch []Commit, c *Cluster) {", "\thead := mainBranch[len(mainBranch)-1] // nobody pushes into the cluster", "\tdesired := render(head.Values)", "\tif desired == c.rendered() {", "\t\tfmt.Printf(\"  in sync with %q: replicas %d\\n\", head.Msg, c.Replicas)", "\t\treturn", "\t}", "\tbefore := c.Replicas", "\tc.Replicas, c.Digest = head.Values.Replicas, head.Values.Digest // apply", "\tfmt.Printf(\"  drift against %q: replicas %d -> %d\\n\", head.Msg, before, c.Replicas)", "}", "", "// in main, prints trimmed", "main1 = append(main1, Commit{\"replicas 2 (reviewed)\", Values{2, \"sha256:7ab3\"}})", "c.Replicas = 4 // kubectl scale on a busy night", "main1 = append(main1, Commit{\"revert: replicas 1\", main1[0].Values})"],
+  "map":{"1": [22, 24], "2": [9], "3": [10], "4": [2, 3, 4, 5, 11], "5": [12, 23], "6": [12], "7": [17], "8": [13]}},
+ "hand":{"label":"Helm",
+  "pc":["helm upgrade, run by hand:", "  render the chart with the values file       # replicas: 1", "  apply the rendered objects", "kubectl scale --replicas=4: changes the cluster only   # git never hears of it", "next helm upgrade: line 2 renders replicas: 1 again", "the fix: change replicas in the values file, in a pull request"],
+  "real":["# templates/deployment.yaml", "apiVersion: apps/v1", "kind: Deployment", "metadata: {name: api}", "spec:", "  replicas: {{ .Values.replicas }}", "  template:", "    spec:", "      containers:", "      - name: api", "        image: \"registry.local/api@{{ .Values.digest }}\"", "---", "# values-lane-b.yaml: the only file a person edits", "replicas: 1", "digest: sha256:7ab3"],
+  "map":{"1": [11, 15], "2": [6, 14], "3": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "4": [14], "5": [6, 14], "6": [14]}}
+};
+const COL={idle:["var(--line)","var(--fg)"],coord:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],wait:["var(--wait)","#1f2320"],undo:["var(--undo)","#fff"],ghost:["none","var(--muted)"],hide:["none","transparent"]};
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)");
+const nodes=[...document.querySelectorAll(".nd")],msgs=[...document.querySelectorAll(".msg")],labs=[...document.querySelectorAll(".lb")];
+document.querySelectorAll("[data-t]").forEach(t=>t.dataset.d=t.textContent);
+const saved={};
+Object.values(steps).flat().forEach(s=>Object.entries(s.at||{}).forEach(([id,o])=>Object.keys(o).forEach(k=>{const key=id+"|"+k;if(!(key in saved))saved[key]=$(id).getAttribute(k);})));
+const vis=el=>{const t=el.dataset.tab;return !t||t.split(" ").includes(mode);};
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-t]").forEach(t=>t.textContent=t.dataset.d);
+  for(const[k,v]of Object.entries(s.x)){const el=$(k+"-s")||$(k);if(el&&el.tagName==="text")el.textContent=v;}
+  nodes.forEach(g=>{g.style.display=vis(g)?"":"none";const st=s.c[g.id]||g.dataset.s;const[f,tc]=COL[st];const r=g.querySelector("rect");
+    r.setAttribute("fill",f);r.setAttribute("stroke",s.h.includes(g.id)?"var(--fg)":(st==="ghost"?"var(--line)":"none"));
+    r.setAttribute("stroke-dasharray",st==="ghost"?"5 5":"none");g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",tc));});
+  labs.forEach(l=>l.style.display=vis(l)?"":"none");
+  msgs.forEach((m,k)=>{m.style.display=vis(m)?"":"none";const on=s.a.includes(m.id);
+    if(!on)return m.classList.remove("on");if(m.classList.contains("on"))return;
+    RM.matches?m.classList.add("on"):setTimeout(()=>{if(steps[mode][i].a.includes(m.id))m.classList.add("on")},40+60*s.a.indexOf(m.id));});
+  for(const[key,v]of Object.entries(saved)){const[id,k]=key.split("|");v===null?$(id).removeAttribute(k):$(id).setAttribute(k,v);}
+  for(const[id,o]of Object.entries(s.at||{}))for(const[k,v]of Object.entries(o))$(id).setAttribute(k,v);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

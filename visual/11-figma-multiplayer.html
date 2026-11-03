@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Figma multiplayer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Figma multiplayer: one server per file decides</h1>
+  <p class="lede">Ana and Ben edit the same design file at the same moment. Figma sends both to one multiplayer server for that file, which decides every conflict. Watch two edits on different properties both survive, two edits on the same property resolve by last write, and a move that would make a loop get refused. A second tab shows how the file metadata in Postgres was sharded. Pick a tab and press <b>Next</b>.</p>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="mp">Multiplayer edits</button>
+    <button role="tab" aria-selected="false" data-mode="pg">Postgres sharding</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <g data-scene="mp">
+          <rect id="a" class="box" x="20" y="40" width="220" height="72" rx="10"/><text id="a-t" x="130" y="70">Ana's browser</text><text id="a-c" x="130" y="96" class="sm" fill="#fff"></text>
+          <rect id="b" class="box" x="20" y="288" width="220" height="72" rx="10"/><text id="b-t" x="130" y="318">Ben's browser</text><text id="b-c" x="130" y="344" class="sm" fill="#fff"></text>
+          <rect id="s" class="box" x="360" y="150" width="240" height="100" rx="10"/><text id="s-t" x="480" y="190">Multiplayer server</text><text id="s-c" x="480" y="218" class="sm" fill="#fff">file: Homepage</text>
+          <rect id="o" class="box" x="680" y="120" width="200" height="160" rx="10"/><text id="o-t" x="780" y="150">Button (object)</text>
+          <text id="o1" x="780" y="190" class="sm" fill="var(--fg)"></text><text id="o2" x="780" y="220" class="sm" fill="var(--fg)"></text><text id="o3" x="780" y="250" class="sm" fill="var(--fg)"></text>
+        </g>
+        <g data-scene="pg">
+          <rect id="ap" class="box" x="20" y="174" width="170" height="52" rx="8"/><text id="ap-t" x="105" y="205">Figma app</text>
+          <rect id="px" class="box" x="250" y="150" width="200" height="100" rx="10"/><text id="px-t" x="350" y="190">DBProxy</text><text id="px-c" x="350" y="218" class="sm" fill="#fff"></text>
+          <rect id="p0" class="box" x="520" y="30" width="360" height="72" rx="10"/><text id="p0-t" x="700" y="60">One big Postgres</text><text id="p0-c" x="700" y="86" class="sm" fill="#fff"></text>
+          <rect id="p1" class="box" x="520" y="164" width="170" height="72" rx="10"/><text id="p1-t" x="605" y="194">Shard 1</text><text id="p1-c" x="605" y="220" class="sm" fill="#fff"></text>
+          <rect id="p2" class="box" x="710" y="164" width="170" height="72" rx="10"/><text id="p2-t" x="795" y="194">Shard 2</text><text id="p2-c" x="795" y="220" class="sm" fill="#fff"></text>
+          <rect id="p3" class="box" x="520" y="298" width="360" height="72" rx="10"/><text id="p3-t" x="700" y="328">Other tables (own database)</text><text id="p3-c" x="700" y="354" class="sm" fill="#fff"></text>
+        </g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">an edit or a query in flight</span>
+    <span style="--c:var(--ok)">accepted, in sync</span>
+    <span style="--c:var(--wait)">shown early, or being moved</span>
+    <span style="--c:var(--fail)">refused, or overloaded</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Figma's multiplayer server is written in Rust and holds each open file in memory. Google Docs uses operational transforms with a central server. Notion, Linear and tldraw use similar server-decides syncs. Fully peer-to-peer apps use true CRDTs (conflict-free replicated data types).</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>When a central server already exists, let it order edits: it is simpler than a full CRDT. Merge per property, not per object. Show local edits at once and accept the server's correction. Shard the metadata database behind a proxy so the app code barely changes.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Figma (server decides)</th><th>True CRDT</th><th>Lock the object</th></tr>
+      <tr><td>Who decides a conflict</td><td>The file's server</td><td>Every copy, by the same rules</td><td>Whoever holds the lock</td></tr>
+      <tr><td>Works offline</td><td>Briefly</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Two edits, same property</td><td>Last one to reach the server wins</td><td>A rule, such as highest stamp</td><td>Second editor waits</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Figma sends every editor of a file to one server that orders edits per property, with last write wins and checks like no parent loops, and shards Postgres metadata behind a proxy."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const D={mp:{f:{a:N,b:N,s:N,o:N},x:{"a-c":"","b-c":"","s-c":"file: Homepage",o1:"colour: grey",o2:"text: Buy",o3:"parent: Header"}},
+ pg:{f:{ap:N,px:N,p0:N,p1:N,p2:N,p3:N},x:{"px-c":"","p0-c":"","p1-c":"","p2-c":"","p3-c":""}}};
+const steps={
+mp:[
+ {t:"Both open the Homepage file",b:"Ana and Ben open the same file. Both connect by WebSocket to the one multiplayer server that holds this file in memory. So every edit of this file passes through one place.",w:"One server per file means one place that sees every edit in order.",f:{a:C,b:C,s:G},m:[[240,76,358,170,"",C],[240,324,358,230,"",C]],pc:[1]},
+ {t:"Different properties: both survive",b:"Ana sets the button colour to blue. Ben changes its text to 'Book now'. The server stores per property: button.colour and button.text are two cells. Nothing collides, so both survive.",w:"Figma merges per property, not per object. Two people touching different properties never conflict.",f:{a:C,b:C,s:C,o:G},x:{"a-c":"colour → blue","b-c":"text → Book now",o1:"colour: blue",o2:"text: Book now"},m:[[240,76,358,170,"colour",C],[240,324,358,230,"text",C],[600,200,678,200,"",G]],pc:[2, 3, 4, 5]},
+ {t:"Same property: last write wins",b:"Ana sets the colour to red. Then Ben sets it to green. It is one cell, and the rule has no compare: the server writes in arrival order. Ben's edit arrives second, so green wins.",w:"For one property, the last value the server received wins. Everyone ends with the same answer.",f:{a:Y,b:G,s:C,o:G},x:{"a-c":"colour → red","b-c":"colour → green",o1:"colour: green",o2:"text: Book now"},m:[[240,76,358,170,"red (1st)",C],[240,324,358,230,"green (2nd)",C]],pc:[3, 6]},
+ {t:"Shown at once, corrected after",b:"Ana saw red on her screen at once, before the server answered. Then the server's value arrives. The rule is that the server's value replaces hers, so her screen turns green.",w:"Local edits show instantly so the tool feels fast. The server's order is the truth, and the client accepts its correction.",f:{a:G,s:G,o:G},x:{"a-c":"red → green (corrected)",o1:"colour: green",o2:"text: Book now"},m:[[358,180,240,90,"colour: green",G,false,300,118]],pc:[7]},
+ {t:"The failure that matters: a parent loop",b:"Ana moves Group A inside Group B. Ben moves Group B inside Group A. Each move looks fine on its own screen. Applied blindly, each would be inside the other.",w:"A loop would break the document tree. Per-property merging alone cannot see it.",f:{a:C,b:C,s:Y},x:{"a-c":"A → inside B","b-c":"B → inside A",o1:"A parent: B ?",o2:"B parent: A ?",o3:"loop!"},m:[[240,76,358,170,"",C],[240,324,358,230,"",C]],pc:[8]},
+ {t:"The server refuses the second move",b:"Ana's move arrives first. The walk goes B, Page: no A, so it is applied. Ben's walk goes A, then B. B is the node being moved, so the check says loop. The server rejects it and tells Ben's browser to undo.",w:"A central server can check rules a pure merge cannot, such as 'no object is its own ancestor'.",f:{b:R,s:G,a:G},x:{"a-c":"A → inside B: done","b-c":"move rejected, undone",o1:"A parent: B",o2:"B parent: Page",o3:"tree is valid"},m:[[358,230,240,330,"rejected",R,true,300,300]],pc:[8, 9, 10, 11]}
+],
+pg:[
+ {t:"One big Postgres",b:"File metadata, comments, users and teams all sit in one Postgres database on the biggest machine money can buy. There is no routing yet, because there is one place.",w:"One database is simple. It works for years, until it does not.",f:{p0:G},x:{"p0-c":"files, comments, users, teams"},pc:[12]},
+ {t:"The failure that matters: the box is full",b:"Writes grow every month. CPU and IO near the limit. There is no bigger machine left to buy.",w:"Vertical scaling ends. Vacuum and replication start to lag under the write load.",f:{ap:C,p0:R},x:{"p0-c":"CPU and IO near the limit"},m:[[190,200,518,66,"all queries",R,false,330,120]],pc:[12]},
+ {t:"First, move whole tables out",b:"Tables that are rarely joined move to their own databases: users, teams and billing go. The choice follows one test: does a query join across them? That buys time.",w:"Vertical partitioning is the cheap first step. It does not help the one table that grows fastest.",f:{p0:Y,p3:G},x:{"p0-c":"files, comments","p3-c":"users, teams, billing"},m:[[700,102,700,296,"move tables",Y,false,760,200]],pc:[12]},
+ {t:"Put a proxy in front",b:"The app sends ordinary SQL to DBProxy, Figma's own query proxy. The proxy parses each query and looks for the shard key.",w:"The app code barely changes. Shard logic lives in one place.",f:{px:C},x:{"px-c":"parse, find shard key"},m:[[190,200,248,200,"SQL",C]],pc:[13, 14]},
+ {t:"Split the big tables by shard key",b:"The biggest tables are split by a key such as the file id. The check 'does this query have the key?' is yes for file f-42, so the proxy hashes it and asks one shard.",w:"Each query that names a file id goes to exactly one shard.",f:{px:G,p0:N,p1:G,p2:G},x:{"px-c":"file id → shard","p0-c":"(split)","p1-c":"files 0–49%","p2-c":"files 50–99%"},m:[[450,200,518,200,"file 42",C]],pc:[14, 15]},
+ {t:"Queries without the key fan out",b:"'All files a user can see' has no file id. The check is no, so the proxy asks shard 1 and shard 2, and merges the answers. It works, but each such query costs every shard.",w:"Choose the shard key so the hot queries carry it. The rest pay the fan-out cost.",f:{px:Y,p1:Y,p2:Y},x:{"px-c":"no key: ask all","p1-c":"files 0–49%","p2-c":"files 50–99%"},m:[[450,200,518,200,"",Y],[450,152,760,162,"",Y]],pc:[14, 16]}
+]};
+const code={main:{"label": "Go", "dir": "11-figma-multiplayer", "pc": ["one server holds each open file in memory    # all edits of a file meet here", "apply(edit):", "  objects[edit.object][edit.property] = edit.value   # per property", "  send it to everyone in the file", "two properties: two separate cells, both survive", "one property: arrival order decides, the last one wins", "browser: shows its own edit at once; takes the server's value when it comes", "move(node, newParent):", "  for p = newParent, up to the root:", "    if p == node: reject, tell the browser to undo", "  parent[node] = newParent", "database: first move whole tables to their own databases", "dbproxy(query):", "  parse the query; find the shard key", "  if it has the key: shard = hash(key); ask that one", "  else: ask every shard, merge the answers"], "real": ["type File struct {", "\tProps  map[string]string // \"object.property\" -> value", "\tParent map[string]string", "}", "", "func (f *File) Apply(object, prop, value string) {", "\tf.Props[object+\".\"+prop] = value", "}", "", "// Browser shows an edit at once, then takes what the server says.", "func Browser(mine, server string) (first, final string) {", "\treturn mine, server", "}", "", "func (f *File) Move(node, newParent string) error {", "\tfor p := newParent; p != \"\"; p = f.Parent[p] {", "\t\tif p == node {", "\t\t\treturn fmt.Errorf(\"move %s into %s makes a loop: undo\", node, newParent)", "\t\t}", "\t}", "\tf.Parent[node] = newParent", "\treturn nil", "}", "", "// HomeOf is the first step: rarely joined tables get their own database.", "func HomeOf(table string) string {", "\tswitch table {", "\tcase \"users\", \"teams\", \"billing\":", "\t\treturn \"db-2\"", "\t}", "\treturn \"db-1\"", "}", "", "func DBProxy(fileID string, shards int) []int {", "\tif fileID != \"\" {", "\t\th := fnv.New32a()", "\t\th.Write([]byte(fileID))", "\t\treturn []int{int(h.Sum32())%shards + 1}", "\t}", "\tall := []int{}", "\tfor i := 1; i <= shards; i++ {", "\t\tall = append(all, i)", "\t}", "\treturn all", "}", ""], "map": {"1": [1], "2": [6], "3": [7], "4": [7], "5": [7], "6": [7], "7": [11, 12], "8": [15], "9": [16], "10": [17, 18], "11": [21], "12": [26, 27, 29, 31], "13": [34], "14": [35], "15": [36, 37, 38], "16": [40, 41, 42, 44]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

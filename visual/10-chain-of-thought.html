@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chain of thought</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Chain of thought: think first, then answer</h1>
+  <p class="lede">Asked if a wallet got mixer funds within two hops, the model answers "yes" at once and is often wrong. Press <b>Next</b> and watch it work hop by hop instead. The second tab shows the thinking budget, and why the written reasoning is not proof.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="think">Answer at once against think first</button>
+    <button role="tab" aria-selected="false" data-mode="budget">The budget and the trap</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A two-hop funding question answered at once and then step by step, and the cost of a thinking budget</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-chain-of-thought/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the wallet asked about</span>
+    <span style="--c:var(--wait)">the hop being checked</span>
+    <span style="--c:var(--fail)">a guess, or reasoning that is wrong</span>
+    <span style="--c:var(--ok)">checked and right</span>
+    <span style="--c:var(--undo)">reasoning tokens, billed as output</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Reasoning models think in a separate block before they answer, inside a thinking budget set per call. A Claude Code agent tracing funds across graph hops benefits. A plain lookup or a formatting job does not.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use a large budget for multi-step questions: graph hops, date maths, comparing rows. Use a small budget or none for lookups. Judge the answer with checks in code, never the written story. Compare pass rate and cost at two budgets and keep the cheaper one that passes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Answer at once</th><th>Think first</th></tr>
+      <tr><td>Multi-step questions</td><td>Often wrong: a guess</td><td>Right far more often</td></tr>
+      <tr><td>Cost</td><td>Few output tokens</td><td>Reasoning tokens billed as output</td></tr>
+      <tr><td>Speed</td><td>Fast</td><td>Slower, more with a bigger budget</td></tr>
+      <tr><td>The written steps</td><td>None</td><td>Output, not a true trace</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Thinking first helps multi-step problems, the budget caps what it costs, and the written reasoning is output, not proof."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={think:{
+ pc:["answer = model(question)          # at once: no room to work",
+"steps = []",
+"hop1 = funders(W)",
+"steps += \"Hop 1: \" + hop1          # written, so it is context",
+"hop2 = funders(f) for f in hop1",
+"steps += \"Hop 2: \" + hop2",
+"for f, s in hop2: if label(s) == \"Mixer\":",
+"  steps += s + \" is labelled Mixer\"",
+"  return \"Yes, through \" + f + \", from \" + s",
+"return \"No\""],
+ real:["FUNDED_BY = {\"W\": [\"A\", \"B\"], \"A\": [\"M\"], \"B\": [\"C\"], \"M\": [], \"C\": []}",
+"LABELS = {\"M\": \"Mixer\"}",
+"",
+"def think_two_hops(wallet):",
+"    steps = []",
+"    hop1 = FUNDED_BY[wallet]",
+"    steps.append(f\"Hop 1: funders of {wallet} are {' and '.join(hop1)}\")",
+"    hop2 = {f: FUNDED_BY[f] for f in hop1}",
+"    steps.append(\"Hop 2: \" + \", \".join(f\"{f} from {' and '.join(src)}\" for f, src in hop2.items()))",
+"    for f, sources in hop2.items():",
+"        for s in sources:",
+"            if LABELS.get(s) == \"Mixer\":",
+"                steps.append(f\"{s} is labelled Mixer\")",
+"                return steps, f\"Yes, through {f}, from {s}\"",
+"    return steps, \"No\"",
+"",
+"# answer at once = one token, no written steps (no model in the program)"],
+ map:{1:[17],2:[5],3:[1,6],4:[7],5:[8],6:[9],7:[2,10,11,12],8:[13],9:[14],10:[15]}},
+budget:{
+ pc:["budget = 2000 thinking tokens         # per call",
+"used = thinking tokens of this call",
+"cost += used, billed as output tokens",
+"budget = by task type: lookup gets 0",
+"claim = model's written reason         # \"through B\"",
+"path = walk funders of W, max 2 hops",
+"if path ends at a Mixer: accept on the path",
+"never accept on the claim",
+"for b in budgets: pass, cost = eval(golden set, b)",
+"keep the cheapest b with pass >= 90%"],
+ real:["BUDGET = 2_000",
+"BUDGET_FOR = {\"two-hop question\": 2_000, \"easy balance lookup\": 0}   # set per task type",
+"PASS_LINE = 0.90",
+"",
+"def mixer_path(wallet, max_hops=2):",
+"    frontier = [[wallet]]",
+"    for _ in range(max_hops):",
+"        nxt = []",
+"        for path in frontier:",
+"            for funder in FUNDED_BY[path[-1]]:",
+"                if LABELS.get(funder) == \"Mixer\":",
+"                    return path + [funder]",
+"                nxt.append(path + [funder])",
+"        frontier = nxt",
+"    return None",
+"",
+"for task, used in [(\"two-hop question\", 600), (\"easy balance lookup\", 1_800)]:",
+"    print(f\"  {task}: {used} of {BUDGET} thinking tokens = {used / BUDGET:.0%}, billed as output\")",
+"claimed = \"Yes, through B\"      # the written reasoning that lies",
+"path = mixer_path(\"W\")          # W -> A -> M",
+"evals = {\"small budget\": (0.92, 1), \"large budget\": (0.93, 3)}",
+"passing = {k: v for k, v in evals.items() if v[0] >= PASS_LINE}",
+"pick = min(passing, key=lambda k: passing[k][1])   # small budget"],
+ map:{1:[1],2:[17],3:[18],4:[2],5:[19],6:[5,6,7,8,9,10],7:[11,12,20],8:[19,20],9:[21],10:[3,22,23]}}};
+// end code
+const P={W:[110,180],A:[330,90],B:[330,270],M:[560,60],C:[560,300]};
+const EDGES=[["A","W"],["B","W"],["M","A"],["C","B"]];
+const steps={
+"think":[
+ {t:"The question",b:"Did wallet W get funds from a mixer within two hops? The graph holds it: FUNDED_BY W is A and B, A is M, B is C, and LABELS marks M as Mixer. To answer, something must call funders() twice and read one label.",w:"Two hops means: W's funders, then their funders.",g:1,pc:[3, 5]},
+ {t:"Answer at once: a guess",b:"answer = model(question) with no room to think. The model must put yes or no in its first token, before any hop is written. It says \"yes\". Run it again and it may say \"no\": steps is empty.",w:"One token for a yes or no gives the model no room to work.",g:1,steps:[],ans:"Yes (a guess)",bad:1,pc:[1]},
+ {t:"Think first: hop 1",b:"Asked to think first, it runs hop1 = funders(W) and writes the result down: \"Hop 1: funders of W are A and B.\" That line is now in steps.",w:"Each written step becomes context for the next one.",g:1,hi:["A","B"],he:[0,1],steps:["Hop 1: funders of W are A and B"],pc:[2, 3, 4]},
+ {t:"Hop 2",b:"hop2 = funders(f) for each f in [A, B]. It writes: \"Hop 2: A from M, B from C.\" The model reads its own hop 1 line to do this.",w:"Later tokens build on the earlier work.",g:1,hi:["M","C"],he:[2,3],steps:["Hop 1: funders of W are A and B","Hop 2: A from M, B from C"],pc:[5, 6]},
+ {t:"Check the labels",b:"The loop checks label(s) for each hop-2 source. label(M) is \"Mixer\", so it writes \"M is labelled Mixer\". label(C) is empty.",w:"The question is now a lookup on the last step.",g:1,hi:["M"],mix:1,steps:["Hop 1: funders of W are A and B","Hop 2: A from M, B from C","M is labelled Mixer"],pc:[7, 8]},
+ {t:"The answer: yes, through A",b:"The match returns at once: \"Yes, through A, from M\". Three written lines came before the answer, and each one fed the next. Asked this way, the model is right far more often.",w:"A reasoning model does this by itself, inside a thinking budget.",g:1,path:1,mix:1,steps:["Hop 1: funders of W are A and B","Hop 2: A from M, B from C","M is labelled Mixer"],ans:"Yes, through A, from M",ok:1,pc:[9]}
+],
+"budget":[
+ {t:"The thinking budget",b:"A reasoning model thinks in a separate block. budget = 2,000 thinking tokens per call. The two-hop question used 600 of them: 30%. All 600 are added to cost as output tokens.",w:"Reasoning tokens are billed as output tokens, the expensive kind.",meter:[.3,"Two-hop question: budget used"],pc:[1, 2, 3]},
+ {t:"A big budget on an easy task",b:"\"What is the balance of W\" runs with the same 2,000 budget and thinks for 1,800 tokens: 90%. The line that sets the budget by task type is missing, so a lookup pays three times the two-hop question.",w:"Slow and costly for no gain. Set the budget per task type.",meter:[.9,"Easy lookup: budget used"],bad:1,pc:[2, 3, 4]},
+ {t:"The failure: reasoning that lies",b:"The answer says \"yes\", and it is right. The written claim says \"through B\". But FUNDED_BY B is C, and C has no label. Nothing in the program checks the claim yet.",w:"The written reasoning is output. It can be wrong while the answer is right, or the other way round.",g:1,wrong:1,steps:["Hop 2: B from M (wrong)","So: yes, through B"],ans:"Yes (right), reason wrong",bad:1,pc:[5]},
+ {t:"The fix: check the answer in code",b:"mixer_path(W, max_hops=2) walks funders breadth first. Hop 1 gives [W,A] and [W,B]. Hop 2 finds M with label Mixer and returns W, A, M. The yes is accepted on that path. The claim \"through B\" is ignored.",w:"Judge the answer with checks, never the written reasoning.",g:1,path:1,mix:1,checker:1,pc:[6, 7, 8]},
+ {t:"Pick the budget with an eval",b:"eval runs the golden set at two budgets. Small: pass 92%, cost 1x. Large: pass 93%, cost 3x. Both clear PASS_LINE 90%. min() by cost keeps the small budget.",w:"Example numbers. The cheapest budget that passes wins.",ev:1,pc:[9, 10]}
+]};
+function scene(s){
+  let h="";
+  if(s.g){
+    EDGES.forEach(([a,b],k)=>{const on=s.he&&s.he.includes(k)||(s.path&&(k===0||k===2))||(s.wrong&&(k===1));const c=s.wrong&&k===1?"var(--fail)":on?(s.path?"var(--ok)":"var(--wait)"):"var(--line)";
+      h+=A(P[a][0]+(P[b][0]<P[a][0]?-50:50),P[a][1]+22,P[b][0]+50,P[b][1]+22,c,"funded");});
+    for(const k in P){const [x,y]=P[k];const isW=k==="W",mx=k==="M"&&s.mix,hi=s.hi&&s.hi.includes(k);
+      h+=R(x-50,y,100,44,isW?"var(--coord)":mx?"var(--fail)":hi?"var(--wait)":"var(--line)",k==="M"&&s.mix?"M: Mixer":"Wallet "+k,isW||mx||hi?"#fff":"var(--fg)",14);}
+    if(s.steps){h+=T(640,140,"Written steps",null,14,"start",1);s.steps.forEach((l,k)=>h+=T(640,166+k*22,l,s.wrong?"var(--fail)":"var(--fg)",12));
+      if(!s.steps.length)h+=T(640,166,"none","var(--muted)",13);}
+    if(s.ans)h+=R(620,250,260,44,s.bad?"var(--fail)":"var(--ok)",s.ans,"#fff",14);
+    if(s.checker)h+=R(620,180,260,60,"var(--undo)","Path query in code: W, A, M","#fff",13)+R(620,250,260,44,"var(--ok)","Accepted on evidence","#fff",14);
+    return h;}
+  if(s.meter){const [v,l]=s.meter;h+=T(40,60,l,null,16,"start",1)+O(40,80,700,50)+R(40,80,700*v,50,s.bad?"var(--fail)":"var(--undo)","");
+    h+=T(750,112,Math.round(v*100)+"%",null,16,"start",1);h+=T(40,170,"Every reasoning token is billed as an output token.","var(--fg)",15);
+    if(s.bad)h+=T(40,200,"Easy task, long thinking: slow and costly for nothing.","var(--fail)",15,"start",1);return h;}
+  if(s.ev){h+=T(40,40,"Golden set at two budgets (example numbers)",null,16,"start",1);
+    [["Small budget",.92,1,"var(--ok)"],["Large budget",.93,3,"var(--line)"]].forEach(([l,p,c,col],k)=>{const y=70+k*110;
+      h+=T(40,y+28,l,null,15,"start",1)+R(200,y,400*p,40,col,"","");h+=T(210,y+26,"pass "+Math.round(p*100)+"%",k?"var(--fg)":"#fff",14,"start",1);
+      h+=R(200,y+48,60*c,30,"var(--undo)","","");h+=T(210+60*c,y+68,"cost "+c+"x",null,14,"start",1);});
+    h+=R(640,90,220,50,"var(--ok)","Keep: small budget","#fff",15);}
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

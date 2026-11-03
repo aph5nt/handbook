@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Histograms and selectivity</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Histograms and selectivity: how many rows will a filter keep?</h1>
+  <p class="lede">Six of the many pools in <b>swaps</b>, drawn by how many swaps each holds. The planner must guess the rows for <code>pool = :p</code>. Watch the dashed even-spread guess against the real bars.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="even">Even-spread guess fails</button>
+    <button role="tab" aria-selected="false" data-mode="hist">With a histogram</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 390" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Bars of swaps per pool with a dashed even-spread guess, an estimate box and a plan box</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text x="30" y="24" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">swaps per pool (6 of many thousands drawn)</text>
+<text x="190" y="57" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">router pool</text>
+<rect id="b0" class="box" data-f="var(--line)" x="200" y="40" width="500" height="24" rx="4" fill="var(--line)" stroke="var(--line)"/>
+<text id="sh0" data-t="" x="710" y="57" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text x="190" y="91" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">aero WETH/USDC</text>
+<rect id="b1" class="box" data-f="var(--line)" x="200" y="74" width="150" height="24" rx="4" fill="var(--line)" stroke="var(--line)"/>
+<text id="sh1" data-t="" x="360" y="91" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text x="190" y="125" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">uni WETH/cbBTC</text>
+<rect id="b2" class="box" data-f="var(--line)" x="200" y="108" width="90" height="24" rx="4" fill="var(--line)" stroke="var(--line)"/>
+<text id="sh2" data-t="" x="300" y="125" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text x="190" y="159" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">topaz pool</text>
+<rect id="b3" class="box" data-f="var(--line)" x="200" y="142" width="50" height="24" rx="4" fill="var(--line)" stroke="var(--line)"/>
+<text id="sh3" data-t="" x="260" y="159" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text x="190" y="193" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">small pool</text>
+<rect id="b4" class="box" data-f="var(--line)" x="200" y="176" width="20" height="24" rx="4" fill="var(--line)" stroke="var(--line)"/>
+<text id="sh4" data-t="" x="230" y="193" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text x="190" y="227" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">tiny pool</text>
+<rect id="b5" class="box" data-f="var(--line)" x="200" y="210" width="3" height="24" rx="4" fill="var(--line)" stroke="var(--line)"/>
+<text id="sh5" data-t="" x="213" y="227" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<g id="guess" class="msg"><line x1="212" y1="34" x2="212" y2="244" stroke="var(--wait)" stroke-width="3" stroke-dasharray="6 4"/>
+<text x="220" y="258" text-anchor="start" font-size="12" font-weight="400" fill="var(--wait)">even-spread guess: rows ÷ distinct pools</text>
+</g>
+<rect id="est" class="box" data-f="var(--line)" x="30" y="272" width="400" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="est-t" data-t="estimate" x="230" y="293" text-anchor="middle" font-size="13" fill="var(--fg)">estimate</text>
+<text id="est-u" data-t="not computed yet" x="230" y="313" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">not computed yet</text>
+<rect id="plan" class="box" data-f="var(--line)" x="470" y="272" width="400" height="52" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="plan-t" data-t="plan" x="670" y="293" text-anchor="middle" font-size="13" fill="var(--fg)">plan</text>
+<text id="plan-u" data-t="not chosen yet" x="670" y="313" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">not chosen yet</text>
+<rect x="20" y="340" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="366" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="365" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-histograms/main.go</code> (<code>go run .</code>). It builds the swap counts per pool in memory and computes the statistics from them.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the data</span>
+    <span style="--c:var(--ok)">estimate fits</span>
+    <span style="--c:var(--wait)">guess too high or unknown</span>
+    <span style="--c:var(--fail)">guess far too low</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Chain data: <code>pool</code>, <code>sender</code> and <code>token</code> are skewed by routers and hot wallets. A multi-tenant SaaS table filtered by <code>customer_id</code>. A <code>status</code> column where nearly every row is <code>done</code>.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Collect histograms on skewed columns: <code>ANALYZE TABLE ... UPDATE HISTOGRAM ON col</code> in StarRocks, a higher statistics target in PostgreSQL. Re-collect after big loads. Watch generic cached plans: they cannot use a histogram.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Row count and distinct count only</th><th>With a histogram</th></tr>
+      <tr><td>Equality guess</td><td>1 ÷ distinct values, for every value</td><td>the real share of common values</td></tr>
+      <tr><td>Range guess</td><td>a fixed fraction</td><td>the share of buckets covered</td></tr>
+      <tr><td>Heavy value</td><td>far too low</td><td>right</td></tr>
+      <tr><td>Rare value</td><td>too high</td><td>about right</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"Selectivity is the share of rows a filter keeps, and on a skewed column only a histogram makes that share right."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+even:[
+ {"t": "Skewed data", "b": "swaps holds 10,000,000 rows over 20,000 pools. The router pool alone holds 5,000,000, half of all swaps. The tiny pool holds 200.", "w": "Real data is rarely even. Chain data never is.", "f": {"b0": "c"}, "x": {"big": "one pool holds half the table"}, "pc": []},
+ {"t": "No histogram: only two numbers", "b": "The statistics hold two numbers: 10,000,000 rows and 20,000 distinct pools. Nothing about the spread. So the rule is: rows ÷ distinct = 500 rows for any pool.", "w": "Selectivity of pool = :p is guessed as 1 ÷ distinct pools, the same for every pool.", "on": ["guess"], "x": {"est-u": "10,000,000 ÷ 20,000 = 500 for every pool", "big": "selectivity = 1 ÷ distinct values"}, "pc": [1, 2, 3, 4]},
+ {"t": "The query asks for the router pool", "b": "WHERE pool = 'router pool'. The planner has no list of common values, so it uses the even-spread rule: 500 rows. The router pool really holds 5,000,000.", "w": "The guess is the dashed line. The real bar is half the table.", "f": {"b0": "f", "est": "f"}, "on": ["guess"], "x": {"est-u": "guess: 500 rows", "sh0": "actual: 5,000,000", "sql": "WHERE pool = 'router pool'", "big": "estimated far below actual"}, "pc": [1, 2, 3, 4]},
+ {"t": "A plan for a few hundred rows", "b": "The plan rule: a nested loop when the estimate is at most 10,000 rows, otherwise a hash join. 500 is under 10,000, so nested loop. It runs over 5,000,000 rows.", "w": "The plan is right for the guess and wrong for the data.", "f": {"b0": "f", "est": "f", "plan": "f"}, "on": ["guess"], "x": {"est-u": "guess: 500 rows", "plan-u": "nested loop: runs for minutes", "sh0": "actual: 5,000,000", "sql": "WHERE pool = 'router pool'", "big": "the query runs for minutes"}, "pc": [11, 12]},
+ {"t": "Rare values are wrong the other way", "b": "For the tiny pool the same rule gives 500 again. It holds 200 swaps, so the guess is 2.5 times too high.", "w": "An even-spread guess is too low for heavy values and too high for rare ones.", "f": {"b5": "w", "est": "w"}, "on": ["guess"], "x": {"est-u": "guess: 500 rows", "sh5": "actual: 200 swaps", "sql": "WHERE pool = 'tiny pool'", "big": "too high for the rare value"}, "pc": [1, 2, 3, 4]}
+],
+hist:[
+ {"t": "Collect a histogram", "b": "ANALYZE now also keeps the 5 most common values with their real row counts: router 5,000,000, aero 1,500,000, uni 900,000, topaz 500,000, small 200,000.", "w": "One extra statistics read. Every later estimate on pool uses it.", "f": {"b0": "ok", "b1": "ok", "b2": "ok"}, "x": {"sh0": "half of all swaps", "sh1": "15 %", "sh2": "9 %", "sh3": "5 %", "sh4": "2 %", "sh5": "200 swaps", "sql": "ANALYZE TABLE swaps UPDATE HISTOGRAM ON pool", "big": "most common values stored with their share"}, "pc": [14, 15, 16]},
+ {"t": "The router pool, estimated right", "b": "The rule now checks the most-common list first. The router pool is on it, so the estimate is its stored count: 5,000,000.", "w": "Selectivity is now the true fraction of rows the filter keeps.", "f": {"b0": "ok", "est": "ok"}, "x": {"sh0": "half of all swaps", "sh1": "15 %", "sh2": "9 %", "sh3": "5 %", "sh4": "2 %", "sh5": "200 swaps", "est-u": "estimate: 5,000,000", "sql": "WHERE pool = 'router pool'", "big": "estimate matches actual"}, "pc": [1, 2, 7, 8]},
+ {"t": "The right plan for a big pool", "b": "5,000,000 is over the 10,000-row limit for a nested loop, so the planner picks a hash join.", "w": "Same SQL, true estimate, right plan.", "f": {"b0": "ok", "est": "ok", "plan": "ok"}, "x": {"sh0": "half of all swaps", "sh1": "15 %", "sh2": "9 %", "sh3": "5 %", "sh4": "2 %", "sh5": "200 swaps", "est-u": "estimate: 5,000,000", "plan-u": "hash join: seconds", "sql": "WHERE pool = 'router pool'", "big": "hash join for the heavy value"}, "pc": [11, 13]},
+ {"t": "The right plan for a tiny pool", "b": "The tiny pool is not on the list. The rule shares the rows left over: (10,000,000 − 8,100,000) ÷ (20,000 − 5) = 95 rows. Actual is 200. Both are far under 10,000, so the nested loop is right.", "w": "One histogram, a fitting plan for each value.", "f": {"b5": "ok", "est": "ok", "plan": "ok"}, "x": {"sh0": "half of all swaps", "sh1": "15 %", "sh2": "9 %", "sh3": "5 %", "sh4": "2 %", "sh5": "200 swaps", "est-u": "estimate: 95 rows", "plan-u": "nested loop: milliseconds", "sql": "WHERE pool = 'tiny pool'", "big": "nested loop for the rare value"}, "pc": [1, 2, 7, 9, 10, 11, 12]},
+ {"t": "The blind spot: a generic plan", "b": "A prepared statement may be planned once with no value at all. The rule has no value to look up in the list, so it falls back to rows ÷ distinct: 500, and a nested loop for every pool.", "w": "Histograms help only when the planner sees the value. Re-collect them after big loads.", "f": {"est": "w", "plan": "w"}, "on": ["guess"], "x": {"sh0": "half of all swaps", "sh1": "15 %", "sh2": "9 %", "sh3": "5 %", "sh4": "2 %", "sh5": "200 swaps", "est-u": "value unknown: 500 for every pool", "plan-u": "one plan for every pool", "sql": "WHERE pool = $1", "big": "no value, no histogram lookup"}, "pc": [1, 2, 5, 6, 11, 12]}
+]
+};
+const base={};
+const code={
+"even":{
+ label:"SQL",
+ pc:["estimate(column = value):", "  rows, distinct = stats.rows, stats.distinct   # 10,000,000 and 20,000", "  if there is no most-common list:", "    return rows / distinct            # even spread: 500 for every pool", "  if value is unknown:                # a generic plan, $1", "    return rows / distinct", "  if value in stats.most_common:", "    return stats.most_common[value]   # router pool: 5,000,000", "  left = rows - sum(stats.most_common)", "  return left / (distinct - len(stats.most_common))   # 95", "choose_plan(est):", "  if est <= 10,000: nested loop", "  else:             hash join", "analyze_with_histogram(column):", "  stats.most_common = the 5 values with the most rows", "  stats.buckets = value ranges with row counts"],
+ real:["-- what ANALYZE keeps without a histogram", "SELECT n_distinct FROM pg_stats", "WHERE  tablename = 'swaps' AND attname = 'pool';   -- 20,000", "", "SELECT count(*) FROM swaps", "WHERE  pool = 'router pool';", "", "-- EXPLAIN ANALYZE shape", "-- Nested Loop", "--   Scan swaps  filter pool = 'router pool'", "--               est rows 500        actual rows 5,000,000", "", "-- the tiny pool, the same rule", "--   Scan swaps  filter pool = 'tiny pool'", "--               est rows 500        actual rows 200"],
+ map:{"1": [5, 6], "2": [2, 3], "3": [2, 3], "4": [11, 15], "11": [9], "12": [9], "13": [9]}},
+"hist":{
+ label:"SQL",
+ pc:["estimate(column = value):", "  rows, distinct = stats.rows, stats.distinct   # 10,000,000 and 20,000", "  if there is no most-common list:", "    return rows / distinct            # even spread: 500 for every pool", "  if value is unknown:                # a generic plan, $1", "    return rows / distinct", "  if value in stats.most_common:", "    return stats.most_common[value]   # router pool: 5,000,000", "  left = rows - sum(stats.most_common)", "  return left / (distinct - len(stats.most_common))   # 95", "choose_plan(est):", "  if est <= 10,000: nested loop", "  else:             hash join", "analyze_with_histogram(column):", "  stats.most_common = the 5 values with the most rows", "  stats.buckets = value ranges with row counts"],
+ real:["-- StarRocks: collect a histogram on the skewed column", "ANALYZE TABLE swaps UPDATE HISTOGRAM ON pool", "  WITH 64 BUCKETS;", "-- PostgreSQL: keep more common values per column", "ALTER TABLE swaps ALTER COLUMN pool SET STATISTICS 1000;", "ANALYZE swaps;", "", "SELECT most_common_vals, most_common_freqs FROM pg_stats", "WHERE  tablename = 'swaps' AND attname = 'pool';", "-- {router pool, aero WETH/USDC, ...}  {0.5, 0.15, ...}", "", "-- router pool: est rows 5,000,000   actual 5,000,000  -> Hash Join", "-- tiny pool:   est rows 95          actual 200        -> Nested Loop", "", "-- the blind spot: a generic plan sees no value", "PREPARE q(text) AS SELECT count(*) FROM swaps WHERE pool = $1;", "--   est rows 500 for every pool"],
+ map:{"1": [8, 9], "2": [8, 9], "5": [16, 17], "6": [17], "7": [8, 9, 10], "8": [12], "9": [13], "10": [13], "11": [12, 13], "12": [13], "13": [12], "14": [2, 3, 5, 6], "15": [2, 3, 5, 6, 8, 9, 10], "16": [2, 3]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

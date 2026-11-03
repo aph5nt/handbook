@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache-Control</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache-Control directives: who keeps a copy, and for how long</h1>
+  <p class="lede">The Chain Insights website sends six kinds of response. Press <b>Next</b> and watch each one get its header, and what the browser and the CDN edge then keep. Then watch one wrong word leak an account page.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="cc">Six responses, six headers</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 390" aria-labelledby="stage-title">
+      <title id="stage-title">A table of six responses with their Cache-Control header and what the browser and the CDN edge keep</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <text id="c0" x="20" y="30" text-anchor="start" font-size="13" font-weight="700" fill="var(--muted)">Response</text>
+        <text id="c1" x="360" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="var(--muted)">Cache-Control header</text>
+        <text id="c2" x="650" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="var(--muted)">Browser keeps</text>
+        <text id="c3" x="810" y="30" text-anchor="middle" font-size="13" font-weight="700" fill="var(--muted)">CDN edge keeps</text>
+        <text id="r0" x="20" y="70" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">app.3f9a.js</text>
+        <rect id="h0" class="box" x="160" y="44" width="400" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-h0" data-on="h0" x="360.0" y="69.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="b0" class="box" x="580" y="44" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-b0" data-on="b0" x="650.0" y="69.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="e0" class="box" x="740" y="44" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-e0" data-on="e0" x="810.0" y="69.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="r1" x="20" y="122" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">sealed day facts</text>
+        <rect id="h1" class="box" x="160" y="96" width="400" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-h1" data-on="h1" x="360.0" y="121.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="b1" class="box" x="580" y="96" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-b1" data-on="b1" x="650.0" y="121.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="e1" class="box" x="740" y="96" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-e1" data-on="e1" x="810.0" y="121.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="r2" x="20" y="174" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">exchange list</text>
+        <rect id="h2" class="box" x="160" y="148" width="400" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-h2" data-on="h2" x="360.0" y="173.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="b2" class="box" x="580" y="148" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-b2" data-on="b2" x="650.0" y="173.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="e2" class="box" x="740" y="148" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-e2" data-on="e2" x="810.0" y="173.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="r3" x="20" y="226" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">account page</text>
+        <rect id="h3" class="box" x="160" y="200" width="400" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-h3" data-on="h3" x="360.0" y="225.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="b3" class="box" x="580" y="200" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-b3" data-on="b3" x="650.0" y="225.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="e3" class="box" x="740" y="200" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-e3" data-on="e3" x="810.0" y="225.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="r4" x="20" y="278" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">payment page</text>
+        <rect id="h4" class="box" x="160" y="252" width="400" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-h4" data-on="h4" x="360.0" y="277.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="b4" class="box" x="580" y="252" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-b4" data-on="b4" x="650.0" y="277.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="e4" class="box" x="740" y="252" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-e4" data-on="e4" x="810.0" y="277.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="r5" x="20" y="330" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">live chain head</text>
+        <rect id="h5" class="box" x="160" y="304" width="400" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-h5" data-on="h5" x="360.0" y="329.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="b5" class="box" x="580" y="304" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-b5" data-on="b5" x="650.0" y="329.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="e5" class="box" x="740" y="304" width="140" height="40" rx="20.0" fill="var(--panel)"/>
+        <text id="t-e5" data-on="e5" x="810.0" y="329.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="nt" x="450" y="372" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-control/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the header sent</span>
+    <span style="--c:var(--ok)">a copy is kept</span>
+    <span style="--c:var(--line)">no copy kept</span>
+    <span style="--c:var(--fail)">wrong: private data at the edge</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every HTTP response from a web server, an API gateway or object storage such as S3. Frameworks often set defaults you never read. A content delivery network (CDN) follows these headers unless you override them in its rules.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Never changes: long max-age, immutable, hashed URL. Changes sometimes: short max-age, s-maxage for the edge, an ETag. Per user: private. Sensitive or live: no-store. Check headers in a test, not by eye.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Directive</th><th>Meaning</th></tr>
+      <tr><td><code>max-age=N</code></td><td>Fresh for N seconds everywhere</td></tr>
+      <tr><td><code>s-maxage=N</code></td><td>Fresh for N seconds in shared caches only</td></tr>
+      <tr><td><code>public</code> / <code>private</code></td><td>Shared caches may keep it / browser only</td></tr>
+      <tr><td><code>no-cache</code></td><td>Keep it, but check before every use</td></tr>
+      <tr><td><code>no-store</code></td><td>Keep nothing</td></tr>
+      <tr><td><code>immutable</code></td><td>Never check, even on reload</td></tr>
+      <tr><td><code>stale-while-revalidate=N</code></td><td>Serve stale for N seconds while refreshing</td></tr>
+      <tr><td>Interview line</td><td colspan="1">&quot;Cache-Control says who may keep a copy and for how long: public or private, max-age and s-maxage, no-cache to check first, no-store to keep nothing, immutable for hashed files.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[160,352,560];
+const ROW=(k,h,b,e,bc,ec,hc)=>({fill:{["h"+k]:hc||COORD,["b"+k]:bc,["e"+k]:ec},text:{["t-h"+k]:h,["t-b"+k]:b,["t-e"+k]:e}});
+const steps={
+"cc":[
+ {pc:[2, 4, 10],t:"A hashed script file never changes",b:"app.3f9a.js has a hash of its content in its name. A new version gets a new name. So this file can be kept for a year, and never checked.",w2:"max-age sets how long a copy is fresh. immutable says: do not even check on reload.",
+  ...ROW(0,"public, max-age=31536000, immutable","1 year","1 year",OK,OK),text:{...ROW(0,"public, max-age=31536000, immutable","1 year","1 year").text,nt:""}},
+ {pc:[2, 11],t:"The facts of a sealed day",b:"A sealed day of chain data never changes, but its URL has no hash. Keep it for a day, then check with its ETag.",w2:"public lets shared caches, like the CDN edge, keep it.",...ROW(1,"public, max-age=86400 + ETag","1 day, then check","1 day, then check",OK,OK)},
+ {pc:[2, 3, 12],t:"An exchange list that changes daily",b:"The list of exchanges changes now and then. max-age=60 sets one minute for browsers. Line 3 lets s-maxage=600 replace that for the CDN edge, so it keeps ten minutes, because the edge can be purged and a browser cannot.",
+  w2:"s-maxage is a separate lifetime for shared caches only.",...ROW(2,"public, max-age=60, s-maxage=600","1 minute","10 minutes",OK,OK)},
+ {pc:[6, 13],t:"The account page is per user",b:"Each signed-in user sees their own account page. Only their own browser may keep it.",w2:"private means: browser yes, shared caches no.",...ROW(3,"private, max-age=0 + ETag","yes, own copy","no",OK,LINE)},
+ {pc:[7, 14],t:"The payment page is sensitive",b:"Payment details must not sit on any disk, not even the user's own.",w2:"no-store means nobody keeps a copy at all.",...ROW(4,"no-store","no","no",LINE,LINE)},
+ {pc:[7, 14],t:"The live chain head",b:"The head changes every tenth of a second. Any copy is wrong almost at once.",w2:"Also no-store. A cached head is a wrong head.",...ROW(5,"no-store","no","no",LINE,LINE)},
+ {pc:[2, 6, 13],t:"The failure that matters: account page sent as public",b:"A refactor sends the account page with public, max-age=300. Line 6 is not there to protect it: the header says public. The edge obeys, keeps Alice's page under the URL and shows it to Bob for 300 seconds.",
+  w2:"One wrong word leaks private data. Test the response headers of every per-user endpoint.",...ROW(3,"public, max-age=300","yes","Alice's page, to Bob",OK,FAIL,FAIL),ban:["one user's page served to another",352]},
+ {pc:[5, 7],t:"The trap in the name: no-cache",b:"no-cache does not mean do not cache. It means keep a copy, but check with the server before every use. no-store is the one that keeps nothing.",
+  w2:"no-cache plus an ETag is the right header for an HTML page: always current, usually a 304.",...ROW(3,"private, max-age=0 + ETag","yes, own copy","no",OK,LINE),text:{...ROW(3,"private, max-age=0 + ETag","yes, own copy","no").text,nt:"no-cache: keep, check every time.  no-store: keep nothing."}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"cc": {
+"label": "Go",
+"pc": [
+"read the Cache-Control header, one directive at a time:",
+"  max-age=N    browser and edge may keep it N seconds",
+"  s-maxage=N   shared caches use N instead          # edge only",
+"  immutable    never check, even on reload",
+"  no-cache     keep a copy, but check before every use",
+"  private      browser yes, shared caches no",
+"  no-store     nobody keeps a copy                  # wins over the rest",
+"",
+"the server picks one per response:",
+"  hashed file:   public, max-age=31536000, immutable",
+"  sealed day:    public, max-age=86400 + ETag",
+"  exchange list: public, max-age=60, s-maxage=600",
+"  account page:  private, max-age=0 + ETag",
+"  payment, head: no-store"
+],
+"real": [
+"func Decide(h string) Policy {",
+"\tp, sMaxAge := Policy{}, -1",
+"\tfor _, d := range strings.Split(h, \",\") {",
+"\t\tname, val, _ := strings.Cut(strings.TrimSpace(d), \"=\")",
+"\t\tn, _ := strconv.Atoi(val)",
+"\t\tswitch name {",
+"\t\tcase \"max-age\":",
+"\t\t\tp.BrowserTTL, p.EdgeTTL = n, n",
+"\t\t\tp.BrowserKeeps, p.EdgeKeeps = true, true",
+"\t\tcase \"s-maxage\": // shared caches only",
+"\t\t\tsMaxAge, p.EdgeKeeps = n, true",
+"\t\tcase \"immutable\":",
+"\t\t\tp.NeverCheck = true",
+"\t\tcase \"no-cache\": // keep, but ask before every use",
+"\t\t\tp.BrowserKeeps, p.EdgeKeeps, p.CheckFirst = true, true, true",
+"\t\t}",
+"\t}",
+"\tif sMaxAge >= 0 {",
+"\t\tp.EdgeTTL = sMaxAge",
+"\t}",
+"\tif strings.Contains(h, \"private\") { // browser yes, edge no",
+"\t\tp.BrowserKeeps, p.EdgeKeeps, p.EdgeTTL = true, false, 0",
+"\t}",
+"\tif strings.Contains(h, \"no-store\") { // nobody keeps a copy",
+"\t\treturn Policy{}",
+"\t}",
+"\treturn p",
+"}",
+"",
+"// the edge obeys it: a public account page is shared with everyone",
+"if Decide(resp.Header.Get(\"Cache-Control\")).EdgeKeeps {",
+"\te.store[path] = string(b) // keyed by URL only",
+"}"
+],
+"map": {
+"1": [
+2,
+3,
+4,
+5,
+6
+],
+"2": [
+7,
+8,
+9
+],
+"3": [
+10,
+11,
+18,
+19,
+20
+],
+"4": [
+12,
+13
+],
+"5": [
+14,
+15
+],
+"6": [
+21,
+22,
+23
+],
+"7": [
+24,
+25,
+26
+],
+"9": [
+31
+],
+"10": [
+8,
+13
+],
+"11": [
+8
+],
+"12": [
+8,
+11
+],
+"13": [
+21,
+22
+],
+"14": [
+24,
+25
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partition and bucket</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Partitioning and bucketing</h1>
+  <p class="lede">The transfers table is partitioned by day and bucketed by sender address. One question asks about address 0xab.. on 25 September. Press <b>Next</b> and watch how much storage it never opens.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good" id="tab-good">Partition by day, bucket by address</button>
+    <button role="tab" aria-selected="false" data-mode="trap" id="tab-trap">Partition by address (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Day partitions holding hash buckets, with pruned parts shown</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-partition-and-bucket/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">stored, not yet touched</span>
+    <span style="--c:var(--undo)">pruned, never opened</span>
+    <span style="--c:var(--wait)">being read</span>
+    <span style="--c:var(--ok)">the answer</span>
+    <span style="--c:var(--coord)">moved to cold storage</span>
+    <span style="--c:var(--fail)">read where it hurts</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: warehouse fact tables</h2>
+      <p>Swap and transfer facts in StarRocks: one partition per day, buckets by address hash. Old days move to cheaper disks by partition. A lane reset drops partitions instead of deleting rows.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: everywhere else</h2>
+      <p>Kafka partitions by key so one account stays in order. Postgres declarative partitions by month. BigQuery partitions by day and clusters by a column. The choice is the same: time to prune, key to spread.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Partition key</th><th>Bucket key</th></tr>
+      <tr><td>Usually</td><td>Time: day or month</td><td>An identifier: address, account, user</td></tr>
+      <tr><td>What it buys</td><td>A time filter skips whole partitions</td><td>Even spread, and local joins on that key</td></tr>
+      <tr><td>How many</td><td>Hundreds to a few thousand</td><td>A fixed number per partition</td></tr>
+      <tr><td>Wrong choice</td><td>Address: millions of tiny partitions</td><td>A skewed key: one hot bucket</td></tr>
+      <tr><td>Lifecycle</td><td>Move or drop whole partitions by age</td><td>Stays with its partition</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Partition by time so a filter prunes, bucket by key so rows spread evenly and join locally."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"good": {"label": "Go", "pc": ["plan(query):", "  for each partition p (one per day):", "    if query.day set and p.day != query.day: skip p    # pruning", "    for b in 1..4:", "      if query.sender set and b != hash(sender) mod 4 + 1: skip b", "      open piece (p, b)                 # only these are read", "bucket b of partition p lives on node (p + b - 1) mod 3 + 1", "labels uses the same hash, so labels bucket b is on the same node", "move or drop a whole partition by its day, never row by row", "# anti-join with no day: no partition is skipped, 12 of 12 held", "# fix: scope the anti-join to the days in question"], "real": ["const buckets = 4", "const nodes = 3", "", "// bucketOf hashes the sender: the same key always lands in the same bucket.", "func bucketOf(sender string) int {", "\th := fnv.New32a()", "\th.Write([]byte(sender))", "\treturn int(h.Sum32()%buckets) + 1 // buckets are numbered 1 to 4", "}", "", "// nodeOf places bucket b of partition p on a backend node, evenly.", "func nodeOf(p, b int) int { return (p+b-1)%nodes + 1 }", "", "func Plan(q Query) (pieces [][2]int) {", "\tfor p, d := range days {", "\t\tif q.Day != \"\" && d != q.Day {", "\t\t\tcontinue // the day filter prunes this partition", "\t\t}", "\t\tfor b := 1; b <= buckets; b++ {", "\t\t\tif q.Sender != \"\" && b != bucketOf(q.Sender) {", "\t\t\t\tcontinue // the hash says the sender is not here", "\t\t\t}", "\t\t\tpieces = append(pieces, [2]int{p, b})", "\t\t}", "\t}", "\treturn pieces", "}", "", "// StarRocks DDL for the same layout", "const layoutDDL = `PARTITION BY date_trunc('day', block_time)", "DISTRIBUTED BY HASH(sender) BUCKETS 4`", "const moveDDL = `ALTER TABLE transfers MODIFY PARTITION p20260924 SET (\"storage_medium\" = \"HDD\")`", "const scopedAntiJoin = `WHERE t.day BETWEEN '2026-09-24' AND '2026-09-25'` // the anti-join, scoped"], "map": {"1": [14], "2": [15], "3": [16, 17], "4": [19], "5": [20, 21, 5, 6, 7, 8], "6": [23], "7": [11, 12], "8": [4, 30, 31], "9": [32], "10": [15, 16, 26], "11": [33]}}, "trap": {"label": "SQL", "pc": ["create table transfers:", "  partition by sender                # one partition per address", "on each new sender:", "  metadata.add(new partition)        # the list grows forever", "plan(WHERE day = D):", "  for each partition p:", "    open p                           # day is not the key: no skip", "  metadata lists every partition first", "# fix: partition by day, distribute by hash(sender)"], "real": ["-- the trap: partition key with millions of values", "CREATE TABLE transfers_by_address (", "  sender      VARCHAR(42),", "  day         DATE,", "  amount      DECIMAL(38, 18)", ")", "PARTITION BY LIST (sender) (...);   -- every address is a partition", "", "-- a new address means a new partition in the metadata", "ALTER TABLE transfers_by_address ADD PARTITION p_0x9f VALUES IN ('0x9f..');", "", "-- a day question cannot prune: the key is sender", "SELECT sum(amount) FROM transfers_by_address", "WHERE  day = '2026-09-25';          -- opens all 224 partitions", "", "-- the fix: time to prune, key to spread", "CREATE TABLE transfers (", "  sender      VARCHAR(42),", "  day         DATE,", "  amount      DECIMAL(38, 18)", ")", "PARTITION BY date_trunc('day', day)", "DISTRIBUTED BY HASH(sender) BUCKETS 4;"], "map": {"1": [2, 3, 4, 5, 6], "2": [7], "3": [9], "4": [10], "5": [12, 13, 14], "6": [14], "7": [14], "8": [12], "9": [16, 22, 23]}}};
+
+const DAYS=["24 Sep","25 Sep","26 Sep"],Q="WHERE day = 25 Sep AND sender = 0xab..";
+const steps={
+"good":[
+ {pc:[1, 2],t:"One table, split by day",b:"The transfers table is partitioned by day. Each day is its own range of storage. Inside each day, rows are spread over 4 buckets.",w:"A question arrives about one address on one day. Watch how little of the table it touches.",q:Q,parts:["idle","idle","idle"]},
+ {pc:[2, 3],t:"The day filter prunes",b:"The query says day = 25 September. The engine knows which partition holds that day, so it never opens 24 or 26 September.",w:"This skip is called pruning. Two thirds of the table are gone before any data is read.",q:Q,parts:["skip","idle","skip"]},
+ {pc:[4, 5],t:"The hash picks one bucket",b:"Inside 25 September, the engine computes hash(0xab..) mod 4. The answer is the same every time for the same address: bucket 2. Buckets 1, 3 and 4 are skipped without being opened.",w:"The same key always gives the same bucket, so the engine knows exactly where to look.",q:Q,parts:["skip","sel","skip"],bk:{"1-2":"read"},hash:true},
+ {pc:[6],t:"One bucket out of twelve",b:"All rows of 0xab.. on 25 September sit together in that one bucket. The engine reads it and returns them.",w:"1 of 12 storage pieces read. Everything else was never touched.",q:Q,parts:["skip","sel","skip"],bk:{"1-2":"done"},hash:true,res:"1 of 12 buckets read"},
+ {pc:[7, 8],t:"Buckets spread across nodes",b:"Bucket b of partition p goes to node (p + b - 1) mod 3 + 1, so the twelve buckets spread four per node. The labels table uses the same hash and the same 4 buckets, so labels bucket 2 of 25 September lands on node 3, beside transfers bucket 2.",w:"A join on the bucket key runs on each node locally. No rows move across the network.",q:"JOIN labels ON sender",parts:["idle","idle","idle"],nodes:true,join:true},
+ {pc:[9],t:"Whole partitions move or drop",b:"24 September is old. The whole partition moves to cheaper storage in one step. A lane reset can drop whole partitions instead of deleting rows one by one.",w:"Time partitions make age a storage decision, not a row-by-row job.",q:"move 24 Sep to cold storage",parts:["cold","idle","idle"]},
+ {pc:[10],t:"The failure that matters",b:"An anti-join asks: which senders appear in transfers but not in labels, over the whole range? The query has no day and no sender, so the planner keeps all 12 of 12 pieces and holds every sender of every day in memory to compare.",w:"This can run the backend out of memory. Fix: scope the anti-join to the partitions in question.",q:"anti-join over the whole range",parts:["bad","bad","bad"],mem:1,fail:true}
+],
+"trap":[
+ {pc:[1, 2],t:"Partition by address instead",b:"Someone partitions the same table by sender address. Every address gets its own partition. The picture shows 224. A real chain has millions of addresses.",w:"It sounds tidy: one address, one place. Watch the metadata service on the right.",q:"PARTITION BY sender",grid:224,meta:"idle"},
+ {pc:[3, 4],t:"Every new address adds a partition",b:"Each new sender creates a new partition, often holding a handful of rows. The metadata service must track every one of them.",w:"Millions of tiny partitions mean millions of tiny files and a huge partition list.",q:"new senders keep arriving",grid:224,fresh:true,meta:"busy"},
+ {pc:[5, 6, 7],t:"A day question opens everything",b:"Now ask for all transfers on 25 September. The planner can only prune on the partition key, and that is now the address. The filter is on day, so all 224 of 224 partitions are opened.",w:"The most common question in the warehouse, a time range, now prunes nothing.",q:"WHERE day = 25 Sep",grid:224,all:"read",meta:"busy"},
+ {pc:[8, 7],t:"The failure that matters",b:"Planning a query means listing every partition. The metadata service is overloaded and every query slows down, even small ones.",w:"High-cardinality partition keys break the metadata layer before they break the data.",q:"WHERE day = 25 Sep",grid:224,all:"bad",meta:"bad",fail:true},
+ {pc:[9],t:"The fix",b:"Partition by time, bucket by key. Three day partitions, four buckets each. A day filter prunes, and the address hash still finds one bucket.",w:"Partition by time so a filter prunes, bucket by key so rows spread evenly and join locally.",q:Q,parts:["skip","sel","skip"],bk:{"1-2":"done"},hash:true}
+]};
+const FILL={idle:"var(--svc)",skip:"var(--undo)",read:"var(--wait)",done:"var(--ok)",bad:"var(--fail)",cold:"var(--coord)",sel:"var(--wait)"};
+function draw(s){
+  let o=B(150,12,600,36,s.fail?"var(--fail)":"var(--coord)")+T(450,36,s.q,{c:"#fff",s:15});
+  if(s.parts){
+    s.parts.forEach((p,k)=>{const x=40+k*290;
+      o+=B(x,70,250,236,"none",10,`stroke="${p==="idle"?"var(--line)":FILL[p]}" stroke-width="3"`)+T(x+125,94,DAYS[k]+(p==="cold"?" (cold storage)":""),{c:p==="cold"?"var(--coord)":"var(--fg)"});
+      for(let b=1;b<=4;b++){const st=(s.bk&&s.bk[k+"-"+b])||(p==="sel"?"skip":p);const y=104+(b-1)*48;const node=((k+b-1)%3)+1;
+        o+=B(x+14,y,s.join?150:222,38,FILL[st],6)+T(x+(s.join?89:125),y+24,"bucket "+b+(s.nodes?" · node "+node:""),{c:"#fff",s:13});
+        if(s.join&&b===2)o+=M(B(x+176,y,60,38,"var(--undo)",6)+T(x+206,y+17,"labels",{c:"#fff",s:12})+T(x+206,y+31,"b2",{c:"#fff",s:12}));}
+    });
+    if(s.hash)o+=M(B(330,318,240,30,"var(--line)",15)+T(450,338,"hash(0xab..) mod 4 = bucket 2"));
+    if(s.join)o+=M(T(450,338,"same key, same node: the join stays local",{c:"var(--ok)"}));
+  }
+  if(s.grid){
+    for(let n=0;n<s.grid;n++){const c=n%28,r=Math.floor(n/28);const st=s.all||(s.fresh&&n>=196?"read":"idle");
+      o+=B(30+c*22,72+r*30,18,24,FILL[st],3);}
+    const mc=s.meta==="bad"?"var(--fail)":s.meta==="busy"?"var(--wait)":"var(--coord)";
+    o+=B(668,150,212,52,mc,10)+T(774,172,"metadata service",{c:"#fff"})+T(774,190,s.meta==="bad"?"overloaded":"tracking every partition",{c:"#fff",w:400,s:12});
+    o+=T(30,348,"one partition per address",{a:"start",c:"var(--muted)"});
+  }
+  if(s.mem)o+=M(T(40,340,"backend memory",{a:"start"})+B(190,326,500,20,"var(--fail)",10)+T(710,341,"full",{a:"start",c:"var(--fail)"}));
+  if(s.res)o+=M(T(450,365,s.res,{c:"var(--ok)",s:16}));
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

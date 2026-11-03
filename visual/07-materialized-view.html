@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Materialized views</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Materialized views: a saved result</h1>
+  <p class="lede">A dashboard shows daily volume per DEX (decentralised exchange). Computing it from billions of swaps on every page load is slow. A materialized view, <code>daily_dex_volume</code>, stores the result. Watch it refresh, then open the second tab: staleness and refresh cost.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="use">Refresh and read</button>
+    <button role="tab" aria-selected="false" data-mode="cost">The failure: stale and costly</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Materialized views: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">the dashboard</span>
+    <span style="--c:var(--line)">base table</span>
+    <span style="--c:var(--ok)">fresh stored result</span>
+    <span style="--c:var(--undo)">refresh</span>
+    <span style="--c:var(--wait)">slow, or old</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>StarRocks: an asynchronous materialized view refreshed per partition, and queries on the base table rewritten to read it. PostgreSQL: <code>REFRESH MATERIALIZED VIEW CONCURRENTLY</code> on a schedule, which needs a unique index on the view.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Refresh only the partitions that changed, usually today's. Show "data as of" on every dashboard that reads a view. Keep plain views for security, a read-only layer over base tables, and materialized views for speed.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>View</th><th>Materialized view</th><th>Table you fill yourself</th></tr>
+      <tr><td>Stores</td><td>The query</td><td>The result</td><td>The result</td></tr>
+      <tr><td>Read cost</td><td>The full query, every time</td><td>A read of a small table</td><td>A read of a small table</td></tr>
+      <tr><td>Freshness</td><td>Always current</td><td>As of the last refresh</td><td>As of your last pipeline run</td></tr>
+      <tr><td>Who refreshes</td><td>Nobody needs to</td><td>The engine, on schedule or on change</td><td>Your pipeline</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A view is a saved query, a materialized view is a saved result, and the price is staleness and refresh work."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const sc=(k,ex)=>[B(20,150,230,"swaps: billions of rows",k.s||"n",44),B(360,150,260,k.ml||"daily_dex_volume",k.m||"g",44),B(730,150,150,"dashboard",k.d||"s",44)].concat(ex||[]);
+const rd=(k)=>A(728,172,622,172,"",k||"c");
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. SQLite has no materialized view, so <code>handbook/code/07-materialized-view/main.py</code> keeps daily_dex_volume as a real table built from the GROUP BY query, with a row that records its age. It loads 400,000 swaps and prints every number quoted here (<code>python3 main.py</code>). The PostgreSQL tab shows CREATE MATERIALIZED VIEW and REFRESH CONCURRENTLY, plus the StarRocks form that refreshes by partition and rewrites queries.";
+const CODE={
+use:{pc:["page_load(): GROUP BY day, dex over every swap          # 400,000 rows scanned",
+"create_mv(): run the query once, store 400 rows, unique key (day, dex)",
+"dashboard(day): read the stored row and its as_of time     # a key search",
+"refresh_day(today): delete today's rows, recompute from today's swaps only   # 5,000 rows",
+"answer(query): if it equals a view's query, read the view instead"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- daily volume per exchange, computed from every swap", "SELECT day, dex, SUM(amount_usd) AS volume_usd, COUNT(*) AS swaps", "FROM swaps GROUP BY day, dex"],[""],["-- run the query once and store the result like a table", "CREATE TABLE daily_dex_volume AS", "SELECT day, dex, SUM(amount_usd) AS volume_usd, COUNT(*) AS swaps", "FROM swaps GROUP BY day, dex;", "CREATE UNIQUE INDEX daily_dex_volume_key ON daily_dex_volume (day, dex);"],[""],["-- the dashboard reads the stored rows and the age of the copy", "SELECT d.volume_usd, s.as_of FROM daily_dex_volume d, mv_state s", "WHERE s.name = 'daily_dex_volume' AND d.day = :day AND d.dex = 'aero';"],[""],["-- incremental refresh: recompute one day's partition only", "DELETE FROM daily_dex_volume WHERE day = :day;", "INSERT INTO daily_dex_volume", "SELECT day, dex, SUM(amount_usd), COUNT(*) FROM swaps WHERE day = :day GROUP BY day, dex;"],[""],["def refresh_day(db, day, now):", "    db.execute(\"BEGIN\")", "    run_all(db, REFRESH_DAY, {\"day\": day})", "    mark(db, now)", "    db.execute(\"COMMIT\")", "    return rows_read(db, day)"],[""],["# the view's own query, so a matching query can be sent to the stored rows", "VIEWS = {\" \".join(DAILY_VOLUME.split()): \"daily_dex_volume\"}"],[""],["def answer(db, sql):", "    # query rewrite: a query that equals a view's query reads the stored rows", "    target = VIEWS.get(\" \".join(sql.split()))", "    if target:", "        return \"rewritten to read \" + target, db.execute(\"SELECT COUNT(*) FROM \" + target).fetchone()[0]", "    return \"ran on swaps\", len(db.execute(sql).fetchall())"]),
+  map:[["page_load()","computed from every swap..FROM swaps GROUP BY day, dex"],["create_mv()","run the query once..CREATE UNIQUE INDEX"],["dashboard(day)","the dashboard reads..d.dex = 'aero';"],
+   ["refresh_day(today)","incremental refresh..WHERE day = :day GROUP BY","def refresh_day..return rows_read(db, day)"],["answer(query)","the view's own query..VIEWS = ","def answer..return \"rewritten to read"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- without a view, every page load runs this",
+"SELECT day, dex, SUM(amount_usd) FROM swaps GROUP BY day, dex;",
+"",
+"CREATE MATERIALIZED VIEW daily_dex_volume AS",
+"SELECT day, dex, SUM(amount_usd) AS volume_usd, COUNT(*) AS swaps",
+"FROM swaps GROUP BY day, dex;",
+"CREATE UNIQUE INDEX ON daily_dex_volume (day, dex);",
+"",
+"SELECT volume_usd FROM daily_dex_volume WHERE day = '2026-10-10' AND dex = 'aero';",
+"",
+"-- PostgreSQL recomputes the whole view, it has no refresh by partition",
+"REFRESH MATERIALIZED VIEW daily_dex_volume;",
+"",
+"-- PostgreSQL never rewrites a query on swaps to read the view.",
+"-- StarRocks, also not run here: refresh per partition, rewrite on",
+"CREATE MATERIALIZED VIEW daily_dex_volume_sr",
+"PARTITION BY day REFRESH ASYNC EVERY (INTERVAL 5 MINUTE) AS",
+"SELECT day, dex, SUM(amount_usd) AS volume_usd FROM swaps GROUP BY day, dex;"],
+  map:[["page_load()","every page load runs this..FROM swaps GROUP BY day, dex;"],["create_mv()","CREATE MATERIALIZED VIEW daily_dex_volume AS..CREATE UNIQUE INDEX"],["dashboard(day)","SELECT volume_usd FROM daily_dex_volume"],
+   ["refresh_day(today)","no refresh by partition..REFRESH MATERIALIZED VIEW daily_dex_volume;","PARTITION BY day"],["answer(query)","never rewrites..volume_usd FROM swaps GROUP BY"]]}]},
+cost:{pc:["10:00: 1,000 new swaps land; the dashboard says 59,183 as of 09:00, the base says 70,341",
+"refresh_full(): delete all, rescan every swap      # 402,000 rows, 12 times an hour",
+"locking refresh: hold the table for the whole rebuild -> reader: database is locked",
+"refresh_day(today) at 10:05: 6,000 rows, then record as_of = 10:05",
+"build_beside(): fill a second table while readers read the old one",
+"  swap it in with one short step"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- the dashboard reads the stored rows and the age of the copy", "SELECT d.volume_usd, s.as_of FROM daily_dex_volume d, mv_state s", "WHERE s.name = 'daily_dex_volume' AND d.day = :day AND d.dex = 'aero';"],[""],["-- the same number read from the base table", "SELECT SUM(amount_usd) FROM swaps WHERE day = :day AND dex = 'aero';"],[""],["-- full refresh: throw the result away and rescan every swap", "DELETE FROM daily_dex_volume;", "INSERT INTO daily_dex_volume", "SELECT day, dex, SUM(amount_usd), COUNT(*) FROM swaps GROUP BY day, dex;"],[""],["    reader = sqlite3.connect(path, timeout=0)", "    db.execute(\"BEGIN EXCLUSIVE\")", "    run_all(db, REFRESH_FULL)", "    try:", "        reader.execute(\"SELECT COUNT(*) FROM daily_dex_volume\").fetchone()", "        print(\"reader during a locking refresh: read\")", "    except sqlite3.OperationalError as err:", "        print(\"reader during a locking refresh:\", err)", "    db.execute(\"COMMIT\")"],[""],["def mark(db, as_of):", "    db.execute(\"INSERT OR REPLACE INTO mv_state VALUES ('daily_dex_volume', ?)\", (as_of,))"],[""],["def refresh_day(db, day, now):", "    db.execute(\"BEGIN\")", "    run_all(db, REFRESH_DAY, {\"day\": day})", "    mark(db, now)", "    db.execute(\"COMMIT\")", "    return rows_read(db, day)"],[""],["-- build the new result beside the old one; readers still read the old", "CREATE TABLE daily_dex_volume_next AS", "SELECT day, dex, SUM(amount_usd) AS volume_usd, COUNT(*) AS swaps", "FROM swaps GROUP BY day, dex;"],[""],["-- one short step puts the new result in place", "DROP TABLE daily_dex_volume;", "ALTER TABLE daily_dex_volume_next RENAME TO daily_dex_volume;"],[""],["    db.execute(BUILD_BESIDE)", "    print(\"reader while the new result is built:\",", "          reader.execute(\"SELECT COUNT(*) FROM daily_dex_volume\").fetchone()[0], \"rows\")", "    run_all(db, SWAP_IN)", "    db.execute(\"COMMIT\")", "    print(\"reader after the swap:\", reader.execute(\"SELECT COUNT(*) FROM daily_dex_volume\").fetchone()[0], \"rows\")"]),
+  map:[["10:00: 1,000","the dashboard reads..d.dex = 'aero';","the same number read..AND dex = 'aero';"],["refresh_full()","full refresh: throw..COUNT(*) FROM swaps GROUP BY day, dex;"],
+   ["locking refresh","BEGIN EXCLUSIVE..COMMIT"],["refresh_day(today) at 10:05","def refresh_day..return rows_read(db, day)","def mark..INSERT OR REPLACE"],
+   ["build_beside()","build the new result beside..FROM swaps GROUP BY day, dex;","db.execute(BUILD_BESIDE)","reader while the new result"],["swap it in","one short step..RENAME TO","run_all(db, SWAP_IN)","reader after the swap"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:["-- the dashboard cannot tell how old the result is unless it is told: mv_state",
+"SELECT d.volume_usd, s.as_of FROM daily_dex_volume d, mv_state s",
+"WHERE s.name = 'daily_dex_volume' AND d.day = '2026-10-10' AND d.dex = 'aero';",
+"",
+"-- a plain refresh recomputes everything and takes an ACCESS EXCLUSIVE lock:",
+"-- every SELECT on daily_dex_volume waits until it commits",
+"REFRESH MATERIALIZED VIEW daily_dex_volume;",
+"",
+"-- builds the new result beside the old one, readers never wait",
+"-- needs a unique index on the view, and is slower",
+"CREATE UNIQUE INDEX ON daily_dex_volume (day, dex);",
+"REFRESH MATERIALIZED VIEW CONCURRENTLY daily_dex_volume;"],
+  map:[["10:00: 1,000","cannot tell how old..AND d.dex = 'aero';"],["refresh_full()","=REFRESH MATERIALIZED VIEW daily_dex_volume;"],["locking refresh","ACCESS EXCLUSIVE..every SELECT on daily_dex_volume waits","=REFRESH MATERIALIZED VIEW daily_dex_volume;"],
+   ["refresh_day(today) at 10:05","SELECT d.volume_usd, s.as_of"],["build_beside()","builds the new result beside..CONCURRENTLY"],["swap it in","CONCURRENTLY"]]}]}};
+// CODE PANEL END
+const S={
+use:{name:"daily volume per DEX",st:[
+ {t:"Without a view: scan on every load",pc:["page_load()"],b:"Each page load runs SELECT day, dex, SUM(amount_usd) FROM swaps GROUP BY day, dex. The plan scans every swap: 400,000 rows here, billions in production.",w:"The same answer, recomputed for every visitor.",d:sc({d:"w"},[A(728,192,252,192,"full scan per page load","w",1)])},
+ {t:"Create the materialized view",pc:["create_mv()"],b:"CREATE MATERIALIZED VIEW daily_dex_volume AS that query. The engine runs it once and stores the result: 100 days times 4 exchanges, 400 rows, keyed by (day, dex).",w:"The result is stored like a table.",d:sc({m:"c",ml:"daily_dex_volume: 400 rows"},[A(252,172,358,172,"compute once","u")])},
+ {t:"The dashboard reads the stored result",pc:["dashboard(day)"],b:"The dashboard now searches the stored rows by (day, dex) instead of scanning swaps. It reads aero on 10 October: 48,025, as of 08:30.",w:"Reads hit the stored result, not the base table.",d:sc({m:"c",ml:"daily_dex_volume: 400 rows",d:"c"},[rd()])},
+ {t:"New swaps land: refresh today only",pc:["refresh_day(today)"],b:"1,000 new swaps arrive for today. The incremental refresh deletes today's 4 stored rows and recomputes them from today's swaps only: 5,000 rows read, not 401,000.",w:"A refresh by partition costs one day of swaps, not billions of rows.",d:sc({m:"c",ml:"daily_dex_volume: 400 rows"},[B(20,260,230,"today's partition: new rows","w",40),A(252,280,470,196,"refresh today","u"),rd()])},
+ {t:"Query rewrite",pc:["answer(query)"],b:"An analyst writes the GROUP BY query against swaps, not the view. The check: does the query match a view's own query? It does, so it reads daily_dex_volume instead. StarRocks does this matching for real.",w:"With rewrite, nobody has to know the view exists to benefit from it.",d:sc({m:"c",ml:"daily_dex_volume: 400 rows",d:"c"},[B(20,60,260,"analyst: GROUP BY on swaps","s",44),A(282,82,470,148,"rewritten to read the view","u",1),rd()])}
+]},
+cost:{name:"daily volume per DEX",st:[
+ {t:"The failure: old numbers shown as current",pc:["10:00: 1,000"],b:"The view was refreshed at 09:00. 1,000 swaps from 10:00 sit in the base table. The dashboard shows aero at 59,183, while the base table says 70,341.",w:"Between refreshes the view lags the base table. The reader cannot tell.",d:sc({m:"w",ml:"view as of 09:00",d:"x"},[B(20,260,230,"swaps since 09:00","w",40),rd("x"),T(730,230,"looks current","x")])},
+ {t:"The failure: a full refresh every 5 minutes",pc:["refresh_full()"],b:"To fight staleness, someone schedules a full refresh every 5 minutes. Each one deletes the result and rescans every swap: 402,000 rows here, 4,824,000 an hour. In production, billions each time.",w:"The refreshes cost more than the dashboard queries they save.",d:sc({s:"x",m:"c",ml:"full refresh every 5 min"},[A(252,172,358,172,"rescan all","x"),T(20,240,"billions of rows, 12 times an hour","x","start",15)])},
+ {t:"PostgreSQL: a refresh blocks readers",pc:["locking refresh"],b:"A plain REFRESH MATERIALIZED VIEW in PostgreSQL locks the view. Dashboard reads wait until the refresh ends. The SQLite run does the same with a locking rebuild: the reader gets database is locked.",w:"A slow refresh becomes a dashboard outage.",d:sc({m:"w",ml:"REFRESH: view locked",d:"x"},[A(728,172,622,172,"waits","x",1),A(252,172,358,172,"","u")])},
+ {t:"Fix: refresh by partition, label the age",pc:["refresh_day(today) at 10:05"],b:"Refresh only today's partition, every few minutes: 6,000 swaps read at 10:05. The dashboard shows 70,341, the same as the base table, and 'data as of 10:05'.",w:"Cheap refreshes, and an honest label for the reader.",d:sc({m:"c",ml:"view as of 10:05",d:"c"},[B(20,260,230,"today's partition","w",40),A(252,280,470,196,"refresh today","u"),rd(),T(730,230,"data as of 10:05","c")])},
+ {t:"Fix in PostgreSQL: CONCURRENTLY",pc:["build_beside()", "swap it in"],b:"REFRESH MATERIALIZED VIEW CONCURRENTLY builds the new result beside the old one. Readers keep reading the old result until the swap. The SQLite run builds a second table: the reader reads 400 rows during the build and 400 after the swap.",w:"It needs a unique index on the view, and it is slower. Readers never wait.",d:sc({m:"c",ml:"old result, still readable",d:"c"},[B(360,260,260,"new result being built","u",40),A(252,280,358,280,"","u"),rd()])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

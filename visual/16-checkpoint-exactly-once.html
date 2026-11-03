@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkpoint and exactly-once</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Checkpoints and exactly-once</h1>
+  <p class="lede">A Go indexer reads blocks from a chain node and writes transfer rows into StarRocks. It crashes between block 9507's rows and its checkpoint. Press <b>Next</b> and see why the order of the two writes decides whether data is lost.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good" id="tab-good">Data first, then checkpoint</button>
+    <button role="tab" aria-selected="false" data-mode="bad" id="tab-bad">Checkpoint first (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Chain blocks, the indexer with its checkpoint, and keyed rows in StarRocks</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-checkpoint-exactly-once/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">being read or written</span>
+    <span style="--c:var(--ok)">stored</span>
+    <span style="--c:var(--undo)">overwritten by a replay</span>
+    <span style="--c:var(--coord)">indexer running</span>
+    <span style="--c:var(--svc)">checkpoint</span>
+    <span style="--c:var(--fail)">crash, hole or duplicate</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: an indexer or a sync</h2>
+      <p>A chain indexer keeps a checkpoint row per block range. A graph sync keeps a high-water mark per layer. Both write data first, then the mark, and key every row by the event.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: Kafka</h2>
+      <p>A consumer commits its offset after its write, not before. Kafka transactions give true exactly-once only inside Kafka. Across systems, idempotent writes are the practical answer.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Data first, then checkpoint</th><th>Checkpoint first</th></tr>
+      <tr><td>Crash between the writes</td><td>Block is replayed</td><td>Block is skipped</td></tr>
+      <tr><td>With keyed rows</td><td>Replay overwrites, no duplicate</td><td>Nothing to overwrite: the rows never came</td></tr>
+      <tr><td>Delivery</td><td>At-least-once</td><td>At-most-once</td></tr>
+      <tr><td>Who notices</td><td>Nobody needs to</td><td>Nobody does, until a reconciliation</td></tr>
+      <tr><td>Side effects</td><td>Need deduplication by event id</td><td>Lost along with the rows</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Exactly-once in practice is at-least-once delivery plus idempotent writes, with the checkpoint written after the data."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"good": {"label": "Go", "pc": ["on start: next = checkpoint + 1", "for each block b from next:", "  for each event e in b:", "    upsert row keyed by (b.height, e.logIndex)   # a replay overwrites", "    if e is large:", "      if alertSent[e.id]: skip                 # dedup the side effect", "      sendAlert(e); alertSent[e.id] = true", "  # a crash here leaves rows without a checkpoint: fine, keys protect", "  checkpoint = b                                # only after the data", "# missing in the failure: the alertSent check on line 6"], "real": ["type Key struct{ Block, Log int } // the event itself names the row", "", "func (s *Store) IndexBlock(b int, crash, dedup bool) error {", "\tfor _, k := range eventsOf(b) {", "\t\ts.rows[k] = \"transfer\" // upsert by key", "\t\tif k.Log == 1 {", "\t\t\tif dedup && s.sentAlerts[k] {", "\t\t\t\tcontinue // already sent for this event id", "\t\t\t}", "\t\t\ts.sentAlerts[k] = true", "\t\t\ts.alerts = append(s.alerts, fmt.Sprintf(\"alert %d log %d\", k.Block, k.Log))", "\t\t}", "\t}", "\tif crash {", "\t\treturn errCrash", "\t}", "\ts.checkpoint = b // only after the rows are stored", "\treturn nil", "}", "", "// restart: resume after the checkpoint", "next := s.checkpoint + 1", "_ = s.IndexBlock(next, false, false)"], "map": {"1": [21, 22], "2": [23, 3], "3": [4], "4": [1, 5], "5": [6], "6": [7, 8], "7": [10, 11], "8": [14, 15], "9": [17], "10": [7]}}, "bad": {"label": "Go", "pc": ["on start: next = checkpoint + 1", "for each block b from next:", "  checkpoint = b                    # moved BEFORE the data", "  # a crash here: the mark claims rows that were never written", "  for each event e in b:", "    write row", "# no keys: append row             # a replay adds a second copy", "# fix: rows keyed by (height, logIndex), checkpoint after the data"], "real": ["// IndexBlockCheckpointFirst is the trap: the mark moves before the data.", "func (s *Store) IndexBlockCheckpointFirst(b int, crash bool) error {", "\ts.checkpoint = b", "\tif crash {", "\t\treturn errCrash // the rows of b are never written", "\t}", "\tfor _, k := range eventsOf(b) {", "\t\ts.rows[k] = \"transfer\"", "\t}", "\treturn nil", "}", "", "// IndexBlockAppend is the other trap: rows with no event key.", "func (s *Store) IndexBlockAppend(b int, crash bool) error {", "\ts.appended = append(s.appended, eventsOf(b)...)", "\tif crash {", "\t\treturn errCrash", "\t}", "\ts.checkpoint = b", "\treturn nil", "}", "", "next = s.checkpoint + 1"], "map": {"1": [23], "2": [2], "3": [3], "4": [4, 5], "5": [7], "6": [8], "7": [13, 14, 15]}}};
+
+const BL=[9505,9506,9507,9508,9509];
+const r=(b,l,st)=>[b+" · log "+l,st];
+const steps={
+"good":[
+ {pc:[1, 2],t:"Read block 9506",b:"The indexer asks the chain node for block 9506. It decodes two transfer events from it.",w:"The checkpoint says 9505: everything up to 9505 is safely written.",bk:{9505:"done",9506:"cur"},idx:"running",ck:9505,rows:[]},
+ {pc:[3, 4],t:"Write the rows, keyed",b:"Each row is keyed by the event itself: block height plus log index. 9506 log 0 and 9506 log 1 land in StarRocks.",w:"The key names the event, not the moment it was written. Writing it twice gives the same row.",bk:{9505:"done",9506:"cur"},idx:"running",ck:9505,rows:[r(9506,0,"new"),r(9506,1,"new")]},
+ {pc:[9],t:"Then the checkpoint",b:"Only after the rows are stored does the indexer write checkpoint 9506.",w:"Data first, checkpoint second. The checkpoint never claims more than the data holds.",bk:{9505:"done",9506:"done"},idx:"running",ck:9506,ckNew:true,rows:[r(9506,0,"ok"),r(9506,1,"ok")]},
+ {pc:[2, 3, 4],t:"Block 9507",b:"The indexer reads block 9507 and writes its two rows.",w:"The checkpoint still says 9506. It is about to be written.",bk:{9505:"done",9506:"done",9507:"cur"},idx:"running",ck:9506,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"new"),r(9507,1,"new")]},
+ {pc:[8, 9],t:"Crash before the checkpoint",b:"The process is killed after the rows of 9507 are written but before checkpoint 9507.",w:"Rows and checkpoint now disagree. That is fine, as long as the rows are keyed.",bk:{9505:"done",9506:"done",9507:"cur"},idx:"crashed",ck:9506,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"ok"),r(9507,1,"ok")]},
+ {pc:[1],t:"Restart from the checkpoint",b:"On restart the rule is: next block = checkpoint + 1. The checkpoint says 9506, so next = 9507, and the indexer asks the node for block 9507 again, though its rows are already stored.",w:"Delivery is at-least-once: block 9507 is processed a second time.",bk:{9505:"done",9506:"done",9507:"cur"},idx:"restarted",ck:9506,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"ok"),r(9507,1,"ok")]},
+ {pc:[4, 9],t:"Same keys, overwritten",b:"The replay writes (9507, log 0) and (9507, log 1) again. The table is keyed by block and log index, and both keys already exist, so each write replaces its row. Still 4 rows, not 6. Only then is checkpoint 9507 written.",w:"At-least-once delivery plus idempotent writes gives an exactly-once effect.",bk:{9505:"done",9506:"done",9507:"done"},idx:"running",ck:9507,ckNew:true,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"over"),r(9507,1,"over")]},
+ {pc:[5, 6, 7, 10],t:"The failure that matters",b:"Block 9507 also triggered a large-transfer alert to a customer. The replay sent it again. An alert is not a keyed row, so it doubled.",w:"Every side effect outside the database needs its own deduplication by event id, here 9507 log 1.",bk:{9505:"done",9506:"done",9507:"done"},idx:"running",ck:9507,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"ok"),r(9507,1,"ok")],alerts:["alert: 9507 log 1","alert: 9507 log 1 (again)"],fail:true}
+],
+"bad":[
+ {pc:[2, 3],t:"Checkpoint first",b:"This indexer reads block 9507 and writes checkpoint 9507 before it writes the rows.",w:"It looks harmless. The two writes are a moment apart.",bk:{9505:"done",9506:"done",9507:"cur"},idx:"running",ck:9507,ckNew:true,rows:[r(9506,0,"ok"),r(9506,1,"ok")]},
+ {pc:[4, 6],t:"Crash between the two",b:"The process is killed after the checkpoint and before the rows of 9507.",w:"The checkpoint now claims data that was never written.",bk:{9505:"done",9506:"done",9507:"cur"},idx:"crashed",ck:9507,rows:[r(9506,0,"ok"),r(9506,1,"ok")]},
+ {pc:[1],t:"Restart skips the block",b:"Same restart rule: next = checkpoint + 1. The checkpoint says 9507, so next = 9508. Block 9507 is never asked for again.",w:"Nothing is replayed, because the checkpoint says it is done.",bk:{9505:"done",9506:"done",9507:"skip",9508:"cur"},idx:"restarted",ck:9507,rows:[r(9506,0,"ok"),r(9506,1,"ok")]},
+ {pc:[4, 1],t:"The failure that matters",b:"Block 9508 is written and checkpointed. The two transfers of 9507 are missing forever. No error was logged and every dashboard is green.",w:"A silent hole. Only a reconciliation of row counts against the chain finds it. Fix: write the data first.",bk:{9505:"done",9506:"done",9507:"skip",9508:"done"},idx:"running",ck:9508,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"gone"),r(9507,1,"gone"),r(9508,0,"ok")],fail:true},
+ {pc:[7],t:"The other trap: rows without keys",b:"An indexer that appends rows with no event key replays block 9507 after a crash. The rows land twice.",w:"Now the sum of 9507 is doubled. Key every row by block height plus log index so a replay overwrites.",bk:{9505:"done",9506:"done",9507:"done"},idx:"running",ck:9507,rows:[r(9506,0,"ok"),r(9506,1,"ok"),r(9507,0,"ok"),r(9507,1,"ok"),r(9507,0,"dup"),r(9507,1,"dup")],fail:true}
+]};
+const FILL={done:"var(--ok)",cur:"var(--wait)",skip:"var(--fail)",ok:"var(--ok)",new:"var(--wait)",over:"var(--undo)",gone:"var(--panel)",dup:"var(--fail)",running:"var(--coord)",restarted:"var(--wait)",crashed:"var(--fail)"};
+function draw(s){
+  let o=T(20,46,"chain node",{a:"start"});
+  BL.forEach((b,k)=>{const st=s.bk[b];const f=st?FILL[st]:"var(--line)";const x=150+k*146;
+    o+=B(x,20,130,44,f)+T(x+65,40,"block "+b,{c:ink(f)})+T(x+65,56,st==="skip"?"skipped":st==="cur"?"reading":st==="done"?"done":"",{c:ink(f),w:400,s:12});});
+  const fi=FILL[s.idx];
+  o+=B(20,110,200,60,fi,10)+T(120,136,"Indexer",{c:"#fff",s:16})+T(120,156,s.idx,{c:"#fff",w:400,s:13});
+  o+=(s.ckNew?M:x=>x)(chip(20,200,200,50,s.fail&&s.bk[9507]==="skip"?"var(--fail)":"var(--svc)","checkpoint "+s.ck,"how far it got"));
+  o+=B(270,96,610,220,"var(--panel)",10,'stroke="var(--line)" stroke-width="2"')+T(290,120,"StarRocks: transfers, keyed by block and log",{a:"start",c:"var(--muted)"});
+  s.rows.forEach(([k,st],j)=>{const x=290+(j%2)*290,y=134+Math.floor(j/2)*56;const f=FILL[st];
+    o+=M(B(x,y,270,44,f,6,st==="gone"?'stroke="var(--fail)" stroke-width="2" stroke-dasharray="6 4"':"")+T(x+135,y+20,k,{c:ink(f)})+T(x+135,y+36,st==="over"?"overwritten, not doubled":st==="gone"?"never written":st==="dup"?"duplicate":st==="new"?"writing":"stored",{c:st==="gone"?"var(--fail)":ink(f),w:400,s:12}));});
+  if(s.alerts)s.alerts.forEach((a,k)=>o+=M(chip(20+k*230,330,215,36,k?"var(--fail)":"var(--coord)",a)));
+  if(s.idx==="crashed")o+=M(T(120,96,"crash",{c:"var(--fail)",s:16}));
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

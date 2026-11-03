@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt, RAG or fine-tune</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Prompt, RAG or fine-tune: where the change lives</h1>
+  <p class="lede">Three needs arrive for one answering agent: answer rules, table schemas that change every week, and a fixed report format. Press <b>Next</b> and route each one down the tree. Then open the second tab and watch a team train facts into the weights.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="route">Route three needs</button>
+    <button role="tab" aria-selected="false" data-mode="facts">The failure: facts in the weights</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A decision tree that routes three needs to prompt, retrieval or fine-tune, and the model box showing where each change lives</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-prompt-rag-finetune/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">the path this need takes</span>
+    <span style="--c:var(--coord)">prompt: in the context, per call</span>
+    <span style="--c:var(--svc)">RAG: fetched at run time</span>
+    <span style="--c:var(--undo)">fine-tune: in the weights</span>
+    <span style="--c:var(--fail)">stale or made-up</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A Claude Code skill carries the answer rules: a prompt kept in git. A knowledge base over runbooks and table docs carries the facts through retrieval. A LoRA (low-rank adaptation) adapter on a small model fits a fixed JSON (JavaScript Object Notation) report shape when the big model is too slow.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Prompt first: minutes to try, fully reversible. RAG (retrieval-augmented generation) for facts that change or are private. Fine-tune last, only for style, format or a narrow task, and keep the eval set from before the fine-tune to prove nothing got worse.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Prompt</th><th>RAG</th><th>Fine-tune (LoRA)</th></tr>
+      <tr><td>Changes</td><td>The context of each call</td><td>The context, with fetched facts</td><td>The weights, or a small adapter</td></tr>
+      <tr><td>Time to try</td><td>Minutes</td><td>Days: build the index</td><td>Days to weeks: data and training</td></tr>
+      <tr><td>Undo</td><td>Edit the text</td><td>Change the source</td><td>Retrain or drop the adapter</td></tr>
+      <tr><td>Right for</td><td>Rules, format, examples</td><td>Facts that change or are private</td><td>Style, fixed shape, small model matching a big one</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Prompt first, RAG for facts, fine-tune last and only for style or format."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={
+"all": {
+"pc": [
+"def route(need):",
+"  if need is a rule, a format or an example:",
+"    return \"prompt\"                     # a skill in git",
+"  if need changes often or is private:",
+"    return \"rag\"                        # fetch at run time",
+"  if examples >= 1000 and shape is fixed:",
+"    return \"fine-tune (LoRA)\"           # shape, never facts",
+"  return \"prompt\"",
+"full = d * d; lora = 2 * d * rank      # 16.8M vs 131k: 0.8%",
+"answer = weights[topic]                # frozen on Monday",
+"if topic not retrieved: say not found",
+"answer = schema_today[topic]           # fetched, with its source",
+"score the golden set before and after  # 44 -> 47 of 50"
+],
+"real": [
+"def route(need):",
+"    \"\"\"The decision tree, in the order the lesson walks it.\"\"\"",
+"    if need[\"is_rule\"] or need[\"is_format_example\"]:",
+"        return \"prompt\"                  # a skill in git: minutes, reversible",
+"    if need[\"changes_often\"] or need[\"is_private\"]:",
+"        return \"rag\"                     # fetch it at run time",
+"    if need[\"examples\"] >= 1000 and need[\"fixed_shape\"]:",
+"        return \"fine-tune (LoRA)\"        # shape and style, never facts",
+"    return \"prompt\"",
+"",
+"def lora_size(d, rank):",
+"    \"\"\"Trainable numbers for one d x d weight: full matrix versus A (d x r) plus B (r x d).\"\"\"",
+"    return d * d, 2 * d * rank",
+"",
+"def answer_from_weights(topic):",
+"    return weights[topic]                            # Monday's name, forever",
+"",
+"",
+"def answer_from_rag(topic):",
+"    if topic in not_retrieved:",
+"        return \"not found\"                           # the chunk was not in the top results",
+"    return wednesday[topic]                          # fetched today, with its source",
+"",
+"before = sum(answer_from_weights(t) == golden[t] for t in TOPICS)",
+"after = sum(answer_from_rag(t) == golden[t] for t in TOPICS)"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3
+],
+"3": [
+4
+],
+"4": [
+5
+],
+"5": [
+6
+],
+"6": [
+7
+],
+"7": [
+8
+],
+"8": [
+9
+],
+"9": [
+13
+],
+"10": [
+16
+],
+"11": [
+20,
+21
+],
+"12": [
+22
+],
+"13": [
+24,
+25
+]
+}
+}
+};
+const N={q1:[20,50,300,52,"Rule, format or example?"],q2:[20,150,300,52,"Fact that changes or is private?"],q3:[20,250,300,52,"Thousands of examples, fixed shape?"],
+ p:[380,50,180,52,"Prompt (a skill)"],r:[380,150,180,52,"RAG: fetch it"],f:[380,250,180,52,"Fine-tune: LoRA"]};
+const FILL={p:"var(--coord)",r:"var(--svc)",f:"var(--undo)"};
+const E=[["q1","p","yes"],["q1","q2","no"],["q2","r","yes"],["q2","q3","no"],["q3","f","yes"]];
+const steps={
+"route":[
+ {t:"Three needs, one agent",b:"Need 1: answer rules, like \"full addresses\" and \"tokens are not dollars\". Need 2: table schemas that change every week. Need 3: a fixed JSON report, with thousands of clean examples, on a small fast model.",w:"Each need belongs in a different place. The tree asks three questions in order.",need:"Three needs to route",path:[],pc:[1]},
+ {t:"Need 1: answer rules",b:"The first check: is it a rule, a format or an example? \"Full addresses\" is a rule, so yes. route() returns prompt at once: a skill kept in git.",w:"A prompt change takes minutes and is fully reversible.",need:"Need 1: answer rules",path:["q1","p"],ctx:["Skill: full addresses,","tokens are not dollars"],pc:[1, 2, 3]},
+ {t:"Need 2: table schemas",b:"First check: a rule? No. Second check: does it change often, or is it private? Schemas change every week, so yes: route() returns rag. Retrieval fetches today's schema at run time and puts it in the prompt.",w:"RAG keeps facts fresh without touching the model.",need:"Need 2: table schemas",path:["q1","q2","r"],ctx:["Skill: the rules","Fetched: today's schema"],pc:[4, 5]},
+ {t:"Need 3: a fixed report shape",b:"Not a rule, not a changing fact. Third check: at least 1,000 examples and a fixed shape? It has 5,000 clean examples of one JSON shape, so yes: route() returns fine-tune (LoRA).",w:"Fine-tune for shape and style, never for facts.",need:"Need 3: fixed JSON report",path:["q1","q2","q3","f"],ctx:["Skill: the rules","Fetched: today's schema"],w8:"adapter",pc:[6, 7]},
+ {t:"LoRA: a small adapter",b:"LoRA freezes the base weights and trains two thin matrices beside each one. For a 4096 by 4096 weight at rank 16: 2 x 4096 x 16 = 131,072 numbers instead of 16,777,216, which is 0.8%. Across all layers the adapter is megabytes.",w:"Cheap to train and swap. The base stays the same for every other task.",need:"Need 3: fixed JSON report",path:["q1","q2","q3","f"],ctx:["Skill: the rules","Fetched: today's schema"],w8:"adapter",lora:1,pc:[9]},
+ {t:"Combine them",b:"The adapter gives the format. Retrieval gives the facts. The skill gives the rules. Each change lives where it can be undone fastest.",w:"These are not rivals. Most real systems use all three.",need:"All three, together",path:["q1","p","q2","r","q3","f"],ctx:["Skill: the rules","Fetched: today's schema"],w8:"adapter",ans:["Report in the fixed shape,","with today's table names"],ok:1,pc:[3, 5, 7]}
+],
+"facts":[
+ {t:"Monday: train the facts in",b:"A team fine-tunes the table list into the weights, skipping the RAG branch. The model now answers \"where do swaps live\" from memory: robinhood.dex_swaps.",w:"It looks like a shortcut: no retrieval, no index.",need:"Facts trained into weights",path:["q1","q2","r"],wrongpath:1,w8:"table list, Monday",pc:[10]},
+ {t:"Wednesday: a table is renamed",b:"On Wednesday six tables are renamed, the swaps table among them: it is now robinhood.core_dex_swaps. The weights still hold Monday's names.",w:"Facts in the weights freeze on the day of training.",need:"Table renamed Wednesday",path:[],w8:"table list, Monday",stale:1,pc:[10]},
+ {t:"The failure: a confident old answer",b:"Asked where swaps live, the model gives Monday's table name with full confidence. Asked about a table it never saw, it guesses a name that looks right.",w:"Fine-tuning facts freezes them, and the model still fills gaps with guesses.",need:"Where do swaps live?",path:[],w8:"table list, Monday",stale:1,ans:["Monday's table name","plus a guessed one"],bad:1,pc:[10]},
+ {t:"The fix: facts through RAG",b:"The facts come out of the training data. On every call retrieval looks up today's schema: if the chunk is not in the top results it says not found, otherwise it answers robinhood.core_dex_swaps with its source.",w:"Facts through retrieval, behaviour through prompts, fine-tune only for shape.",need:"Where do swaps live?",path:["q1","q2","r"],ctx:["Fetched: today's schema","with its source"],ans:["Wednesday's table name,","cited from the schema doc"],ok:1,pc:[11, 12]},
+ {t:"Prove it with the old eval set",b:"The same 50-question golden set runs on both setups. Facts in the weights: 44 of 50 right (88%), the six renamed tables are wrong. Facts through RAG: 47 of 50 (94%), three questions miss in retrieval and say not found.",w:"Keep the eval set from before any training. It is the only proof the change helped.",need:"Same golden set, before and after",path:[],bars:[.88,.94],pc:[13]}
+]};
+function mid(n,side){const [x,y,w,h]=N[n];return side==="r"?[x+w,y+h/2]:side==="b"?[x+w/2,y+h]:side==="t"?[x+w/2,y]:[x,y+h/2];}
+function scene(s){
+  let h=T(20,28,s.need,s.bad?"var(--fail)":"var(--fg)",16,"start",1);
+  const on=k=>s.path.includes(k);
+  E.forEach(([a,b,l])=>{const hit=on(a)&&on(b);const down=b.startsWith("q");
+    const [x1,y1]=down?mid(a,"b"):mid(a,"r");const [x2,y2]=down?mid(b,"t"):mid(b,"l");
+    const c=hit?(s.wrongpath?"var(--fail)":"var(--wait)"):"var(--line)";
+    h+=A(x1,y1,x2,y2-(down?2:0),c,l);});
+  for(const k in N){const [x,y,w,hh,t]=N[k];const q=k.startsWith("q");
+    if(q)h+=O(x,y,w,hh,on(k)?"var(--wait)":"var(--line)",t,14);
+    else if(s.wrongpath&&k==="r")h+=O(x,y,w,hh,"var(--fail)",t,14,true);
+    else h+=R(x,y,w,hh,on(k)?FILL[k]:"none",t,on(k)?"#fff":"var(--muted)",14,on(k)?"":'stroke="var(--line)" stroke-width="2"');}
+  if(s.wrongpath)h+=T(470,226,"skipped: facts went to training","var(--fail)",13,"middle",1);
+  h+=T(600,36,"The model, for one call",null,14,"start",1);
+  h+=O(600,46,280,104,"var(--coord)");h+=T(612,66,"Context (changes per call)","var(--coord)",13,"start",1);
+  (s.ctx||[]).forEach((l,k)=>h+=T(612,92+k*22,l,"var(--fg)",14));
+  h+=O(600,160,280,90,s.stale?"var(--fail)":"var(--undo)");h+=T(612,180,"Weights (frozen after training)",s.stale?"var(--fail)":"var(--undo)",13,"start",1);
+  if(s.w8==="adapter")h+=R(612,192,s.lora?120:150,44,"var(--undo)",s.lora?"adapter: MBs":"LoRA adapter","#fff",13);
+  else if(s.w8)h+=R(612,192,256,44,s.stale?"var(--fail)":"var(--undo)",s.w8,"#fff",13);
+  if(s.lora)h+=R(744,192,124,44,"var(--line)","base: frozen","var(--fg)",13);
+  if(s.ans){h+=O(600,262,280,72,s.bad?"var(--fail)":"var(--ok)");s.ans.forEach((l,k)=>h+=T(612,290+k*24,l,s.bad?"var(--fail)":"var(--fg)",14,"start",1));}
+  if(s.bars){h+=O(600,262,280,80);[["before",s.bars[0]],["after",s.bars[1]]].forEach(([l,v],k)=>{const y=274+k*32;h+=T(612,y+18,l,null,13)+`<rect x="670" y="${y}" width="${180*v}" height="22" rx="4" fill="${k?"var(--ok)":"var(--line)"}"/>`+T(676,y+16,Math.round(v*100)+"%",k?"#fff":"var(--fg)",13,"start",1);});}
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

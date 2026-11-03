@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AuthN versus AuthZ</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Authentication versus authorization</h1>
+  <p class="lede">A graph validator calls an API with a service token. The API asks two different questions: who are you, and may you do this. Press <b>Next</b>, then open the second tab to see what happens when an API asks only the first.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="both">Two checks</button>
+    <button role="tab" aria-selected="false" data-mode="broken">What goes wrong</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of an API checking who a caller is, then what it may do</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-authn-vs-authz/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">proof held, or being checked</span>
+    <span style="--c:var(--ok)">checked and allowed</span>
+    <span style="--c:var(--fail)">refused, or a hole</span>
+    <span style="--c:var(--line)">not asked</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a multi-tenant API</h2>
+      <p>Every query filters by the tenant in the token, never by a tenant id from the request. One identity per service, each with its own narrow role.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: a code review</h2>
+      <p>For every new endpoint, ask who may call it and on whose data. A test that calls it with another tenant's id must get 403 or 404.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Authentication (AuthN)</th><th>Authorization (AuthZ)</th></tr>
+      <tr><td>Question</td><td>Who are you?</td><td>May you do this, on this resource?</td></tr>
+      <tr><td>Input</td><td>Password, token or certificate</td><td>Identity plus action plus resource</td></tr>
+      <tr><td>Fails with</td><td>401: prove who you are</td><td>403: known, but no</td></tr>
+      <tr><td>Classic hole</td><td>Accepting a token with no expiry</td><td>Checking the token but not the resource owner</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Authentication knows you, authorization allows you, and every endpoint checks both, per resource."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"both":[["v", "Graph validator", "coord"], ["a", "API", "svc"], ["z", "Policy (roles)", "svc"], ["r", "Lane settings", "svc"]],
+"broken":[["u", "Analyst Ana", "coord"], ["a", "API", "svc"], ["z", "Tenant check", "svc"], ["d", "Case store", "svc"]]
+};
+const code={
+"both": {
+"label": "Go",
+"pc": [
+"tokens = {tok-validator: graph-validator, role metrics:read}",
+"on each request r:",
+"  token = r.header Authorization, minus \"Bearer \"",
+"  id = tokens[token]            # AuthN: in real life, signature + expiry",
+"  if id is missing:",
+"    return 401 \"prove who you are\"   # AuthZ is never asked",
+"  action = lanes:write if r.method is PUT, else metrics:read",
+"  if id.role != action:          # AuthZ: may this identity do this?",
+"    return 403 \"known, but no\"",
+"  return 200 with the metrics"
+],
+"real": [
+"// The token store stands in for a signature check: a known token is valid.",
+"var tokens = map[string]identity{",
+"\t\"tok-validator\": {name: \"graph-validator\", role: \"metrics:read\"},",
+"\t\"tok-ana\":       {name: \"ana\", role: \"analyst\", tenant: \"A\"},",
+"}",
+"",
+"// AuthN: who are you? No valid token means 401.",
+"func authenticate(r *http.Request) (identity, bool) {",
+"\ttok := strings.TrimPrefix(r.Header.Get(\"Authorization\"), \"Bearer \")",
+"\tid, ok := tokens[tok]",
+"\treturn id, ok",
+"}",
+"",
+"// AuthZ: may this identity do this action? A role lists its actions.",
+"func allowed(id identity, action string) bool {",
+"\treturn id.role == action",
+"}",
+"",
+"func lanes(w http.ResponseWriter, r *http.Request) {",
+"\tid, ok := authenticate(r)",
+"\tif !ok {",
+"\t\thttp.Error(w, \"prove who you are\", http.StatusUnauthorized) // 401",
+"\t\treturn",
+"\t}",
+"\taction := \"metrics:read\"",
+"\tif r.Method == http.MethodPut {",
+"\t\taction = \"lanes:write\"",
+"\t}",
+"\tif !allowed(id, action) {",
+"\t\thttp.Error(w, \"known, but no\", http.StatusForbidden) // 403",
+"\t\treturn",
+"\t}",
+"\tfmt.Fprint(w, \"metrics rows\")",
+"}"
+],
+"map": {
+"1": [
+1,
+2,
+3,
+4,
+5
+],
+"2": [
+19
+],
+"3": [
+9,
+20
+],
+"4": [
+8,
+10,
+11
+],
+"5": [
+21
+],
+"6": [
+22,
+23
+],
+"7": [
+25,
+26,
+27,
+28
+],
+"8": [
+15,
+16,
+29
+],
+"9": [
+30,
+31
+],
+"10": [
+33
+]
+}
+},
+"broken": {
+"label": "Go",
+"pc": [
+"cases = {101: tenant A, 202: tenant B}",
+"on GET /cases/{id} with a token:",
+"  who = authenticate(token)      # 401 if missing",
+"  # broken version:",
+"  row = cases[id]                # id was typed by the caller",
+"  return 200 row                 # nobody asked whose case it is",
+"  # fixed version:",
+"  row = cases where id = {id} and tenant = who.tenant",
+"  if no row: return 404 \"not found\"",
+"  return 200 row"
+],
+"real": [
+"// Cases belong to tenants.",
+"var cases = map[string]string{\"101\": \"A\", \"202\": \"B\"}",
+"",
+"// Broken: checks the token, then trusts the id in the URL.",
+"func casesBroken(w http.ResponseWriter, r *http.Request) {",
+"\tif _, ok := authenticate(r); !ok {",
+"\t\thttp.Error(w, \"prove who you are\", http.StatusUnauthorized)",
+"\t\treturn",
+"\t}",
+"\tcaseID := strings.TrimPrefix(r.URL.Path, \"/cases/\")",
+"\tfmt.Fprintf(w, \"case %s of tenant %s\", caseID, cases[caseID]) // no AuthZ",
+"}",
+"",
+"// Fixed: the tenant comes from the token, never from the request.",
+"func casesFixed(w http.ResponseWriter, r *http.Request) {",
+"\tid, ok := authenticate(r)",
+"\tif !ok {",
+"\t\thttp.Error(w, \"prove who you are\", http.StatusUnauthorized)",
+"\t\treturn",
+"\t}",
+"\tcaseID := strings.TrimPrefix(r.URL.Path, \"/cases/\")",
+"\tif cases[caseID] != id.tenant { // WHERE case = ? AND tenant = token.tenant",
+"\t\thttp.Error(w, \"not found\", http.StatusNotFound)",
+"\t\treturn",
+"\t}",
+"\tfmt.Fprintf(w, \"case %s of tenant %s\", caseID, cases[caseID])",
+"}"
+],
+"map": {
+"1": [
+1,
+2
+],
+"2": [
+5
+],
+"3": [
+6,
+7,
+8
+],
+"4": [
+4,
+5
+],
+"5": [
+10
+],
+"6": [
+11
+],
+"7": [
+14,
+15
+],
+"8": [
+16,
+21,
+22
+],
+"9": [
+23,
+24
+],
+"10": [
+26
+]
+}
+}
+};
+const steps={
+"both":[
+ {"t": "Start: a service token", "b": "The graph validator holds a service token. The token names it graph-validator. Its role allows reading metrics, nothing else.", "w": "Identity and rights are two different facts. The token carries the first. The policy holds the second.", "m": [], "st": {"v": ["token, role: read", "wait"]}, "pc": [1]},
+ {"t": "Present the proof", "b": "The validator calls GET /metrics and sends its token in the request header.", "w": "The proof travels with every call. The API checks it every time, not only at login.", "m": [["v", "a", 110, "GET /metrics + token"]], "st": {"v": ["token, role: read", "wait"], "a": ["checking token", "wait"]}, "pc": [2, 3]},
+ {"t": "AuthN: who are you", "b": "The API strips \"Bearer \" from the header and looks up tok-validator. In a real API this is the signature and expiry check. The lookup finds graph-validator, with role metrics:read. AuthN passes.", "w": "AuthN (authentication) answers one question: who is this. It says nothing yet about what the caller may do.", "m": [["v", "a", 110, "GET /metrics + token"], ["band", 0, 155, "signature ok, not expired: this is graph-validator", "ok"]], "st": {"v": ["token, role: read", "wait"], "a": ["who: validator", "ok"]}, "pc": [3, 4]},
+ {"t": "AuthZ: may it read metrics", "b": "GET /metrics needs the action metrics:read. The policy compares the role metrics:read with the action metrics:read. They are equal, so the answer is yes.", "w": "AuthZ (authorization) answers the second question: may this identity do this action on this resource.", "m": [["a", "z", 120, "validator: read metrics?"], ["z", "a", 150, "yes, role allows"]], "st": {"a": ["who: validator", "ok"], "z": ["read: allowed", "ok"]}, "pc": [7, 8]},
+ {"t": "200: the data comes back", "b": "The API reads the metrics and returns them with 200.", "w": "Both checks passed, so the call succeeds.", "m": [["a", "r", 120, "read metrics"], ["r", "a", 150, "rows"], ["a", "v", 185, "200, metrics"]], "st": {"v": ["got metrics", "ok"], "a": ["who: validator", "ok"], "z": ["read: allowed", "ok"], "r": ["read", "ok"]}, "pc": [10]},
+ {"t": "403: known, but no", "b": "PUT /lanes/b needs the action lanes:write. AuthN passes again: the token is still valid. The policy compares the role metrics:read with lanes:write. They differ, so the API answers 403.", "w": "403 means: I know who you are, and the answer is no. The lane setting is untouched.", "m": [["v", "a", 110, "PUT /lanes/b + token"], ["a", "z", 145, "validator: change lane?"], ["z", "a", 175, "no, read only", "fail"], ["a", "v", 210, "403 Forbidden", "fail"]], "st": {"v": ["refused", "fail"], "a": ["who: validator", "ok"], "z": ["change: denied", "fail"], "r": ["untouched", "ok"]}, "pc": [7, 8, 9]},
+ {"t": "401: prove who you are", "b": "The header is empty, so the lookup of an empty token finds nothing. The handler returns 401 on the spot. The role check below it never runs, because there is no identity to check.", "w": "401 means: I do not know who you are. The API stops before AuthZ, because there is no identity to check.", "m": [["v", "a", 110, "PUT /lanes/b, no token", "fail"], ["band", 0, 155, "no proof: authentication fails, policy never asked", "fail"], ["a", "v", 200, "401 Unauthorized", "fail"]], "st": {"v": ["unknown caller", "fail"], "a": ["who: unknown", "fail"], "z": ["not asked", "idle"], "r": ["untouched", "ok"]}, "pc": [3, 4, 5, 6]}
+],
+"broken":[
+ {"t": "Ana signs in", "b": "Ana works for tenant A. Ana signs in, and the token says tenant: A.", "w": "The token tells the API who Ana is and which tenant Ana belongs to.", "m": [], "st": {"u": ["token: tenant A", "wait"]}, "pc": [3]},
+ {"t": "Ana reads a case of tenant A", "b": "Ana opens case 101. It belongs to tenant A. The API returns it.", "w": "Nothing wrong yet. The id in the URL happens to belong to tenant A.", "m": [["u", "a", 110, "GET /cases/101"], ["a", "d", 145, "case 101"], ["d", "a", 175, "tenant A row"], ["a", "u", 210, "200, tenant A case"]], "st": {"u": ["token: tenant A", "wait"], "a": ["who: Ana", "ok"], "d": ["case 101, A", "ok"]}, "pc": [2, 3, 5, 6]},
+ {"t": "Ana changes the id", "b": "Ana edits the URL to case 202. Case 202 belongs to tenant B, another customer.", "w": "Anyone can type a number into a URL. The API must never trust it.", "m": [["u", "a", 110, "GET /cases/202", "fail"]], "st": {"u": ["edited the URL", "fail"], "a": ["who: Ana", "ok"]}, "ac": {"u": "fail"}, "pc": [2, 5]},
+ {"t": "The API checks only the token", "b": "This handler checks the token, so AuthN passes. Then it reads cases[202] straight from the URL. That row belongs to tenant B. No line compares tenant B with Ana's tenant A.", "w": "This is broken access control, number one on the OWASP (Open Worldwide Application Security Project) list.", "m": [["u", "a", 110, "GET /cases/202", "fail"], ["band", 0, 150, "token valid: AuthN passes. No AuthZ check on the case", "fail"], ["a", "d", 190, "case 202"], ["d", "a", 220, "tenant B row", "fail"], ["a", "u", 255, "200, another customer's case", "fail"]], "st": {"u": ["sees tenant B", "fail"], "a": ["checked token only", "fail"], "z": ["skipped", "fail"], "d": ["case 202, B", "fail"]}, "ac": {"u": "fail"}, "pc": [3, 4, 5, 6]},
+ {"t": "The fix: filter by the token", "b": "The fixed handler compares the case's tenant with the tenant in the token: B against A. They differ, so it answers 404, as if the case did not exist. The id from the URL can no longer cross a customer line.", "w": "The tenant comes from the proof, not from the URL. A typed number can no longer cross a customer line.", "m": [["u", "a", 110, "GET /cases/202", "fail"], ["a", "z", 145, "tenant = A, from token"], ["z", "d", 175, "case 202 AND tenant A"], ["d", "a", 205, "no row"], ["a", "u", 240, "404 Not found"]], "st": {"u": ["nothing leaked", "ok"], "a": ["who: Ana", "ok"], "z": ["tenant A only", "ok"], "d": ["no row", "ok"]}, "pc": [7, 8, 9]},
+ {"t": "The rule: every endpoint, every resource", "b": "The same check runs on list, export and delete, not only on read. A review asks one question for every new endpoint.", "w": "Who may call this, on whose data? If the answer is not written in the code, the endpoint leaks.", "m": [["band", 0, 130, "every endpoint: AuthN, then AuthZ on this resource", "ok"], ["band", 0, 180, "review question: who may call this, on whose data?"]], "st": {"u": ["token: tenant A", "wait"], "a": ["AuthN + AuthZ", "ok"], "z": ["per resource", "ok"], "d": ["tenant A only", "ok"]}, "pc": [3, 8]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

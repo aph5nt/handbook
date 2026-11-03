@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Back-pressure and flow control</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+svg text{paint-order:stroke}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:8px 0}
+#codetabs button[aria-pressed="true"]{background:var(--coord);color:#fff;border-color:var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Back-pressure and flow control</h1>
+  <p class="lede">A queue holds 5,000 slow, heavy jobs. Three workers wait. Who decides how many jobs each worker holds at once? Press <b>Next</b> to watch a push with no limit crash a worker, then the same queue with a prefetch limit, then a sync that pulls pages.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="push">Push, no limit</button>
+    <button role="tab" aria-selected="false" data-mode="prefetch">Prefetch limit</button>
+    <button role="tab" aria-selected="false" data-mode="pull">Pull pages: graph sync</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene of a broker and workers with memory bars</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story: <code>handbook/code/04-back-pressure/main.go</code> (<code>go run .</code>). <span id="codenote"></span></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">broker or source</span>
+    <span style="--c:var(--line)">idle</span>
+    <span style="--c:var(--wait)">working, memory in use</span>
+    <span style="--c:var(--ok)">healthy</span>
+    <span style="--c:var(--fail)">out of memory, crashed</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it in RabbitMQ</h2>
+      <p>Set a prefetch count: at most N unacknowledged messages per worker. Prefetch 1 for slow, heavy jobs. Around 100 for tiny messages. With no limit, one worker can take the whole queue.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it in Kafka and syncs</h2>
+      <p>Kafka consumers pull, so the pace is natural and overload shows up as consumer lag. Alert on lag, not only on errors, and scale consumers up to the partition count. A sync daemon that pulls the next page only after the last one committed gets the same safety.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Push, no limit</th><th>Prefetch or pull</th></tr>
+      <tr><td>Who sets the pace</td><td>The broker</td><td>The consumer</td></tr>
+      <tr><td>Memory in a worker</td><td>Grows with the queue</td><td>Bounded by the limit or the page</td></tr>
+      <tr><td>Overload shows as</td><td>A crash, late and sudden</td><td>Lag that grows, early and visible</td></tr>
+      <tr><td>Load spread</td><td>The first worker takes everything</td><td>Every worker gets its share</td></tr>
+      <tr><td>When producers always win</td><td colspan="2">Shed load at the producer: sample, aggregate, or reject with a clear error</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The consumer sets the pace. In Kafka that is pull and visible lag, in RabbitMQ that is a prefetch limit."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const C={idle:["var(--line)","var(--fg)"],busy:["var(--wait)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],main:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],undo:["var(--undo)","#fff"],off:["none","var(--muted)"]};
+const col=st=>st==="idle"?"var(--muted)":(C[st]||[ "var(--fg)"])[0];
+function box(x,y,w,h,st,label,sub){const [f,t]=C[st]||C.idle;const cx=x+w/2,cy=y+h/2;
+  return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="5 4"/><text x="${cx}" y="${sub?cy-3:cy+6}" font-size="16" font-weight="700" fill="${t}">${label}</text>`+(sub?`<text x="${cx}" y="${cy+17}" font-size="13" fill="${t}">${sub}</text>`:"");}
+function arrow(x1,y1,x2,y2,label,st,dash){const c=st?col(st):"var(--fg)";
+  return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`+(label?`<rect x="${(x1+x2)/2-String(label).length*4.1-6}" y="${(y1+y2)/2-11}" width="${String(label).length*8.2+12}" height="22" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="1"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+5}" font-size="14" font-weight="700" fill="${c}">${label}</text>`:"")+`</g>`;}
+function chip(x,y,w,label,st){const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="${x}" y="${y}" width="${w}" height="26" rx="13" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="4 3"/><text x="${x+w/2}" y="${y+18}" font-size="13" font-weight="700" fill="${t}">${label}</text></g>`;}
+function note(y,txt,st){if(!txt)return"";const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="60" y="${y}" width="780" height="32" rx="16" fill="${f}"/><text x="450" y="${y+22}" font-size="15" font-weight="700" fill="${t}">${txt}</text></g>`;}
+function gdraw(s,base){let h="";const N=Object.assign({},base||{},s.nd||{});
+  for(const k in N){const n=N[k];if(n)h+=box(n[0],n[1],n[2],n[3],n[4],n[5],n[6]);}
+  (s.ar||[]).forEach(a=>h+=arrow(...a));(s.ch||[]).forEach(c=>h+=chip(...c));
+  if(s.n)h+=note(s.n[2]||352,s.n[0],s.n[1]);return h;}
+function seq(A,s){const n=A.length,gap=860/n,X={};A.forEach((a,k)=>X[a[0]]=20+gap*k+gap/2);
+  const w=Math.min(gap-14,180);let h="";
+  A.forEach(a=>{const x=X[a[0]];h+=box(x-w/2,14,w,52,(s.ac&&s.ac[a[0]])||a[2]||"main",a[1],a[3]);
+    h+=`<line x1="${x}" y1="66" x2="${x}" y2="330" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  let y=98;(s.m||[]).forEach(m=>{
+    if(m[0]==="x"){h+=`<g class="msg"><rect x="20" y="${y-15}" width="860" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${y+4}" fill="var(--fail)" font-weight="700" font-size="14">${m[1]}</text></g>`;y+=34;return;}
+    const [f,t,l,st,d]=m;
+    if(f===t)h+=chip(X[f]-Math.min(gap/2-4,110),y-13,Math.min(gap-8,220),l,st||"idle");
+    else{const x1=X[f],x2=X[t],dir=x2>x1?1:-1;h+=arrow(x1+4*dir,y,x2-6*dir,y,l,st||"main",d);}
+    y+=34;});
+  for(const k in (s.st||{})){const [st,txt]=s.st[k];h+=chip(X[k]-w/2,340,w,txt,st);}
+  if(s.n)h+=note(380,s.n[0],s.n[1]);return h;}
+const WY=[20,130,240];
+const W=(a,b,c)=>[["Worker 1",...a],["Worker 2",...b],["Worker 3",...c]];
+const I=["idle, nothing to do",0,"idle"];
+const code={"push": {"label": "Go", "pc": ["broker, for each ready job:", "  w = next worker with room", "  if w's unacked count < its prefetch (0 = no limit):", "    push the job to w; unacked + 1", "worker:", "  hold pushed jobs in memory", "  process one; ack; unacked - 1", "  memory over the limit: crash", "broker, on a worker's crash:", "  its unacked jobs go back to the queue", "producers always faster than any consumers: shed load at the producer", "queue grows when arrivals beat finishes; more workers shrink it"], "real": ["// the broker gives what the prefetch allows", "func push(jobs, prefetch int) (held int) {", "\tif prefetch == 0 || prefetch > jobs {", "\t\treturn jobs // no limit: everything", "\t}", "\treturn prefetch", "}", "", "held := push(5000, 0)         // 5,000", "if held*jobMB > memoryMB {    // 10,000 MB > 8,000 MB", "\t// out of memory: 5,000 go back, then to worker 2", "\theld = push(5000, 0)", "}", "", "queue -= push(queue, 1) // prefetch 1: one each", "unacked-- // the worker acks: the check passes again", "queue += arrive - workers      // the queue absorbs the gap"], "map": {"1": [2], "2": [2], "3": [3], "4": [4, 6], "5": [9], "6": [9], "7": [16], "8": [10], "9": [11], "10": [12], "11": [17], "12": [17]}}, "prefetch": {"label": "Go", "pc": ["broker, for each ready job:", "  w = next worker with room", "  if w's unacked count < its prefetch (0 = no limit):", "    push the job to w; unacked + 1", "worker:", "  hold pushed jobs in memory", "  process one; ack; unacked - 1", "  memory over the limit: crash", "broker, on a worker's crash:", "  its unacked jobs go back to the queue", "producers always faster than any consumers: shed load at the producer", "queue grows when arrivals beat finishes; more workers shrink it"], "real": ["// the broker gives what the prefetch allows", "func push(jobs, prefetch int) (held int) {", "\tif prefetch == 0 || prefetch > jobs {", "\t\treturn jobs // no limit: everything", "\t}", "\treturn prefetch", "}", "", "held := push(5000, 0)         // 5,000", "if held*jobMB > memoryMB {    // 10,000 MB > 8,000 MB", "\t// out of memory: 5,000 go back, then to worker 2", "\theld = push(5000, 0)", "}", "", "queue -= push(queue, 1) // prefetch 1: one each", "unacked-- // the worker acks: the check passes again", "queue += arrive - workers      // the queue absorbs the gap"], "map": {"1": [2], "2": [2], "3": [3], "4": [4, 6], "5": [9], "6": [9], "7": [16], "8": [10], "9": [11], "10": [12], "11": [17], "12": [17]}}, "pull": {"label": "Go", "pc": ["sync loop:", "  page = read the next page from the warehouse", "  write page to the graph", "  wait for the commit", "  only then read the next page       # at most one page in memory", "commit slower: the loop runs less often", "  lag = new pages - pages done        # it grows on the dashboard", "  memory does not grow"], "real": ["// room for one page: that is the back-pressure", "inFlight := make(chan int, 1)", "", "for s := 0; s < minutes*60; s += commitSec {", "\tinFlight <- done // ask for a page only when there is room", "\t<-inFlight       // write the page and wait for the commit", "\tdone++", "}", "lag = minutes*newPages - done"], "map": {"1": [4], "2": [5], "3": [6], "4": [6], "5": [2, 5], "6": [4], "7": [9], "8": [2]}}};
+const steps={
+"push":[
+ {pc:[3, 4],t:"5,000 heavy jobs, no limit",b:"A RabbitMQ queue holds 5,000 slow, heavy jobs. The workers did not set a prefetch count, so the broker's check always says there is room: it may push as many as it likes.",w:"Without a limit, the broker decides how much each worker holds. The broker does not know the worker's memory.",q:["heavy-jobs","5,000 waiting","svc"],wk:W(["starting",0,"idle"],["starting",0,"idle"],["starting",0,"idle"]),ar:[]},
+ {pc:[3, 4],t:"Worker 1 gets everything",b:"Worker 1 connects a moment before the others. The check says room, every time. The broker pushes all 5,000 jobs to it. They sit unacknowledged in its memory.",w:"Workers 2 and 3 connect to an empty queue. They have nothing to do.",q:["heavy-jobs","0 waiting, 5,000 out","svc"],wk:W(["holds 5,000 jobs",1,"busy"],I,I),ar:[[0,"5,000 jobs","busy"]]},
+ {pc:[6, 8],t:"One worker, all the load",b:"Worker 1 can only work on one heavy job at a time. In this example each held job takes 2 MB, so 5,000 take 10,000 MB against a limit of 8,000 MB.",w:"The load is not spread. Three workers exist, one is drowning, two are idle.",q:["heavy-jobs","0 waiting, 5,000 out","svc"],wk:W(["memory filling",1,"busy"],I,I),ar:[]},
+ {pc:[8],t:"Out of memory",b:"10,000 is over 8,000, so worker 1 runs out of memory and crashes. Every job it held is unfinished.",w:"The overload was hidden until the process died. No lag graph warned anyone, because the queue looked empty.",q:["heavy-jobs","0 waiting, 5,000 out","svc"],wk:W(["out of memory, crashed",1,"fail"],I,I),ar:[],n:["The queue looked empty while one worker died","fail",380]},
+ {pc:[9, 10],t:"The crash moves on",b:"The broker's rule on a lost connection: its unacked jobs go back to the queue. All 5,000 return. Worker 2 is free, so the broker pushes all 5,000 to it. The crash moves on.",w:"The same overload jumps from worker to worker. The fix is a limit the consumer sets: the next tab.",q:["heavy-jobs","5,000 back, pushed again","busy"],wk:W(["restarting",0,"fail"],["holds 5,000 jobs",1,"busy"],I),ar:[[1,"5,000 jobs","fail"]],n:["Same crash, next worker","fail",380]}
+],
+"prefetch":[
+ {pc:[3],t:"Same jobs, prefetch 1",b:"Same 5,000 jobs. Each worker now sets a prefetch count of 1. The check: is this worker's unacked count below 1?",w:"The consumer, not the broker, now sets the pace.",q:["heavy-jobs","5,000 waiting","svc"],wk:W(["prefetch 1",0,"idle"],["prefetch 1",0,"idle"],["prefetch 1",0,"idle"]),ar:[]},
+ {pc:[3, 4],t:"One job each",b:"Each worker's count is 0, so each gets one job, and now its count is 1. The check fails for all three. The other 4,997 stay in the queue, where they cost workers nothing.",w:"Memory in each worker is bounded by one job.",q:["heavy-jobs","4,997 waiting","svc"],wk:W(["1 job in memory",0.1,"busy"],["1 job in memory",0.1,"busy"],["1 job in memory",0.1,"busy"]),ar:[[0,"1","busy"],[1,"1","busy"],[2,"1","busy"]]},
+ {pc:[7, 3],t:"Acknowledge, then the next",b:"Worker 1 finishes and acks, so its count drops to 0. Only then does the check pass and the broker send the next job.",w:"The load spreads by itself. A fast worker simply asks more often.",q:["heavy-jobs","4,990 waiting","svc"],wk:W(["1 job, memory flat",0.1,"ok"],["1 job, memory flat",0.1,"ok"],["1 job, memory flat",0.1,"ok"]),ar:[[0,"next","ok"],[1,"next","ok"],[2,"next","ok"]]},
+ {pc:[12],t:"The producer is faster",b:"Uploads arrive at 5 a minute. Three workers finish 3 a minute. The queue grows by 2 a minute, from 4,990 to 9,000 in about 2,005 minutes. The workers stay healthy.",w:"Back-pressure now shows as a growing queue, not a crash. An alert on queue depth or consumer lag fires early.",q:["heavy-jobs","9,000 waiting: lag alert","busy"],wk:W(["1 job, memory flat",0.1,"ok"],["1 job, memory flat",0.1,"ok"],["1 job, memory flat",0.1,"ok"]),ar:[],n:["Lag is visible: you have time to act","busy",380]},
+ {pc:[12],t:"Scale out",b:"Add three more workers: 6 a minute against 5 arriving. The queue now shrinks by 1 a minute. In Kafka you can add consumers up to the number of partitions.",w:"Visible lag gives you a choice. A crash gives you none.",q:["heavy-jobs","8,200 and falling","svc"],wk:W(["1 job, +3 more workers",0.1,"ok"],["1 job",0.1,"ok"],["1 job",0.1,"ok"]),ar:[[0,"next","ok"],[1,"next","ok"],[2,"next","ok"]]},
+ {pc:[11],t:"When no consumer can keep up",b:"If producers are always faster than any number of consumers, a buffer only delays the crash. Shed load at the producer instead.",w:"Sample, aggregate, or reject the upload with a clear error. Never an unbounded in-memory queue to be safe.",q:["upload API","rejects: try again later","fail"],wk:W(["1 job",0.1,"ok"],["1 job",0.1,"ok"],["1 job",0.1,"ok"]),ar:[],n:["Shed load at the source, not in worker memory","busy",380]}
+],
+"pull":[
+ {pc:[1, 2],t:"The sync pulls one page",b:"A graph sync reads rows from a warehouse and writes them to a graph database. It asks the warehouse for page 1.",w:"The sync pulls. Nothing is pushed at it.",q:["Warehouse","rows to sync","svc"],wk:[["Graph sync","holds page 1",0.15,"busy"],["Graph database","waiting",0,"idle"],null],ar:[[0,"page 1","busy"]]},
+ {pc:[3, 4],t:"Write and commit",b:"The sync writes page 1 to the graph and waits for the commit. It holds one page in memory.",w:"It holds one page in memory. Never more.",q:["Warehouse","rows to sync","svc"],wk:[["Graph sync","page 1, committing",0.15,"busy"],["Graph database","writing page 1",0.3,"busy"],null],ar:[],gx:[["write","busy"]]},
+ {pc:[5],t:"Only then the next page",b:"The commit returns. Only now does the loop ask for page 2. In this example a commit takes 10 seconds: 60 pages in 10 minutes, ahead of the 50 new ones.",w:"The read is paced by the write. The slowest part sets the speed of the whole chain.",q:["Warehouse","rows to sync","svc"],wk:[["Graph sync","holds page 2",0.15,"ok"],["Graph database","page 1 committed",0.3,"ok"],null],ar:[[0,"page 2","ok"]]},
+ {pc:[6],t:"The graph slows down",b:"The graph database gets slow, and a commit takes 60 seconds. The loop runs once a minute. The sync waits, and does not ask the warehouse for anything.",w:"When the graph slows, the read slows. Memory stays at one page.",q:["Warehouse","not asked, waiting","svc"],wk:[["Graph sync","page 3, waiting",0.15,"busy"],["Graph database","slow commit",0.8,"busy"],null],ar:[],gx:[["write","busy"]]},
+ {pc:[7, 8],t:"Lag, not a crash",b:"10 pages done in 10 minutes against 50 new ones: lag is 40 pages. The number grows on its dashboard. At most one page is in memory, so nothing crashes.",w:"In a pull design, lag is how back-pressure shows. Watch it and alert on it.",q:["Warehouse","sync lag growing","busy"],wk:[["Graph sync","one page, healthy",0.15,"ok"],["Graph database","slow but alive",0.8,"busy"],null],ar:[],n:["Back-pressure shows as lag you can watch","busy",380]}
+]};
+function draw(s){
+  const [ql,qs,qst]=s.q;let h=box(20,120,220,110,qst,ql,qs);
+  s.wk.forEach((w,k)=>{if(!w)return;const [lab,held,frac,st]=w,y=WY[k],[f]=C[st]||C.idle;
+    h+=`<rect class="box" x="560" y="${y}" width="320" height="80" rx="8" fill="var(--panel)" stroke="${st==="idle"?"var(--line)":f}" stroke-width="2.5"/>`;
+    h+=`<text x="720" y="${y+26}" font-size="16" font-weight="700" fill="var(--fg)">${lab}</text><text x="720" y="${y+46}" font-size="13" fill="var(--muted)">${held}</text>`;
+    h+=`<rect x="580" y="${y+56}" width="280" height="12" rx="6" fill="var(--line)"/><rect class="box" x="580" y="${y+56}" width="${Math.max(0,280*frac)}" height="12" rx="6" fill="${f==="var(--line)"?"none":f}"/>`;});
+  (s.ar||[]).forEach(([k,l,st])=>h+=arrow(240,175,560,WY[k]+40,l,st));
+  (s.gx||[]).forEach(([l,st])=>h+=arrow(720,100,720,130,"",st));
+  if(s.n)h+=note(s.n[2]||380,s.n[0],s.n[1]);
+  return h;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+function render(){
+  const L=steps[mode],s=L[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${L.length}`;
+  $("scene").innerHTML=draw(s,mode);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("scene").querySelectorAll(".msg")].forEach((el,k)=>reduce?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),70*k+30));
+  $("prev").disabled=i===0;$("next").disabled=i===L.length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"){$("codecard").style.display="none";return;}
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codenote").textContent=c.note||"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spill to disk</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Spill to disk: when a sort runs out of memory</h1>
+  <p class="lede">A daily report sorts a day of <b>swaps</b> by amount. The sort has a memory budget, drawn as four slots. Watch what happens when twelve rows arrive.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="spill">Full sort spills</button>
+    <button role="tab" aria-selected="false" data-mode="topn">Top-N fix</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Input rows, a memory box with four slots, a disk box with sorted runs, and the output</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text x="30" y="28" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">one day of swaps, amounts to sort (12 drawn)</text>
+<rect id="r0" class="box" data-f="var(--line)" x="30" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r0-t" data-t="41" x="61" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">41</text>
+<rect id="r1" class="box" data-f="var(--line)" x="100" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r1-t" data-t="7" x="131" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">7</text>
+<rect id="r2" class="box" data-f="var(--line)" x="170" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r2-t" data-t="93" x="201" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">93</text>
+<rect id="r3" class="box" data-f="var(--line)" x="240" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r3-t" data-t="12" x="271" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">12</text>
+<rect id="r4" class="box" data-f="var(--line)" x="310" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r4-t" data-t="58" x="341" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">58</text>
+<rect id="r5" class="box" data-f="var(--line)" x="380" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r5-t" data-t="33" x="411" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">33</text>
+<rect id="r6" class="box" data-f="var(--line)" x="450" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r6-t" data-t="88" x="481" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">88</text>
+<rect id="r7" class="box" data-f="var(--line)" x="520" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r7-t" data-t="5" x="551" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">5</text>
+<rect id="r8" class="box" data-f="var(--line)" x="590" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r8-t" data-t="71" x="621" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">71</text>
+<rect id="r9" class="box" data-f="var(--line)" x="660" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r9-t" data-t="20" x="691" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">20</text>
+<rect id="r10" class="box" data-f="var(--line)" x="730" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r10-t" data-t="64" x="761" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">64</text>
+<rect id="r11" class="box" data-f="var(--line)" x="800" y="38" width="62" height="34" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r11-t" data-t="99" x="831" y="60" text-anchor="middle" font-size="13" fill="var(--fg)">99</text>
+<rect x="30" y="100" width="380" height="130" rx="10" fill="none" stroke="var(--coord)" stroke-width="2"/>
+<text id="mlab" data-t="memory budget: 4 rows" x="46" y="124" text-anchor="start" font-size="13" font-weight="400" fill="var(--coord)">memory budget: 4 rows</text>
+<rect id="m0" class="box" data-f="var(--line)" x="50" y="150" width="78" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="m0-t" data-t="" x="89" y="182" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<rect id="m1" class="box" data-f="var(--line)" x="138" y="150" width="78" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="m1-t" data-t="" x="177" y="182" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<rect id="m2" class="box" data-f="var(--line)" x="226" y="150" width="78" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="m2-t" data-t="" x="265" y="182" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<rect id="m3" class="box" data-f="var(--line)" x="314" y="150" width="78" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="m3-t" data-t="" x="353" y="182" text-anchor="middle" font-size="13" fill="var(--fg)"></text>
+<rect x="470" y="100" width="400" height="130" rx="10" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="486" y="124" text-anchor="start" font-size="13" font-weight="400" fill="var(--muted)">disk</text>
+<g id="dg" class="msg">
+<rect id="d0" class="box" data-f="var(--line)" x="486" y="150" width="116" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="d0-t" data-t="run 1" x="544" y="172" text-anchor="middle" font-size="13" fill="var(--fg)">run 1</text>
+<text id="d0-u" data-t="" x="544" y="192" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="d1" class="box" data-f="var(--line)" x="614" y="150" width="116" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="d1-t" data-t="run 2" x="672" y="172" text-anchor="middle" font-size="13" fill="var(--fg)">run 2</text>
+<text id="d1-u" data-t="" x="672" y="192" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="d2" class="box" data-f="var(--line)" x="742" y="150" width="116" height="54" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="d2-t" data-t="run 3" x="800" y="172" text-anchor="middle" font-size="13" fill="var(--fg)">run 3</text>
+<text id="d2-u" data-t="" x="800" y="192" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+</g>
+<rect id="out" class="box" data-f="var(--line)" x="30" y="248" width="840" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="out-t" data-t="output" x="450" y="265" text-anchor="middle" font-size="13" fill="var(--fg)">output</text>
+<text id="out-u" data-t="" x="450" y="285" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect x="20" y="308" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="334" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="333" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-spill/main.go</code> (<code>go run .</code>). It runs the external merge sort and the top-N heap on these 12 amounts.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">in memory</span>
+    <span style="--c:var(--ok)">kept in memory, no disk</span>
+    <span style="--c:var(--fail)">written to disk</span>
+    <span style="--c:var(--line)">row already consumed (outline)</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A hash join whose build side is the big table: swap the sides and the spill goes away. <code>GROUP BY</code> over millions of distinct keys: aggregate per partition first. StarRocks with spill turned on: a big query finishes slowly instead of failing with out of memory.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Read the plan for "external merge" or spill bytes. Cut rows first: filter, top-N with <code>LIMIT</code>, pre-aggregate. Raise the memory budget only for the session that needs it.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>In-memory sort</th><th>External merge sort</th><th>Top-N sort</th></tr>
+      <tr><td>Memory needed</td><td>all rows</td><td>the budget</td><td>N rows</td></tr>
+      <tr><td>Disk</td><td>none</td><td>every row written and read again</td><td>none</td></tr>
+      <tr><td>Plan shows</td><td>quicksort, Memory</td><td>external merge, Disk</td><td>top-N heapsort</td></tr>
+      <tr><td>Interview line</td><td colspan=3>"A spill means an operator ran out of memory and paid disk speed, so cut the rows first and raise memory only for that query."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+spill:[
+ {"t": "Twelve rows, room for four", "b": "A daily report sorts a day of swaps by amount. The sort gets a memory budget, here room for four rows.", "w": "The budget is per operator, set by work_mem in PostgreSQL or a query memory limit in StarRocks.", "f": {}, "x": {"big": "12 rows to sort, memory for 4", "sql": "ORDER BY amount DESC"}, "on": [], "pc": [1]},
+ {"t": "Memory fills", "b": "Rows 41, 7, 93 and 12 come in. After each row the sort checks: is the buffer at the budget of 4? After the fourth, yes.", "w": "So far no disk.", "f": {"r0": "n", "r1": "n", "r2": "n", "r3": "n", "m0": "c", "m1": "c", "m2": "c", "m3": "c"}, "x": {"big": "memory full after 4 rows", "m0-t": "7", "m1-t": "12", "m2-t": "41", "m3-t": "93"}, "on": [], "pc": [3, 4, 5]},
+ {"t": "Spill: write a sorted run to disk", "b": "The check fired, so the sort sorts its 4 rows (7 12 41 93), writes them to disk as run 1 and empties the buffer.", "w": "This is a spill. Disk is far slower than memory.", "f": {"r0": "n", "r1": "n", "r2": "n", "r3": "n", "d0": "f"}, "x": {"d0-u": "7 12 41 93", "d1-u": "", "d2-u": "", "big": "run 1 written to disk"}, "on": ["dg"], "pc": [5, 6, 7]},
+ {"t": "Two more runs", "b": "The same check fires after rows 8 and 12. Run 2 is 5 33 58 88, run 3 is 20 64 71 99. All 12 rows have been written to disk once.", "w": "More rows than memory means more runs and more disk.", "f": {"r0": "n", "r1": "n", "r2": "n", "r3": "n", "r4": "n", "r5": "n", "r6": "n", "r7": "n", "r8": "n", "r9": "n", "r10": "n", "r11": "n", "d0": "f", "d1": "f", "d2": "f"}, "x": {"d0-u": "7 12 41 93", "d1-u": "5 33 58 88", "d2-u": "20 64 71 99", "big": "3 runs on disk"}, "on": ["dg"], "pc": [3, 4, 5, 6, 7]},
+ {"t": "Merge the runs back", "b": "The merge looks at the biggest remaining row of each run and takes the biggest of the three: 99 from run 3, then 93 from run 1, then 88 from run 2. It repeats until all runs are empty: 12 rows read back.", "w": "Every row was written and read again. The plan says \"Sort Method: external merge, Disk\".", "f": {"d0": "f", "d1": "f", "d2": "f", "out": "f"}, "x": {"d0-u": "7 12 41 93", "d1-u": "5 33 58 88", "d2-u": "20 64 71 99", "out-u": "99 93 88 71 64 58 41 33 20 12 7 5", "big": "external merge, Disk", "sql": "EXPLAIN ANALYZE ..."}, "on": ["dg"], "pc": [9, 10, 11]},
+ {"t": "The tempting fix fails", "b": "Raise the memory budget for every query? The budget applies to each sort and hash in each query. A hundred queries at once with a big budget take the server out of memory.", "w": "Raise memory only for the one session that needs it, and cut rows first.", "f": {"m0": "f", "m1": "f", "m2": "f", "m3": "f"}, "x": {"mlab": "budget × every operator × 100 queries", "big": "global raise: the server runs out of memory", "sql": "SET work_mem for everyone"}, "on": [], "pc": [12, 13]}
+],
+topn:[
+ {"t": "Ask for what you need: the top 3", "b": "The report only shows the biggest swaps. Written as ORDER BY amount DESC LIMIT 3, the engine switches to a top-N sort: a min-heap of 3 rows, with the smallest kept row on top.", "w": "A top-N sort needs memory for N rows, not for the whole day.", "f": {}, "x": {"mlab": "memory: keep the best 3", "big": "top-N: memory for 3 rows", "sql": "ORDER BY amount DESC LIMIT 3"}, "on": [], "pc": [1, 2]},
+ {"t": "Stream the first rows", "b": "The first 3 rows fill the heap. Row 4 is 12. The check: is 12 bigger than the smallest kept, 7? Yes, so 12 replaces 7. Kept: 93 41 12.", "w": "Dropped rows never need memory or disk.", "f": {"r0": "n", "r1": "n", "r2": "n", "r3": "n", "m0": "ok", "m1": "ok", "m2": "ok"}, "x": {"mlab": "memory: keep the best 3", "big": "after 4 rows: 93 41 12", "m0-t": "93", "m1-t": "41", "m2-t": "12"}, "on": [], "pc": [3, 4, 5, 6]},
+ {"t": "More rows", "b": "58 is bigger than 12, so it replaces 12. 33 is below 41, dropped. 88 is bigger than 41, so it replaces 41. 5 is below 58, dropped. Kept: 93 88 58.", "w": "Memory use never grows past three rows.", "f": {"r0": "n", "r1": "n", "r2": "n", "r3": "n", "r4": "n", "r5": "n", "r6": "n", "r7": "n", "m0": "ok", "m1": "ok", "m2": "ok"}, "x": {"mlab": "memory: keep the best 3", "big": "after 8 rows: 93 88 58", "m0-t": "93", "m1-t": "88", "m2-t": "58"}, "on": [], "pc": [5, 6, 7]},
+ {"t": "The last rows", "b": "71 beats 58 and enters. 20 and 64 are below 71, dropped. 99 beats 71 and pushes it out. Kept: 99 93 88.", "w": "No run was written to disk.", "f": {"r0": "n", "r1": "n", "r2": "n", "r3": "n", "r4": "n", "r5": "n", "r6": "n", "r7": "n", "r8": "n", "r9": "n", "r10": "n", "r11": "n", "m0": "ok", "m1": "ok", "m2": "ok"}, "x": {"mlab": "memory: keep the best 3", "big": "after 12 rows: 99 93 88", "m0-t": "99", "m1-t": "93", "m2-t": "88"}, "on": [], "pc": [5, 6, 7]},
+ {"t": "Output, from memory", "b": "The three biggest swaps come out. The plan says \"top-N heapsort, Memory\".", "w": "Cut rows before the sort: filter first, LIMIT, or aggregate per partition.", "f": {"out": "ok", "m0": "ok", "m1": "ok", "m2": "ok"}, "x": {"mlab": "memory: keep the best 3", "out-u": "99 93 88", "big": "top-N heapsort, Memory", "sql": "EXPLAIN ANALYZE ...", "m0-t": "99", "m1-t": "93", "m2-t": "88"}, "on": [], "pc": [8]}
+]
+};
+const base={};
+const code={
+"spill":{
+ label:"SQL",
+ pc:["sort(rows, budget):                  # budget = 4 rows", "  buf = []", "  for r in rows:", "    buf.append(r)", "    if len(buf) == budget:            # memory is full", "      write sorted(buf) to disk as a run   # the spill", "      buf = []", "  if buf: write sorted(buf) as a last run", "  return merge(runs)", "merge(runs):                         # read every run back", "  repeat: take the biggest head of all runs", "memory used = budget x operators x concurrent queries", "  # raise the budget for one session, never for all"],
+ real:["-- the report", "SELECT tx_hash, amount", "FROM   swaps", "WHERE  block_day = '2026-10-01'", "ORDER  BY amount DESC;", "", "EXPLAIN (ANALYZE, BUFFERS) SELECT ...;", "-- Sort  Sort Key: amount DESC", "--   Sort Method: external merge  Disk: ...kB", "--   temp read=...  written=...", "", "-- the wrong fix: a bigger budget for every sort of every session", "ALTER SYSTEM SET work_mem = '2GB';", "", "-- the right fix: one session, one transaction", "BEGIN;", "SET LOCAL work_mem = '256MB';", "SELECT ...;", "COMMIT;", "-- StarRocks: let a big query spill instead of failing", "SET enable_spill = true;"],
+ map:{"1": [2, 3, 4, 5], "12": [12, 13], "13": [15, 16, 17, 18, 19], "2": [8], "3": [8], "4": [8], "5": [9], "6": [9, 10], "7": [9], "8": [9], "9": [9, 10], "10": [10], "11": [9, 10]}},
+"topn":{
+ label:"SQL",
+ pc:["top_n(rows, n):                      # n = 3", "  heap = min-heap                    # the smallest kept row on top", "  for r in rows:", "    if len(heap) < n: push(heap, r)", "    else if r > heap.min:", "      replace heap.min with r        # a bigger row pushes it out", "    else: drop r                     # never stored, never on disk", "  return heap, biggest first"],
+ real:["-- ask only for what the report shows", "SELECT tx_hash, amount", "FROM   swaps", "WHERE  block_day = '2026-10-01'", "ORDER  BY amount DESC", "LIMIT  3;", "", "EXPLAIN ANALYZE SELECT ...;", "-- Limit", "--   Sort  Sort Key: amount DESC", "--     Sort Method: top-N heapsort  Memory: ...kB"],
+ map:{"1": [5, 6], "2": [11], "3": [10], "4": [10, 11], "5": [10, 11], "6": [11], "7": [11], "8": [9]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

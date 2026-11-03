@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sticky sessions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Sticky sessions: one client, always one copy</h1>
+  <p class="lede">A proxy keeps each agent's session in memory. A sticky balancer pins every agent to the copy that holds its session. Watch it work, then watch the load go uneven and a restart log everyone out. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pin">Affinity at work</button>
+    <button role="tab" aria-selected="false" data-mode="crash">A restart, and the fix</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Three agents, a sticky balancer, two proxy copies and a shared store</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-a7" class="box" x="20" y="40" width="150" height="56" rx="8"/><text id="b-a7-t" x="95" y="64">Agent 7</text><text id="b-a7-l" x="95" y="85" class="sm"></text>
+        <rect id="b-a9" class="box" x="20" y="160" width="150" height="56" rx="8"/><text id="b-a9-t" x="95" y="184">Agent 9</text><text id="b-a9-l" x="95" y="205" class="sm"></text>
+        <rect id="b-a3" class="box" x="20" y="280" width="150" height="56" rx="8"/><text id="b-a3-t" x="95" y="304">Agent 3</text><text id="b-a3-l" x="95" y="325" class="sm"></text>
+        <rect id="b-lb" class="box" x="240" y="150" width="170" height="70" rx="8"/><text id="b-lb-t" x="325" y="180">Sticky balancer</text><text id="b-lb-l" x="325" y="203" class="sm"></text>
+        <rect id="b-c1" class="box" x="520" y="60" width="170" height="62" rx="8"/><text id="b-c1-t" x="605" y="86">Copy 1</text><text id="b-c1-l" x="605" y="109" class="sm"></text>
+        <rect id="b-c2" class="box" x="520" y="240" width="170" height="62" rx="8"/><text id="b-c2-t" x="605" y="266">Copy 2</text><text id="b-c2-l" x="605" y="289" class="sm"></text>
+        <g id="g-st" class="dim"><rect id="b-st" class="box" x="720" y="150" width="160" height="62" rx="8"/><text id="b-st-t" x="800" y="176">Shared store</text><text id="b-st-l" x="800" y="199" class="sm"></text></g>
+        <text id="cap" x="450" y="368" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-sticky-sessions/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">agents and the balancer</span>
+    <span style="--c:var(--ok)">copy with room</span>
+    <span style="--c:var(--wait)">copy carrying too much</span>
+    <span style="--c:var(--fail)">overloaded, crashed, or logged out</span>
+    <span style="--c:var(--undo)">shared session store</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cookie-based affinity in an L7 (application layer) balancer such as NGINX or an AWS ALB (Application Load Balancer). IP (Internet Protocol) hash affinity in an L4 balancer. WebSocket connections, which are sticky by nature and must be able to reconnect to any copy.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Move sessions to a shared store such as Redis, or into a signed token the client carries, and turn stickiness off. Keep affinity only as a cache-warmth hint that loses nothing when a client moves. Never pin by client IP when many users share one address.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Sticky sessions</th><th>Shared session store</th></tr>
+      <tr><td>Where the session lives</td><td>In one copy's memory</td><td>In Redis or a signed token</td></tr>
+      <tr><td>Load spread</td><td>By client, uneven</td><td>By request, even</td></tr>
+      <tr><td>A copy restarts</td><td>Its clients are logged out</td><td>Nobody notices</td></tr>
+      <tr><td>Cost</td><td>Nothing to build</td><td>One more dependency to run</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Sticky sessions pin a client to one copy, which hides state and spreads load unevenly, so I use them at most as a cache hint and keep real session state in a shared store."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const A7=[170,68,238,168],A9=[170,188,238,188],A3=[170,308,238,206],L1=[410,170,518,94],L2=[410,200,518,270],S1=[690,94,718,170,"",U],S2=[690,270,718,198,"",U];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const base={f:{"b-a7":C,"b-a9":C,"b-a3":C,"b-lb":C,"b-c1":G,"b-c2":G,"b-st":U},x:{"b-a7-l":"","b-a9-l":"","b-a3-l":"","b-lb-t":"Sticky balancer","b-lb-l":"","b-c1-t":"Copy 1","b-c1-l":"","b-c2-t":"Copy 2","b-c2-l":"","b-st-l":"","cap":""},dim:[]};
+const D={pin:base,crash:base};
+const steps={
+pin:[
+ {t:"The first request lands anywhere",b:"Agent 7 logs in with no cookie. The rule for a request with no cookie: pick the least loaded copy that is up. Only copy 1 is up, so copy 1. Copy 1 stores the session in its own memory.",w:"The session now lives in exactly one process.",dim:["g-st"],x:{"b-lb-l":"no cookie yet","b-c1-l":"session of agent 7"},m:[a(A7,"log in",C),a(L1,"",C)]},
+ {t:"The balancer sets a cookie",b:"On that first pick the balancer writes the copy's name into a cookie on the reply: copy 1. The browser or client sends the cookie back on every later request.",w:"The cookie is the affinity. An L4 balancer would use a hash of the client IP (Internet Protocol) address instead.",dim:["g-st"],x:{"b-lb-l":"cookie: copy 1","b-a7-l":"cookie: copy 1","b-c1-l":"session of agent 7"},m:[a([238,180,172,80],"cookie copy 1",C,0,190,140)]},
+ {t:"Every request follows the cookie",b:"The rule for a request with a cookie: find the copy the cookie names and send it there. Load is never looked at. Agents 7 and 9 both carry copy 1, so every request goes to copy 1.",w:"It works. Nobody is logged out, because each agent always meets its own session.",dim:["g-st"],x:{"b-lb-l":"follows cookies","b-a7-l":"cookie: copy 1","b-a9-l":"cookie: copy 1","b-c1-l":"2 sessions"},m:[a(A7,"",C),a(A9,"",C),a(L1,"",C)]},
+ {t:"A new copy only gets new clients",b:"Copy 2 starts at 0% load. Agents 7 and 9 still carry the copy 1 cookie, so they stay: copy 1 at 80%. Only agent 3 has no cookie, so least loaded sends it to copy 2: 20%.",w:"Adding a copy does not take load off the busy one. Existing clients never move.",dim:["g-st"],f:{"b-c1":Y},x:{"b-lb-l":"follows cookies","b-a7-l":"cookie: copy 1","b-a9-l":"cookie: copy 1","b-a3-l":"cookie: copy 2","b-c1-l":"load 80%","b-c2-l":"load 20%"},m:[a(A3,"log in",C),a(L2,"",C)]},
+ {t:"The failure that matters: one heavy client",b:"Agent 9 starts a batch job worth another 40%. Its cookie says copy 1, and the cookie rule skips the load check. Copy 1 goes to 120% while copy 2 stays at 20%.",w:"Stickiness spreads load by client, not by request. One heavy client makes one hot copy, and the balancer is not allowed to help.",dim:["g-st"],f:{"b-c1":R,"b-a9":Y},x:{"b-lb-l":"follows cookies","b-a9-l":"big batch","b-c1-l":"load 120%","b-c2-l":"load 20%"},m:[a(A9,"batch",R),a(L1,"",R)]},
+ {t:"The other trap: many users behind one address",b:"An IP-hash balancer picks copy = hash(client IP) mod 2. A whole office reaches it from one NAT (network address translation) address, 203.0.113.7. The hash of that one address gives copy 1, for every user in the office.",w:"IP hash treats a thousand people as one client. Cookie affinity at least sees them apart.",dim:["g-st"],f:{"b-c1":R},x:{"b-lb-t":"IP-hash balancer","b-lb-l":"one office IP","b-a7-l":"office IP","b-a9-l":"office IP","b-a3-l":"office IP","b-c1-l":"the whole office","b-c2-l":"idle"},m:[a(A7,"",C),a(A9,"",C),a(A3,"",C),a(L1,"",R)]}
+],
+crash:[
+ {t:"Copy 1 holds 600 sessions",b:"After a busy morning, copy 1 holds 600 sessions in its memory and copy 2 holds 200. Each session exists in one place only. A deploy is about to restart the copies.",w:"Every session is stored in exactly one process. Nothing else knows about it.",dim:["g-st"],f:{"b-c1":Y},x:{"b-c1-l":"600 sessions","b-c2-l":"200 sessions","b-lb-l":"follows cookies"},m:[a(A7,"",C),a(A9,"",C),a(A3,"",C),a(L1,"",C),a(L2,"",C)]},
+ {t:"The deploy restarts copy 1",b:"Copy 1 restarts and its memory is wiped: 600 sessions gone. Agents 7 and 9 still send the copy 1 cookie. Copy 1 looks the agent up in memory, finds nothing, and answers \"who are you?\".",w:"600 users logged out at the same second, by a routine deploy.",dim:["g-st"],f:{"b-c1":R,"b-a7":R,"b-a9":R},x:{"b-c1-t":"Copy 1: restarted","b-c1-l":"0 sessions","b-c2-l":"200 sessions","b-a7-l":"logged out","b-a9-l":"logged out","b-lb-l":"follows cookies"},m:[a(A7,"",R),a(A9,"",R),a(L1,"who are you?",R,0,450,118)]},
+ {t:"The failure that matters: a rolling deploy logs out in waves",b:"Next the deploy restarts copy 2: 200 more sessions gone. 800 of 800 users are logged out, one wave per copy. Every deploy does this again.",w:"Stickiness turns every restart, crash or scale-down into lost sessions.",dim:["g-st"],f:{"b-c2":R,"b-a3":R},x:{"b-c1-l":"empty, refilling","b-c2-t":"Copy 2: restarted","b-c2-l":"0 sessions","b-a3-l":"logged out","b-lb-l":"follows cookies"},m:[a(A3,"",R),a(L2,"who are you?",R,0,450,252)]},
+ {t:"The fix: sessions move to a shared store",b:"Sessions move into Redis, a shared store. A copy now looks the agent up in Redis, not in its own memory. The balancer drops the cookie rule and picks least loaded on every request: 50% and 50%.",w:"Now no copy owns a session. Any copy can answer any request.",f:{"b-lb":C},x:{"b-lb-t":"Balancer","b-lb-l":"least connections","b-st-l":"all 800 sessions","b-c1-l":"load 50%","b-c2-l":"load 50%"},m:[a(A7,"",C),a(A9,"",C),a(A3,"",C),a(L1,"",C),a(L2,"",C),S1,S2]},
+ {t:"A restart now costs nothing",b:"The deploy restarts copy 1. Least loaded skips a copy that is down, so all 800 requests go to copy 2. Copy 2 finds every session in Redis: 0 logged out.",w:"State outside the copies is what makes copies disposable.",f:{"b-c1":N},x:{"b-lb-t":"Balancer","b-lb-l":"skips copy 1","b-c1-t":"Copy 1: restarting","b-c1-l":"","b-c2-l":"load 100%, all sessions","b-st-l":"all 800 sessions"},m:[a(A7,"",C),a(A9,"",C),a(A3,"",C),a(L2,"",C),S2]},
+ {t:"Affinity as a hint only",b:"A soft affinity keeps a warm cache without the risk. Rule: use the last copy if it is up and under 80% load, else least loaded. Copy 1 at 50%: stay. At 90%, or down: go to copy 2.",w:"A hint that loses nothing when it is ignored is fine. A pin that holds the only copy of a session is not.",x:{"b-lb-t":"Balancer","b-lb-l":"soft affinity","b-c1-l":"warm cache, load 50%","b-c2-l":"load 50%","b-st-l":"all 800 sessions"},m:[a(A7,"",C),a(A9,"",C),a(A3,"",C),a(L1,"",C),a(L2,"",C),S1,S2]}
+]};
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["route(request):", "  if request has a cookie: send to the copy it names   # load ignored", "  c = least loaded copy that is up      # first request only", "  set cookie = c on the reply; send to c", "leastLoaded(copies): the up copy with the lowest load", "ipHash(ip): copies[hash(ip) mod len(copies)]", "handle(request) on copy c:", "  c.load += request.cost", "  if a shared store exists: found = store[agent]", "  else: found = c.memory[agent]     # not found: logged out", "restart(c): c.memory = empty        # its sessions are gone", "soft(last):", "  if last is up and last.load < 80%: use last   # warm cache", "  else: leastLoaded(copies)"], "real": ["func (b *Sticky) Route(r *Request) *Copy {", "\tif r.Cookie != \"\" {", "\t\tfor _, c := range b.Copies {", "\t\t\tif c.Name == r.Cookie {", "\t\t\t\treturn c // follow the cookie, whatever the load", "\t\t\t}", "\t\t}", "\t}", "\tc := LeastLoaded(b.Copies) // first request: pick once", "\tr.Cookie = c.Name          // and pin the agent to it", "\treturn c", "}", "", "func LeastLoaded(cs []*Copy) *Copy {", "\tvar best *Copy", "\tfor _, c := range cs {", "\t\tif c.Up && (best == nil || c.Load < best.Load) {", "\t\t\tbest = c", "\t\t}", "\t}", "\treturn best", "}", "", "func IPHash(ip string, cs []*Copy) *Copy {", "\th := fnv.New32a()", "\th.Write([]byte(ip))", "\treturn cs[h.Sum32()%uint32(len(cs))]", "}", "", "func (c *Copy) Handle(r *Request, store map[string]bool) bool {", "\tc.Load += r.Cost", "\tif store != nil {", "\t\treturn store[r.Agent]", "\t}", "\treturn c.Mem[r.Agent] // false: \"who are you?\", the agent is logged out", "}", "", "func (c *Copy) Restart() int {", "\tlost := len(c.Mem)", "\tc.Mem = map[string]bool{}", "\treturn lost", "}", "", "func Soft(last *Copy, cs []*Copy, busy int) *Copy {", "\tif last != nil && last.Up && last.Load < busy {", "\t\treturn last // warm cache", "\t}", "\treturn LeastLoaded(cs)", "}"], "map": {"1": [1], "2": [2, 3, 4, 5], "3": [9], "4": [10, 11], "5": [14, 15, 16, 17, 18, 19, 20, 21], "6": [24, 25, 26, 27], "7": [30], "8": [31], "9": [32, 33], "10": [35], "11": [38, 39, 40, 41], "12": [44], "13": [45, 46], "14": [48]}}},PCS={"pin": [[1, 3, 4, 5], [4], [1, 2], [2, 3, 5], [2, 8], [6]], "crash": [[7, 10], [10, 11], [10, 11], [5, 9], [5, 9], [12, 13, 14]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

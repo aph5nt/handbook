@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canary and rollback</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Canary and rollback</h1>
+  <p class="lede">A new version of the graph proxy is ready. Ten servers sit behind a load balancer. Ship it all at once with blue-green, or a slice at a time with a canary. Then ship a bad version and roll it back. Press <b>Next</b> on each tab.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="bg">Blue-green</button>
+    <button role="tab" aria-selected="false" data-mode="canary">Canary</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated release of a new version</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700" text-anchor="middle">
+        <rect id="lb" class="box" x="20" y="160" width="170" height="60" rx="8"/><text id="lb-t" x="105" y="196">Load balancer</text>
+        <rect id="i0" class="box" x="260" y="90" width="108" height="60" rx="8"/><text id="i0-t" x="314" y="126">v1</text>
+        <rect id="i1" class="box" x="384" y="90" width="108" height="60" rx="8"/><text id="i1-t" x="438" y="126">v1</text>
+        <rect id="i2" class="box" x="508" y="90" width="108" height="60" rx="8"/><text id="i2-t" x="562" y="126">v1</text>
+        <rect id="i3" class="box" x="632" y="90" width="108" height="60" rx="8"/><text id="i3-t" x="686" y="126">v1</text>
+        <rect id="i4" class="box" x="756" y="90" width="108" height="60" rx="8"/><text id="i4-t" x="810" y="126">v1</text>
+        <rect id="i5" class="box" x="260" y="230" width="108" height="60" rx="8"/><text id="i5-t" x="314" y="266">v1</text>
+        <rect id="i6" class="box" x="384" y="230" width="108" height="60" rx="8"/><text id="i6-t" x="438" y="266">v1</text>
+        <rect id="i7" class="box" x="508" y="230" width="108" height="60" rx="8"/><text id="i7-t" x="562" y="266">v1</text>
+        <rect id="i8" class="box" x="632" y="230" width="108" height="60" rx="8"/><text id="i8-t" x="686" y="266">v1</text>
+        <rect id="i9" class="box" x="756" y="230" width="108" height="60" rx="8"/><text id="i9-t" x="810" y="266">v1</text>
+        <text id="row1" x="570" y="78" fill="var(--muted)" class="sm"></text>
+        <text id="row2" x="570" y="218" fill="var(--muted)" class="sm"></text>
+        <text id="tr" x="450" y="330" fill="var(--fg)"></text>
+        <text id="er" x="450" y="356" fill="var(--fg)" class="sm"></text>
+        <g id="db" class="msg"><rect x="300" y="366" width="440" height="30" rx="6" fill="var(--fail)"/><text x="520" y="387" fill="#fff" class="sm">Shared database: column renamed by v2</text></g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-canary-and-rollback/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">old version, serving</span>
+    <span style="--c:var(--svc)">new version, serving or ready</span>
+    <span style="--c:var(--line)">idle, no traffic</span>
+    <span style="--c:var(--fail)">errors</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet blue-green</h2>
+      <p>Two identical serving lanes with a pointer that names the live one. A release goes to the standby lane, is proven there, then the pointer flips. Rollback is flipping it back. It costs double capacity, and both sides must read the same data.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet a canary</h2>
+      <p>Kubernetes with a weighted route, Argo Rollouts, or Zuul at Netflix. Ship one immutable image pinned by digest, send a small share, compare its error rate and p99 to the old version, then ramp. A bad deploy burns the error budget fastest, which is why canaries exist.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Blue-green</th><th>Canary</th></tr>
+      <tr><td>Who sees the new version first</td><td>Everyone, at the flip</td><td>A small slice of users</td></tr>
+      <tr><td>Rollback</td><td>Instant: flip back</td><td>Fast: drain the canary</td></tr>
+      <tr><td>Cost</td><td>Double capacity during the release</td><td>A little extra, plus good metrics</td></tr>
+      <tr><td>Breaks on</td><td>A schema change only one version reads</td><td>The same, and too little traffic to judge</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I ship one immutable image to a canary first, compare its errors to the old version, and ramp or roll back. Schema changes expand first and contract later, so rollback stays possible."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--svc)",R="var(--fail)";
+const set=(a,b)=>{const o={};for(let k=0;k<10;k++)o["i"+k]=k<5?a:b;return o};
+const lab=(a,b)=>{const o={};for(let k=0;k<10;k++)o["i"+k+"-t"]=k<5?a:b;return o};
+const can=(n,c)=>{const o={},t={};for(let k=0;k<10;k++){o["i"+k]=k<n?c:C;t["i"+k+"-t"]=k<n?"v2":"v1";}return[o,t]};
+const toTop=c=>[[190,180,258,120,"",c]],toBot=c=>[[190,200,258,260,"",c]];
+const toAll=c=>[[190,182,258,120,"",c],[190,198,258,260,"",c]];
+const D={bg:{f:Object.assign({lb:C},set(C,N)),x:Object.assign({row1:"Blue fleet",row2:"Green fleet"},lab("v1","empty"))},
+ canary:{f:Object.assign({lb:C},set(C,C)),x:Object.assign({row1:"",row2:""},lab("v1","v1"))}};
+const cs=n=>{const[o,t]=can(n,G);return{f:o,x:t}};
+const steps={
+bg:[
+ {t:"Blue is live",b:"Five servers run version 1. This is the blue fleet. The router holds one pointer, live = blue, and every request goes where it points. The green fleet stands by, empty.",w:"Blue-green keeps two full fleets. Only one is live at a time.",x:{tr:"traffic: 100 percent to blue",er:"errors: 0.1 percent"},m:toTop(C)},
+ {t:"Deploy version 2 to green",b:"The new image goes to the green fleet, pinned by digest. Green starts, and the router check is still live = blue, so no user reaches it. Green must pass its readiness checks before anyone may flip.",w:"The image is pinned by digest, so what was tested on green is exactly what will serve.",f:set(C,G),x:Object.assign({tr:"traffic: 100 percent to blue",er:"green: tested, idle"},lab("v1","v2")),m:toTop(C)},
+ {t:"Flip",b:"The router pointer changes: live = green. That is one assignment, so all traffic moves to version 2 in one step. Blue is idle but kept running, ready to take the pointer back.",w:"The flip is one change. Nobody runs a mix of versions.",f:set(N,G),x:Object.assign({tr:"traffic: 100 percent to green",er:"errors: 0.1 percent"},lab("v1","v2")),m:toBot(G)},
+ {t:"A bad signal",b:"Ten minutes later the error rate on green reads 4 percent, against 0.1 percent before the flip. One query path in version 2 fails for some agents. Every agent is on green, so every agent can hit it.",w:"Every user is on the new version, so every user can hit the bug.",f:set(N,R),x:Object.assign({tr:"traffic: 100 percent to green",er:"errors: 4 percent"},lab("v1","v2")),m:toBot(R)},
+ {t:"Instant rollback",b:"The rule: errors well above the old 0.1 percent means flip back. The pointer is set to live = blue. Blue was never touched and is still warm, so it serves at once and the error rate is 0.1 percent again.",w:"This is the strength of blue-green: rollback is one flip to a fleet that is already warm.",f:set(C,R),x:Object.assign({tr:"traffic: 100 percent to blue",er:"errors: 0.1 percent"},lab("v1","v2")),m:toTop(C)},
+ {t:"The failure that matters: a shared schema",b:"Replay it, but version 2 also renamed agent_id to agent_key in the shared database. The flip back sets live = blue. Blue still reads agent_id, and that column is gone, so blue fails too. Both fleets are broken.",w:"Rollback only works if the old version can still read the data. Expand first: add the new column and keep the old one, migrate, and only later contract.",f:set(R,R),x:Object.assign({tr:"traffic: 100 percent to blue",er:"errors on both fleets"},lab("v1","v2")),on:["db"],m:toTop(R)}
+],
+canary:[
+ {t:"Ten servers on version 1",b:"All ten servers run version 1. The load balancer spreads requests evenly, so each server takes 10 percent, about 1,000 requests a minute. The old error rate is 0.1 percent.",w:"A canary release changes one server at a time and watches the numbers.",x:{tr:"traffic to v2: 0 percent",er:"errors v1: 0.1 percent"},m:toAll(C)},
+ Object.assign(cs(1),{t:"One canary",b:"One server gets version 2 and takes 10 percent of traffic. After a 10-minute window it has 10,000 requests. The rule: roll back if the canary has at least 20 errors and more than twice the old servers' rate in the same window. It has 10 errors, 0.1 percent: go on.",w:"Compare the canary to the old fleet at the same moment, not to yesterday. Same traffic, same time, one difference.",x:Object.assign(can(1,G)[1],{tr:"traffic to v2: 10 percent",er:"errors v1: 0.1 percent, v2: 0.1 percent"}),m:toAll(C)}),
+ Object.assign(cs(5),{t:"Ramp to 50 percent",b:"Four more servers get version 2. In the next window the five new servers see 50,000 requests and 50 errors, 0.1 percent. The five old ones see the same rate. Not more than twice: go on.",w:"Each ramp step is a decision point. The release can stop at any of them.",x:Object.assign(can(5,G)[1],{tr:"traffic to v2: 50 percent",er:"errors v1: 0.1 percent, v2: 0.1 percent"}),m:toAll(C)}),
+ Object.assign(cs(10),{t:"100 percent",b:"All ten servers run version 2. Every ramp step passed the same check, so the release is done. It cost two extra watch windows, 20 minutes, and bought safety.",w:"Most releases end here. The canary cost a few extra minutes and bought safety.",x:Object.assign(can(10,G)[1],{tr:"traffic to v2: 100 percent",er:"errors v2: 0.1 percent"}),m:toAll(G)}),
+ Object.assign({f:can(1,R)[0]},{t:"A bad release: one canary",b:"A later version 3 goes to one server. In its window it serves 10,000 requests with 400 errors: 4.0 percent. The nine old servers show 0.1 percent. 400 is at least 20, and 4.0 is more than twice 0.1: the check fails.",w:"The bad signal shows up while only 10 percent of traffic is exposed.",x:Object.assign(lab("v2","v2"),{"i0-t":"v3",tr:"traffic to v3: 10 percent",er:"errors old: 0.1 percent, v3: 4 percent"}),m:toAll(C)}),
+ {t:"Roll back at the first bad signal",b:"The failed check drains the canary and puts it back on version 2. Traffic is even again. Only 10 percent of requests, for one window, ever saw version 3. The other nine servers never ran it.",w:"One server, a few minutes, a tenth of the traffic. A blue-green flip of the same bug would have hit everyone. Automate this step: let the error comparison trigger the rollback.",x:Object.assign(lab("v2","v2"),{tr:"traffic to v3: 0 percent",er:"errors: 0.1 percent"}),m:toAll(C)}
+]};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);const t=$(k+"-t");if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  if(typeof draw==="function")draw(s);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"bg": {"label": "Go", "pc": ["live = blue                        # the router's one pointer", "deploy v2 to green, pinned by digest", "wait until green passes readiness", "live = green                       # flip: all traffic in one step", "watch error rate on live", "if errors > old rate by far:", "  live = blue                      # roll back: blue is still warm", "# BUG: v2 renamed agent_id to agent_key in the shared database", "#   blue still reads agent_id -> blue fails too"], "real": ["type Fleet struct {", "\tName    string", "\tVersion string", "\tColumn  string // the column this version reads from the shared database", "}", "", "type Router struct{ Live *Fleet }", "", "// Flip moves all traffic to the other fleet in one step.", "func (r *Router) Flip(to *Fleet) { r.Live = to }", "", "func (r *Router) Serve(dbColumns map[string]bool) string {", "\tif !dbColumns[r.Live.Column] {", "\t\treturn r.Live.Name + \" \" + r.Live.Version + \": fails, column \" + r.Live.Column + \" is gone\"", "\t}", "\treturn r.Live.Name + \" \" + r.Live.Version + \": ok\"", "}", "", "func main() {", "\tblue := &Fleet{\"blue\", \"v1\", \"agent_id\"}", "\tgreen := &Fleet{\"green\", \"v2\", \"agent_id\"}", "\tr := &Router{Live: blue}", "\tr.Flip(green)", "\tfmt.Println(\"flip, live:\", r.Serve(db), \"- 10 minutes later errors 4%\")", "\tr.Flip(blue)", "\tgreen.Column = \"agent_key\"", "\tdb = map[string]bool{\"agent_key\": true}", "\tr.Flip(green)", "\tr.Flip(blue)", "\tfmt.Println(\"rename replay, roll back, live:\", r.Serve(db))", "}"], "map": {"1": [22], "2": [21], "3": [21], "4": [23, 10], "5": [24], "6": [24], "7": [25, 10], "8": [26, 27], "9": [13, 14, 30, 29]}}, "canary": {"label": "Go", "pc": ["ramp = [1, 5, 10] servers of 10 on the new version", "for each step n in ramp:", "  move n servers to the new version (n x 10% of traffic)", "  watch one window: 10 minutes, about 1,000 requests a minute a server", "  canary = errors / requests on new servers", "  old    = errors / requests on old servers, same window", "  if canary errors >= 20 and canary > 2 x old:", "    drain the canary, put it back on the old version", "    stop the release", "  else: go on to the next step", "done at 10 of 10", "next release v3: the same loop, n = 1 first"], "real": ["type Window struct{ Requests, Errors int }", "", "func (w Window) Rate() float64 { return 100 * float64(w.Errors) / float64(w.Requests) }", "", "func Verdict(canary, baseline Window, minErrors int) (bool, string) {", "\tif canary.Errors >= minErrors && canary.Rate() > 2*baseline.Rate() {", "\t\treturn false, fmt.Sprintf(\"roll back: canary %.1f%% vs old %.1f%%\", canary.Rate(), baseline.Rate())", "\t}", "\treturn true, fmt.Sprintf(\"go on: canary %.1f%% vs old %.1f%%\", canary.Rate(), baseline.Rate())", "}", "", "// window builds the counts for n servers at 1,000 requests a minute for 10 minutes.", "func window(servers int, errPerTenThousand int) Window {", "\treq := servers * 1000 * 10", "\treturn Window{req, req * errPerTenThousand / 10000}", "}", "", "\tsteps := []int{1, 5, 10}", "\tfor _, n := range steps {", "\t\tif n == 10 {", "\t\t\tfmt.Println(\"10 of 10 on v2: done, 100% of traffic\")", "\t\t\tbreak", "\t\t}", "\t\tok, why := Verdict(window(n, 10), window(10-n, 10), 20)", "\t\tfmt.Printf(\"%d of 10 on v2 (%d%% of traffic): %s\\n\", n, n*10, why)", "\t\tif !ok {", "\t\t\treturn", "\t\t}", "\t}", "\tok, why := Verdict(window(1, 400), window(9, 10), 20)", "\tfmt.Printf(\"1 of 10 on v3: %d errors in %d requests, %s\\n\", window(1, 400).Errors, window(1, 400).Requests, why)", "\tif !ok {", "\t\tfmt.Println(\"canary drained and put back on v2: 9 servers never ran v3\")", "\t}"], "map": {"1": [18], "2": [19], "3": [24], "4": [14, 15], "5": [3], "6": [3], "7": [6], "8": [33], "9": [7, 32], "10": [9], "12": [30, 31], "11": [20, 21]}}},PCS={"bg": [[1], [2, 3], [4], [5], [6, 7], [7, 8, 9]], "canary": [[1], [2, 3, 4, 5, 6, 7, 10], [3, 4, 7, 10], [11], [12, 4, 5, 6, 7], [7, 8, 9]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

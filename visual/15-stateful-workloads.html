@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stateful workloads</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.nd rect{transition:fill .35s,stroke .35s}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.nd rect{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Stateful workloads</h1>
+  <p class="lede">The warehouse backends run as a StatefulSet. Pod be-0 always gets volume data-be-0, even after a restart on another day. Press <b>Next</b> to see claims bind and survive, then open the second tab to lose a node.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="id">Stable name, stable claim</button>
+    <button role="tab" aria-selected="false" data-mode="node">Local or replicated</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Stateful workloads, step by step</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle">
+        <g id="ss" class="nd" data-s="coord"><rect x="20" y="30" width="200" height="60" rx="8" stroke-width="3"/><text id="ss-t" data-t x="120.0" y="57.0" font-size="15" font-weight="700">StatefulSet</text><text id="ss-s" data-t x="120.0" y="75.0" font-size="12">starrocks-be, 2 pods</text></g>
+        <g id="op" class="nd" data-s="coord"><rect x="20" y="120" width="200" height="60" rx="8" stroke-width="3"/><text id="op-t" data-t x="120.0" y="147.0" font-size="15" font-weight="700">Operator</text><text id="op-s" data-t x="120.0" y="165.0" font-size="12">watches the warehouse</text></g>
+        <g id="be0" class="nd" data-s="ghost"><rect x="265" y="30" width="180" height="60" rx="8" stroke-width="3"/><text id="be0-t" data-t x="355.0" y="57.0" font-size="15" font-weight="700">Pod be-0</text><text id="be0-s" data-t x="355.0" y="75.0" font-size="12">not started</text></g>
+        <g id="pvc0" class="nd" data-s="ghost"><rect x="480" y="30" width="180" height="60" rx="8" stroke-width="3"/><text id="pvc0-t" data-t x="570.0" y="57.0" font-size="15" font-weight="700">PVC data-be-0</text><text id="pvc0-s" data-t x="570.0" y="75.0" font-size="12">no claim</text></g>
+        <g id="pv0" class="nd" data-s="ghost"><rect x="700" y="30" width="180" height="60" rx="8" stroke-width="3"/><text id="pv0-t" data-t x="790.0" y="57.0" font-size="15" font-weight="700">Volume, local NVMe</text><text id="pv0-s" data-t x="790.0" y="75.0" font-size="12">on node 1</text></g>
+        <g id="be1" class="nd" data-s="ghost"><rect x="265" y="120" width="180" height="60" rx="8" stroke-width="3"/><text id="be1-t" data-t x="355.0" y="147.0" font-size="15" font-weight="700">Pod be-1</text><text id="be1-s" data-t x="355.0" y="165.0" font-size="12">not started</text></g>
+        <g id="pvc1" class="nd" data-s="ghost"><rect x="480" y="120" width="180" height="60" rx="8" stroke-width="3"/><text id="pvc1-t" data-t x="570.0" y="147.0" font-size="15" font-weight="700">PVC data-be-1</text><text id="pvc1-s" data-t x="570.0" y="165.0" font-size="12">no claim</text></g>
+        <g id="pv1" class="nd" data-s="ghost"><rect x="700" y="120" width="180" height="60" rx="8" stroke-width="3"/><text id="pv1-t" data-t x="790.0" y="147.0" font-size="15" font-weight="700">Volume, local NVMe</text><text id="pv1-s" data-t x="790.0" y="165.0" font-size="12">on node 2</text></g>
+        <g id="sc" class="nd" data-s="coord"><rect x="700" y="215" width="180" height="56" rx="8" stroke-width="3"/><text id="sc-t" data-t x="790.0" y="240.0" font-size="15" font-weight="700">StorageClass</text><text id="sc-s" data-t x="790.0" y="258.0" font-size="12">local-nvme, CSI driver</text></g>
+        <g id="meta" class="nd" data-s="ok"><rect x="265" y="300" width="180" height="60" rx="8" stroke-width="3"/><text id="meta-t" data-t x="355.0" y="327.0" font-size="15" font-weight="700">Pod fe-0, metadata</text><text id="meta-s" data-t x="355.0" y="345.0" font-size="12">running on node 1</text></g>
+        <g id="lh" class="nd" data-s="svc"><rect x="480" y="300" width="400" height="60" rx="8" stroke-width="3"/><text id="lh-t" data-t x="680.0" y="327.0" font-size="15" font-weight="700">Longhorn volume, replicated</text><text id="lh-s" data-t x="680.0" y="345.0" font-size="12">copies on nodes 1, 2, 3</text></g>
+        <g id="del" class="nd" data-s="ghost" data-tab="id"><rect x="20" y="300" width="200" height="60" rx="8" stroke-width="3"/><text id="del-t" data-t x="120.0" y="327.0" font-size="15" font-weight="700">docker compose down -v</text><text id="del-s" data-t x="120.0" y="345.0" font-size="12">nobody ran it</text></g>
+        <g id="pdb" class="nd" data-s="coord"><rect x="20" y="215" width="200" height="56" rx="8" stroke-width="3"/><text id="pdb-t" data-t x="120.0" y="240.0" font-size="15" font-weight="700">PodDisruptionBudget</text><text id="pdb-s" data-t x="120.0" y="258.0" font-size="12">at least 1 of 2 up</text></g>
+        <g id="a-s0" class="msg"><line x1="220" y1="55" x2="263" y2="58" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-s1" class="msg"><line x1="220" y1="75" x2="263" y2="140" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-c0" class="msg"><line x1="445" y1="60" x2="478" y2="60" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-v0" class="msg"><line x1="660" y1="60" x2="698" y2="60" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-c1" class="msg"><line x1="445" y1="150" x2="478" y2="150" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-v1" class="msg"><line x1="660" y1="150" x2="698" y2="150" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-sc" class="msg"><line x1="790" y1="213" x2="790" y2="182" stroke="var(--coord)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-m" class="msg"><line x1="445" y1="330" x2="478" y2="330" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-op" class="msg"><line x1="220" y1="150" x2="263" y2="150" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-op0" class="msg"><line x1="220" y1="135" x2="263" y2="75" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-del" class="msg"><path d="M222 318H245V198H893V60H884" fill="none" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/><text x="470" y="248" font-size="13" font-weight="700" fill="var(--fail)">deletes the volume under be-0</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter" aria-live="polite"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The real code is the YAML you write. The Go program in <code>handbook/code/15-stateful-workloads/</code> replays the ordered start, the same-name restart, the drain check and local against replicated placement (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">declared object or controller</span>
+    <span style="--c:var(--ok)">ready, data in place</span>
+    <span style="--c:var(--wait)">starting, pending or in progress</span>
+    <span style="--c:var(--undo)">upgraded by the operator</span>
+    <span style="--c:var(--svc)">replicated storage</span>
+    <span style="--c:var(--fail)">lost or deleted</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a warehouse</h2>
+      <p>StarRocks backends are a StatefulSet run by an operator. Hot partitions sit on local NVMe; metadata sits on Longhorn. Memory request equals limit.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: protected volumes</h2>
+      <p>The runbooks list the warehouse, graph and metrics volumes as protected. A volume whose owner is unknown is protected until proven otherwise.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Deployment</th><th>StatefulSet</th></tr>
+      <tr><td>Pod names</td><td>Random, new each time</td><td>Stable: be-0, be-1</td></tr>
+      <tr><td>Volumes</td><td>Shared or none</td><td>One claim per pod, by name</td></tr>
+      <tr><td>Start and upgrade</td><td>All at once, any order</td><td>In order, one at a time</td></tr>
+      <tr><td>Use it for</td><td>Stateless APIs</td><td>Databases, warehouses, graphs</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"State lives in a StatefulSet with one claim per pod, on a storage class that matches the workload, and volumes are protected by default."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps={
+"id":[
+ {"t": "Pod 0 comes first", "b": "The StatefulSet starts be-0, and only be-0. Its PersistentVolumeClaim (PVC) asks for 2 TiB of class local-nvme, and is named after the pod: data-be-0.", "w": "A StatefulSet starts pods in order and gives each its own claim, by name.", "c": {"be0": "wait", "pvc0": "wait"}, "a": ["a-s0", "a-c0"], "x": {"be0": "starting", "pvc0": "claim: 2 TiB, local-nvme"}, "h": ["be0"], "pc": [1, 3, 4]},
+ {"t": "The driver makes the volume", "b": "The StorageClass names a CSI (Container Storage Interface) driver. The driver creates a volume on node 1's local NVMe flash disk and binds it to data-be-0. be-0 passes readiness.", "w": "Claim and volume are separate: the pod asks, the class decides how to provide.", "c": {"be0": "ok", "pvc0": "ok", "pv0": "ok"}, "a": ["a-s0", "a-c0", "a-v0", "a-sc"], "x": {"be0": "ready", "pvc0": "bound", "pv0": "on node 1: empty"}, "h": ["sc"], "pc": [3, 4]},
+ {"t": "Then pod 1", "b": "Only now does be-1 start. It gets its own claim, data-be-1, and its own volume on node 2.", "w": "Two backends, two disks, never shared. Ordered start keeps a cluster from booting in a muddle.", "c": {"be0": "ok", "pvc0": "ok", "pv0": "ok", "be1": "ok", "pvc1": "ok", "pv1": "ok"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m"], "x": {"be0": "ready", "pvc0": "bound", "pv0": "on node 1: history", "be1": "ready", "pvc1": "bound", "pv1": "on node 2: history"}, "h": ["be1"], "pc": [1, 2, 3, 4]},
+ {"t": "be-0 restarts and comes back as be-0", "b": "Node 1 reboots. be-0 dies. The StatefulSet starts a new pod with the same name, be-0, and it binds the same claim, data-be-0. All its partitions are still there.", "w": "A Deployment pod would come back with a random name and no claim of its own. Stable name plus stable claim is the whole point.", "c": {"be0": "wait", "pvc0": "ok", "pv0": "ok", "be1": "ok", "pvc1": "ok", "pv1": "ok"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m"], "x": {"be0": "restarted: same name", "pvc0": "bound", "pv0": "on node 1: history", "be1": "ready", "pvc1": "bound", "pv1": "on node 2: history"}, "h": ["be0", "pvc0"], "pc": [5]},
+ {"t": "The operator upgrades one pod at a time", "b": "The StarRocks operator, a controller that knows this product, rolls a new version. It upgrades be-1, waits until it is ready, then upgrades be-0.", "w": "An operator turns runbook steps into code: one pod, a readiness check, then the next.", "c": {"be0": "ok", "pvc0": "ok", "pv0": "ok", "be1": "undo", "pvc1": "ok", "pv1": "ok", "op": "wait"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m", "a-op"], "x": {"be0": "ready", "pvc0": "bound", "pv0": "on node 1: history", "be1": "upgraded, ready", "pvc1": "bound", "pv1": "on node 2: history", "op": "be-1 done, be-0 next"}, "h": ["op"], "pc": [6]},
+ {"t": "Metadata on a replicated class", "b": "The frontend's metadata uses a different class: Longhorn, which copies each block of the volume to three nodes. Hot partitions stay on fast local NVMe.", "w": "Pick the storage class by the job: fast and local for bulk data, replicated for small data you cannot lose.", "c": {"be0": "ok", "pvc0": "ok", "pv0": "ok", "be1": "ok", "pvc1": "ok", "pv1": "ok"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m"], "x": {"be0": "ready", "pvc0": "bound", "pv0": "on node 1: history", "be1": "ready", "pvc1": "bound", "pv1": "on node 2: history"}, "h": ["lh"], "pc": [10]},
+ {"t": "The failure that matters", "b": "Someone cleaning up runs docker compose down -v on the host, or deletes a PVC they did not create. The volume under be-0 is removed. Months of history are gone.", "w": "No controller can bring back deleted data. The StatefulSet will happily start an empty be-0.", "c": {"be1": "ok", "pvc1": "ok", "pv1": "ok", "be0": "fail", "pvc0": "fail", "pv0": "fail", "del": "fail"}, "a": ["a-del", "a-s1", "a-c1", "a-v1", "a-m"], "x": {"be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "be0": "starts empty", "pvc0": "deleted", "pv0": "gone", "del": "ran on the host"}, "h": ["del"], "pc": [7]},
+ {"t": "Protect by default", "b": "Every runbook names the protected volumes. A volume whose owner is unknown is protected until someone proves otherwise. Commands that delete volumes are banned in the runbooks.", "w": "Deleting is the one step you cannot roll back, so it needs the strongest guard.", "c": {"be0": "ok", "pvc0": "ok", "pv0": "ok", "be1": "ok", "pvc1": "ok", "pv1": "ok", "del": "ghost"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m"], "x": {"be0": "ready", "pvc0": "bound", "pv0": "on node 1: history", "be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "del": "banned: protected list"}, "h": [], "pc": [7]}
+],
+"node":[
+ {"t": "Drain node 1 for a patch", "b": "Node 1 needs a kernel patch. A PodDisruptionBudget says at least 1 of the 2 backends must stay up. The check: 2 are ready, 2 minus 1 is 1, and 1 meets the budget, so be-0 may go. With only 1 ready, the drain would wait.", "w": "A PodDisruptionBudget is the minimum that must stay up during planned work.", "c": {"be0": "wait", "pvc0": "ok", "pv0": "ok", "be1": "ok", "pvc1": "ok", "pv1": "ok", "pdb": "wait"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m"], "x": {"be0": "evicted for the drain", "pvc0": "bound", "pv0": "on node 1: history", "be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "pdb": "be-1 up: drain allowed"}, "h": ["pdb"], "pc": [8]},
+ {"t": "Node 1 dies instead", "b": "This time node 1 does not come back. Its power supply failed. be-0's volume lives on node 1's own disk.", "w": "Planned work has a budget. A hardware failure does not ask.", "c": {"be1": "ok", "pvc1": "ok", "pv1": "ok", "be0": "fail", "pvc0": "wait", "pv0": "fail", "meta": "fail"}, "a": ["a-s1", "a-c1", "a-v1"], "x": {"be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "be0": "node gone", "pvc0": "bound to node 1", "pv0": "node 1 is down", "meta": "node 1 is down"}, "h": [], "pc": [9]},
+ {"t": "The failure that matters: local ties the pod to the node", "b": "be-0 cannot start on node 2 or 3. Its claim is local-nvme, and the one copy of the data is on node 1. The scheduler finds no node that fits, so be-0 stays Pending until node 1 returns.", "w": "Local disks are the fastest, and they tie the pod to one machine. The warehouse must keep a copy of each partition on another backend.", "c": {"be1": "ok", "pvc1": "ok", "pv1": "ok", "be0": "wait", "pvc0": "wait", "pv0": "fail", "meta": "fail"}, "a": ["a-s1", "a-c1", "a-v1", "a-s0"], "x": {"be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "be0": "Pending: needs node 1", "pvc0": "bound to node 1", "pv0": "node 1 is down", "meta": "node 1 is down"}, "h": ["be0"], "pc": [9]},
+ {"t": "Replicated storage moves", "b": "fe-0 restarts on node 2. Longhorn already has a copy of its metadata volume there, so it starts at once with all its data.", "w": "Replicated storage survives a node loss, at the cost of slower writes: each write waits for the copies.", "c": {"be1": "ok", "pvc1": "ok", "pv1": "ok", "be0": "wait", "pvc0": "wait", "pv0": "fail", "meta": "ok", "lh": "svc"}, "a": ["a-s1", "a-c1", "a-v1", "a-m"], "x": {"be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "be0": "Pending: needs node 1", "pvc0": "bound to node 1", "pv0": "node 1 is down", "meta": "running on node 2", "lh": "copies on nodes 2, 3"}, "h": ["meta"], "pc": [10]},
+ {"t": "Node 1 returns", "b": "The power supply is replaced. be-0 binds data-be-0 on node 1 again and catches up the partitions it missed from its peer.", "w": "Choose per volume: local for speed with copies kept by the application, replicated for data the application does not copy itself.", "c": {"be0": "ok", "pvc0": "ok", "pv0": "ok", "be1": "ok", "pvc1": "ok", "pv1": "ok", "meta": "ok"}, "a": ["a-s0", "a-s1", "a-c0", "a-v0", "a-c1", "a-v1", "a-m"], "x": {"be0": "ready", "pvc0": "bound", "pv0": "on node 1: history", "be1": "ready", "pvc1": "bound", "pv1": "on node 2: history", "meta": "running on node 2"}, "h": [], "pc": [5, 9]}
+]
+};
+const code={
+ "id":{"label":"YAML",
+  "pc":["for ordinal 0, 1, ...:                     # pods in order", "  wait until pod ordinal - 1 is ready", "  claim = data-be-<ordinal>; if missing, create it from the template", "  start pod be-<ordinal> and bind that claim", "a pod that dies comes back with the same name and the same claim", "upgrade: one pod at a time, highest ordinal first, wait until ready", "deleting a claim or a volume removes the data, and nothing asks twice", "drain: evict only if the PodDisruptionBudget stays met  # 1 of 2 stays up", "local volume: the pod must run on that node, else Pending", "replicated volume: the pod may start on any node with a copy"],
+  "real":["apiVersion: apps/v1", "kind: StatefulSet", "metadata: {name: be}", "spec:", "  replicas: 2", "  serviceName: be                 # stable names: be-0, be-1", "  podManagementPolicy: OrderedReady   # pod 1 waits for pod 0", "  updateStrategy:", "    type: RollingUpdate           # highest ordinal first", "  persistentVolumeClaimRetentionPolicy:   # deleting or scaling the set keeps the claims", "    whenDeleted: Retain", "    whenScaled: Retain", "  template:", "    spec:", "      containers:", "      - name: be", "        volumeMounts: [{name: data, mountPath: /data}]", "  volumeClaimTemplates:           # one claim per pod: data-be-0, data-be-1", "  - metadata: {name: data}", "    spec:", "      accessModes: [ReadWriteOnce]", "      storageClassName: local-nvme   # one node: fast, tied to it", "      resources: {requests: {storage: 2Ti}}", "---", "apiVersion: policy/v1", "kind: PodDisruptionBudget", "metadata: {name: be}", "spec:", "  minAvailable: 1                 # a drain keeps 1 of 2 up", "  selector: {matchLabels: {app: be}}", "---", "apiVersion: storage.k8s.io/v1", "kind: StorageClass", "metadata: {name: longhorn-3}", "provisioner: driver.longhorn.io", "reclaimPolicy: Retain                 # a deleted claim keeps its volume", "parameters: {numberOfReplicas: \"3\"}   # a copy on 3 nodes: the pod may move"],
+  "map":{"1": [2, 5, 6], "2": [7], "3": [18, 19, 20, 21, 22, 23], "4": [17], "5": [6, 18], "6": [8, 9], "7": [10, 11, 12, 36], "8": [26, 29], "9": [22], "10": [33, 35, 37]}},
+ "node":{"label":"YAML",
+  "pc":["for ordinal 0, 1, ...:                     # pods in order", "  wait until pod ordinal - 1 is ready", "  claim = data-be-<ordinal>; if missing, create it from the template", "  start pod be-<ordinal> and bind that claim", "a pod that dies comes back with the same name and the same claim", "upgrade: one pod at a time, highest ordinal first, wait until ready", "deleting a claim or a volume removes the data, and nothing asks twice", "drain: evict only if the PodDisruptionBudget stays met  # 1 of 2 stays up", "local volume: the pod must run on that node, else Pending", "replicated volume: the pod may start on any node with a copy"],
+  "real":["apiVersion: apps/v1", "kind: StatefulSet", "metadata: {name: be}", "spec:", "  replicas: 2", "  serviceName: be                 # stable names: be-0, be-1", "  podManagementPolicy: OrderedReady   # pod 1 waits for pod 0", "  updateStrategy:", "    type: RollingUpdate           # highest ordinal first", "  persistentVolumeClaimRetentionPolicy:   # deleting or scaling the set keeps the claims", "    whenDeleted: Retain", "    whenScaled: Retain", "  template:", "    spec:", "      containers:", "      - name: be", "        volumeMounts: [{name: data, mountPath: /data}]", "  volumeClaimTemplates:           # one claim per pod: data-be-0, data-be-1", "  - metadata: {name: data}", "    spec:", "      accessModes: [ReadWriteOnce]", "      storageClassName: local-nvme   # one node: fast, tied to it", "      resources: {requests: {storage: 2Ti}}", "---", "apiVersion: policy/v1", "kind: PodDisruptionBudget", "metadata: {name: be}", "spec:", "  minAvailable: 1                 # a drain keeps 1 of 2 up", "  selector: {matchLabels: {app: be}}", "---", "apiVersion: storage.k8s.io/v1", "kind: StorageClass", "metadata: {name: longhorn-3}", "provisioner: driver.longhorn.io", "reclaimPolicy: Retain                 # a deleted claim keeps its volume", "parameters: {numberOfReplicas: \"3\"}   # a copy on 3 nodes: the pod may move"],
+  "map":{"1": [2, 5, 6], "2": [7], "3": [18, 19, 20, 21, 22, 23], "4": [17], "5": [6, 18], "6": [8, 9], "7": [10, 11, 12, 36], "8": [26, 29], "9": [22], "10": [33, 35, 37]}}
+};
+const COL={idle:["var(--line)","var(--fg)"],coord:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],wait:["var(--wait)","#1f2320"],undo:["var(--undo)","#fff"],ghost:["none","var(--muted)"],hide:["none","transparent"]};
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)");
+const nodes=[...document.querySelectorAll(".nd")],msgs=[...document.querySelectorAll(".msg")],labs=[...document.querySelectorAll(".lb")];
+document.querySelectorAll("[data-t]").forEach(t=>t.dataset.d=t.textContent);
+const saved={};
+Object.values(steps).flat().forEach(s=>Object.entries(s.at||{}).forEach(([id,o])=>Object.keys(o).forEach(k=>{const key=id+"|"+k;if(!(key in saved))saved[key]=$(id).getAttribute(k);})));
+const vis=el=>{const t=el.dataset.tab;return !t||t.split(" ").includes(mode);};
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-t]").forEach(t=>t.textContent=t.dataset.d);
+  for(const[k,v]of Object.entries(s.x)){const el=$(k+"-s")||$(k);if(el&&el.tagName==="text")el.textContent=v;}
+  nodes.forEach(g=>{g.style.display=vis(g)?"":"none";const st=s.c[g.id]||g.dataset.s;const[f,tc]=COL[st];const r=g.querySelector("rect");
+    r.setAttribute("fill",f);r.setAttribute("stroke",s.h.includes(g.id)?"var(--fg)":(st==="ghost"?"var(--line)":"none"));
+    r.setAttribute("stroke-dasharray",st==="ghost"?"5 5":"none");g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",tc));});
+  labs.forEach(l=>l.style.display=vis(l)?"":"none");
+  msgs.forEach((m,k)=>{m.style.display=vis(m)?"":"none";const on=s.a.includes(m.id);
+    if(!on)return m.classList.remove("on");if(m.classList.contains("on"))return;
+    RM.matches?m.classList.add("on"):setTimeout(()=>{if(steps[mode][i].a.includes(m.id))m.classList.add("on")},40+60*s.a.indexOf(m.id));});
+  for(const[key,v]of Object.entries(saved)){const[id,k]=key.split("|");v===null?$(id).removeAttribute(k):$(id).setAttribute(k,v);}
+  for(const[id,o]of Object.entries(s.at||{}))for(const[k,v]of Object.entries(o))$(id).setAttribute(k,v);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

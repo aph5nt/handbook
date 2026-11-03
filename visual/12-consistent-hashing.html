@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consistent hashing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Consistent hashing and virtual nodes: the ring</h1>
+  <p class="lede">A cache for graph lookups runs on three nodes. Every address is hashed to a point on a ring, and the next node clockwise owns it. Watch a fourth node take one arc, then watch uneven arcs and a leaving node without virtual nodes. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ring">The ring: add and remove a node</button>
+    <button role="tab" aria-selected="false" data-mode="vnode">No virtual nodes: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A hash ring with nodes and keys, and a count of keys per node</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <circle cx="300" cy="190" r="140" fill="none" stroke="var(--line)" stroke-width="10"/>
+        <text x="300" y="28" class="sm" fill="var(--muted)">0, wraps around</text>
+        <text x="300" y="196" class="sm" fill="var(--muted)">clockwise</text>
+        <text x="620" y="60" text-anchor="start" fill="var(--fg)">Keys per node</text>
+        <text id="mv" x="620" y="300" text-anchor="start" class="sm" fill="var(--fail)"></text>
+        <text id="cap" x="450" y="370" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-consistent-hashing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">node A and its keys</span>
+    <span style="--c:var(--undo)">node B</span>
+    <span style="--c:var(--wait)">node C</span>
+    <span style="--c:var(--svc)">node D</span>
+    <span style="--c:var(--fail)">a key that moved, or an overloaded node</span>
+    <span style="--c:var(--line)">a key not yet placed</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cassandra and DynamoDB place data partitions on a ring with virtual nodes. Memcached clients and many proxies pick a cache node with a ring. Discord and others use it to pick which server owns a channel or a user.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Use many virtual nodes per real node, often around a hundred, so arcs stay even and a leaving node spreads its keys. Give a bigger machine more virtual nodes. Rendezvous hashing is a simpler rival with the same property. Neither fixes a hot key: split or cache that key.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>hash mod N</th><th>Consistent hashing</th></tr>
+      <tr><td>Add a node</td><td>Most keys move</td><td>About 1 over N of the keys move</td></tr>
+      <tr><td>Remove a node</td><td>Most keys move</td><td>Only that node's keys move</td></tr>
+      <tr><td>Even spread</td><td>Even</td><td>Even only with virtual nodes</td></tr>
+      <tr><td>Hot key</td><td>On one node</td><td>Still on one node</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Consistent hashing puts keys and nodes on a ring so a new node takes one arc instead of reshuffling everything, and virtual nodes keep the arcs even and spread a leaving node's keys."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const COL={A:"var(--coord)",B:"var(--undo)",C:"var(--wait)",D:"var(--svc)"};
+const KEYS=[10,30,55,80,100,130,150,175,200,230,250,265,300,320,345,5];
+const P=(deg,r)=>{const a=(deg-90)*Math.PI/180;return[300+r*Math.cos(a),190+r*Math.sin(a)]};
+const owner=(k,nodes)=>{const s=[...nodes].sort((x,y)=>x[1]-y[1]);for(const n of s)if(n[1]>=k)return n[0];return s[0][0];};
+const N3=[["A",40],["B",160],["C",280]],N4=N3.concat([["D",220]]),N3b=[["A",40],["C",280],["D",220]];
+const V3=[["A",40],["B",160],["C",280],["A",170],["B",290],["C",50],["A",300],["B",60],["C",190]];
+const BAD=[["A",20],["B",50],["C",80]],BADnoA=[["B",50],["C",80]];
+const VB=[["A",20],["B",50],["C",80],["A",140],["B",200],["C",280],["A",240],["B",310],["C",170],["A",330],["B",110],["C",340]];
+const VBnoA=VB.filter(n=>n[0]!=="A");
+const steps={
+ring:[
+ {t:"Nodes on the ring",b:"Each cache node's name is hashed to a point on a ring of 360 numbers that wraps around. Node A lands at 40, B at 160, C at 280.",w:"The ring is just the range of the hash function, bent into a circle so the end meets the start.",nodes:N3,keys:0},
+ {t:"Keys on the same ring",b:"Every address is hashed onto the same ring with the same function. Sixteen addresses land at points such as 5, 100 and 200. The grey dots are waiting to be placed.",w:"Nodes and keys share one number line. That is the whole trick.",nodes:N3,keys:1},
+ {t:"Each key belongs to the next node clockwise",b:"The rule: walk clockwise from the key to the first node point. Key 100 meets B at 160, so B owns it. Past 280 the walk wraps round to A at 40. The counts come out A 6, B 5, C 5.",w:"No table lists where each key lives. The ring decides.",nodes:N3,keys:2},
+ {t:"Add node D: it takes one arc",b:"Node D joins at 220, between B and C. Keys 175 and 200 used to walk on to C at 280. Now they meet D first. 2 of 16 keys move, all from C to D, and every other walk is unchanged.",w:"Only the keys in one arc move, from one neighbour. With hash mod N, going from 3 to 4 nodes moves about three quarters of all keys.",nodes:N4,keys:2,prev:N3},
+ {t:"Remove node B: its arc goes to the next node",b:"Node B is removed. The 5 keys it owned, from 55 to 150, walk past 160 and now meet D at 220. D goes from 2 keys to 7. No other key moves.",w:"A leaving node hands its whole arc to one neighbour. That is fine here, and a problem in the next tab.",nodes:N3b,keys:2,prev:N4},
+ {t:"Virtual nodes",b:"Each real node now sits at three points: A at 40, 170 and 300, and so on. The same walk rule runs, and a point just reports its real node. The counts are A 6, B 5, C 5. Real systems use around a hundred points per node.",w:"Virtual nodes even out the arcs and give weighting for free: a bigger machine gets more points.",nodes:V3,keys:2}
+],
+vnode:[
+ {t:"Three random points, very uneven arcs",b:"Without virtual nodes, the three names happen to hash close together: A 20, B 50, C 80. Every key past 80 wraps round to A. A owns 13 of 16 keys, B 1 and C 2.",w:"With only one point per node, arc sizes are random. One node can own most of the ring.",nodes:BAD,keys:2},
+ {t:"The failure that matters: A leaves and dumps on one neighbour",b:"Node A fails. Its 13 keys now walk past 20 to the next point, B at 50. B goes from 1 key to 14 of 16, and falls over too.",w:"A leaving node hands everything to one neighbour, which can cascade: B dies, its keys go to C, C dies.",nodes:BADnoA,keys:2,prev:BAD,hot:"B"},
+ {t:"The fix: many virtual nodes",b:"Each real node now sits at four points spread around the ring: A at 20, 140, 240 and 330. The same walk gives A 6, B 5, C 5.",w:"More points per node means smaller arcs and a fairer split.",nodes:VB,keys:2},
+ {t:"A leaves again: its keys spread",b:"Node A fails again. Its four points are followed by different nodes: 20 by B, the other three by C. Its 6 keys split, 3 to B and 3 to C. B and C each end with 8.",w:"With virtual nodes, a leaving node's load is shared by all the others instead of crushing one.",nodes:VBnoA,keys:2,prev:VB},
+ {t:"The limit: a hot key stays on one node",b:"An exchange hot wallet at point 200 gets most of the lookups. The walk gives one answer for one key: B. All its traffic lands on B, however many points the nodes have.",w:"Consistent hashing spreads keys, not traffic per key. A hot key needs splitting or caching.",nodes:VB,keys:2,hotkey:200}
+]};
+function draw(s,g){let h="";const cnt={};
+  KEYS.forEach(k=>{const [x,y]=P(k,140);let c="var(--line)",stroke="var(--panel)",o=null;
+    if(s.keys>=2){o=owner(k,s.nodes);c=COL[o];cnt[o]=(cnt[o]||0)+1;if(s.prev&&owner(k,s.prev)!==o)stroke="var(--fail)";}
+    if(s.keys>=1)h+=`<circle class="dot" cx="${x}" cy="${y}" r="${s.hotkey===k?14:8}" fill="${s.hotkey===k?"var(--fail)":c}" stroke="${stroke}" stroke-width="${stroke==="var(--fail)"?4:2}"/>`;});
+  s.nodes.forEach(([n,d])=>{const [x,y]=P(d,140),[lx,ly]=P(d,172);h+=`<rect x="${x-11}" y="${y-11}" width="22" height="22" rx="4" fill="${COL[n]}" stroke="var(--fg)" stroke-width="2"/><text x="${lx}" y="${ly+5}" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fg)">${n}</text>`;});
+  const moved=s.prev?KEYS.filter(k=>owner(k,s.prev)!==owner(k,s.nodes)).length:0;
+  ["A","B","C","D"].forEach((n,i)=>{const v=cnt[n]||0,live=s.nodes.some(x=>x[0]===n);const col=s.hot===n||v>=10?"var(--fail)":COL[n];
+    h+=`<text x="620" y="${100+i*44}" text-anchor="start" font-size="15" font-weight="700" fill="var(--fg)">${n}</text><rect x="650" y="${86+i*44}" width="${v*14}" height="18" rx="4" fill="${col}"/><text x="${658+v*14}" y="${100+i*44}" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">${live?(s.keys>=2?v:""):"not on the ring"}</text>`;});
+  g.innerHTML=h;$("mv").textContent=s.prev?`${moved} of ${KEYS.length} keys moved (red outline)`:"";
+  $("cap").textContent=s.hotkey?"the big red dot is the hot key: all its traffic lands on one node":"";
+}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["point: a node name and a place on the ring (0 to 359)", "owner(key, ring):", "  sort the points by place", "  for each point: if point.at >= key: return its node", "  return the first point's node        # wrap round", "moved(before, after):", "  for each key: if owner(key, after) != owner(key, before):", "    moved += 1; to[new owner] += 1", "count(ring): for each key: count[owner(key, ring)] += 1", "without(ring, node): keep the points of every other node", "a node with virtual nodes: many points with the same name", "keys: sixteen addresses on the same ring", "  four points per node: A at 20, 140, 240, 330"], "real": ["type Point struct {", "\tNode string", "\tAt   int", "}", "", "func Owner(key int, ring []Point) string {", "\ts := append([]Point{}, ring...)", "\tsort.Slice(s, func(i, j int) bool { return s[i].At < s[j].At })", "\tfor _, p := range s {", "\t\tif p.At >= key {", "\t\t\treturn p.Node", "\t\t}", "\t}", "\treturn s[0].Node", "}", "", "func Moved(before, after []Point) (int, map[string]int) {", "\tto := map[string]int{}", "\tn := 0", "\tfor _, k := range Keys {", "\t\tif o := Owner(k, after); o != Owner(k, before) {", "\t\t\tn++", "\t\t\tto[o]++", "\t\t}", "\t}", "\treturn n, to", "}", "", "func Count(ring []Point) map[string]int {", "\tc := map[string]int{}", "\tfor _, k := range Keys {", "\t\tc[Owner(k, ring)]++", "\t}", "\treturn c", "}", "", "func Without(ring []Point, node string) []Point {", "\tout := []Point{}", "\tfor _, p := range ring {", "\t\tif p.Node != node {", "\t\t\tout = append(out, p)", "\t\t}", "\t}", "\treturn out", "}", "", "var Keys = []int{10, 30, 55, 80, 100, 130, 150, 175, 200, 230, 250, 265, 300, 320, 345, 5}", "", "v3 := []Point{{\"A\", 40}, {\"B\", 160}, {\"C\", 280}, {\"A\", 170}, {\"B\", 290}, {\"C\", 50}, {\"A\", 300}, {\"B\", 60}, {\"C\", 190}}", "vb := []Point{{\"A\", 20}, {\"B\", 50}, {\"C\", 80}, {\"A\", 140}, {\"B\", 200}, {\"C\", 280}, {\"A\", 240}, {\"B\", 310}, {\"C\", 170}, {\"A\", 330}, {\"B\", 110}, {\"C\", 340}}"], "map": {"1": [1, 2, 3], "2": [6], "3": [7, 8], "4": [9, 10, 11], "5": [14], "6": [17], "7": [21], "8": [22, 23], "9": [29, 30, 31, 32], "10": [37, 38, 39, 40, 41], "11": [49], "12": [47], "13": [50]}}},PCS={"ring": [[1], [12], [2, 3, 4, 5], [4, 6, 7, 8], [6, 7, 8, 10], [4, 11]], "vnode": [[4, 5, 9], [6, 7, 8, 10], [9, 13], [6, 7, 8, 10], [2, 4]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

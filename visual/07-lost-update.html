@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lost update</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Lost update: two read-modify-writes on one row</h1>
+  <p class="lede">Two agent tool calls spend 8 from the same wallet, which holds 10. Each reads the balance, subtracts in code, and writes the result back. Watch one spend vanish. The second tab shows three fixes on the same scene.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="lost">The lost update</button>
+    <button role="tab" aria-selected="false" data-mode="fix">Three fixes</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Lost update: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a tool call</span>
+    <span style="--c:var(--coord)">a read</span>
+    <span style="--c:var(--wait)">waiting, or zero rows changed</span>
+    <span style="--c:var(--ok)">written correctly</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Wallets and quotas: one conditional <code>UPDATE</code>, and zero rows means refused. Stock counts: <code>SET stock = stock - 1 WHERE stock &gt; 0</code>. Counters: <code>SET views = views + 1</code>, never read, add one, write back.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Do not trust the default level. Read committed does not stop a lost update. PostgreSQL's repeatable read detects it and aborts the second writer. MySQL's repeatable read does not. Push the arithmetic into the <code>UPDATE</code> and the question goes away.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th>Fix</th><th>How</th><th>The loser sees</th><th>Fits</th></tr>
+      <tr><td>One statement</td><td><code>UPDATE ... SET balance = balance - 8 WHERE balance &gt;= 8</code></td><td>Zero rows changed</td><td>Any rule on one row</td></tr>
+      <tr><td>Lock first</td><td><code>SELECT ... FOR UPDATE</code>, then write</td><td>A short wait, then the new value</td><td>Logic that must run in the app</td></tr>
+      <tr><td>Version column</td><td><code>UPDATE ... WHERE version = :seen</code></td><td>Zero rows, so re-read and retry</td><td>Rare conflicts, long edits</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A lost update is two read-modify-writes on one row, so I make the check and the write one statement, or lock the row first."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const act=(ak,bk,ta,tb)=>[B(40,60,220,"tool call A",ak||"s",44),B(640,60,220,"tool call B",bk||"s",44),T(40,130,ta||"","f"),T(860,130,tb||"","f","end")];
+const wal=(lab,k)=>[B(330,220,240,lab,k||"n",50)];
+const aR=(k,d)=>A(400,218,180,106,"",k||"r",d),bR=(k,d)=>A(500,218,720,106,"",k||"r",d),aW=(k,d)=>A(180,106,400,218,"",k||"c",d),bW=(k,d)=>A(720,106,500,218,"",k||"c",d);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-lost-update/main.go</code> replays the two tool calls against one wallet row and prints every balance quoted here (<code>go run .</code>). The SQL in the fix tab is the PostgreSQL each Go method stands for.";
+const CODE={
+lost:{pc:["wallet 7: balance 10, each call spends 8",
+"read_modify_write(call):",
+"  balance = SELECT balance WHERE id = 7      # no lock, no check",
+"  new = balance - 8                          # computed in the app",
+"  UPDATE wallet SET balance = new            # overwrites what is there",
+"call A reads 10, call B reads 10",
+"call A writes 2",
+"call B writes 2 on top: 16 spent from 10"],
+ views:[{v:"real",label:"Go",lines:[].concat(["const cost = 8 // what each tool call spends"],[""],["// Read is a plain SELECT balance, version: no lock, no check.", "func (w *Wallet) Read() (balance, version int) {", "\treturn w.balance, w.version", "}"],[""],["// Write is UPDATE wallet SET balance = :new. It overwrites whatever is there.", "func (w *Wallet) Write(newBalance int) {", "\tw.balance = newBalance", "\tw.version++", "}"],[""],["func lost() {", "\tfmt.Println(\"== lost update: read, compute in the app, write back\")", "\tw := &Wallet{balance: 10, version: 1}", "\ta, _ := w.Read()", "\tfmt.Printf(\"call A reads %d, plans %d\\n\", a, a-cost)", "\tb, _ := w.Read()", "\tfmt.Printf(\"call B reads %d, plans %d\\n\", b, b-cost)", "\tw.Write(a - cost)", "\tfmt.Printf(\"call A writes %d\\n\", w.balance)", "\tw.Write(b - cost) // B's write lands on top of A's", "\tfmt.Printf(\"call B writes %d: %d spent from 10, A's spend is lost\\n\", w.balance, 2*cost)", "}"]),
+  map:[["wallet 7: balance 10","const cost = 8","w := &Wallet{balance: 10, version: 1}"],["read_modify_write(call):","func (w *Wallet) Read()"],["balance = SELECT","// Read is a plain..return w.balance, w.version"],
+   ["new = balance - 8","a, _ := w.Read()..plans %d"],["UPDATE wallet SET balance = new","// Write is UPDATE..w.version++"],
+   ["call A reads 10, call B","a, _ := w.Read()..fmt.Printf(\"call B reads"],["call A writes 2","w.Write(a - cost)..fmt.Printf(\"call A writes"],["call B writes 2 on top","w.Write(b - cost)..A's spend is lost"]]}]},
+fix:{pc:["fix one, spend(cost):",
+"  UPDATE SET balance = balance - cost WHERE balance >= cost   # check and write in one step",
+"  if rows changed == 0: refuse, not enough money",
+"fix two, locked(call):",
+"  SELECT balance ... FOR UPDATE       # takes the row lock, others wait",
+"  write balance - 8, commit           # commit releases the lock",
+"  the waiting call now reads 2 and refuses",
+"fix three, versioned(call):",
+"  read balance and version             # both read 10 at version 1",
+"  UPDATE ... WHERE version = seen      # the first writer wins",
+"  on 0 rows: re-read and decide again"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Spend is UPDATE wallet SET balance = balance - :cost WHERE id = 7 AND balance >= :cost.", "// The check and the write are one step. It returns the number of rows changed.", "func (w *Wallet) Spend(c int) (rows int) {", "\tif w.balance < c {", "\t\treturn 0 // the WHERE is false: nothing changes", "\t}", "\tw.balance -= c", "\tw.version++", "\treturn 1", "}"],[""],["// WriteIfVersion is UPDATE wallet SET balance = :new, version = version + 1", "// WHERE id = 7 AND version = :seen. Zero rows means someone wrote first.", "func (w *Wallet) WriteIfVersion(newBalance, seen int) (rows int) {", "\tif w.version != seen {", "\t\treturn 0", "\t}", "\tw.balance = newBalance", "\tw.version++", "\treturn 1", "}"],[""],["func fixOneStatement() {", "\tfmt.Println(\"== fix one: check and write in one statement\")", "\tw := &Wallet{balance: 10, version: 1}", "\trows := w.Spend(cost)", "\tfmt.Printf(\"call A: %d row changed, balance %d\\n\", rows, w.balance)", "\trows = w.Spend(cost)", "\tfmt.Printf(\"call B: %d rows changed, balance %d: not enough money\\n\", rows, w.balance)", "}"],[""],["func fixLockFirst() {", "\tfmt.Println(\"== fix two: lock the row first\")", "\tw := &Wallet{balance: 10, version: 1}", "\tw.mu.Lock() // call A: SELECT ... FOR UPDATE takes the row lock", "\ta, _ := w.Read()", "\tfmt.Printf(\"call A locks the row and reads %d\\n\", a)", "\tgot := w.mu.TryLock() // call B: the same SELECT ... FOR UPDATE", "\tfmt.Printf(\"call B asks for the lock: got it = %v, so B waits\\n\", got)", "\tw.Write(a - cost)", "\tw.mu.Unlock() // commit releases the lock", "\tfmt.Printf(\"call A writes %d and commits\\n\", w.balance)", "\tw.mu.Lock() // B's wait ends", "\tb, _ := w.Read()", "\tif b < cost {", "\t\tfmt.Printf(\"call B reads %d: cannot pay %d, refuses\\n\", b, cost)", "\t}", "\tw.mu.Unlock()", "}"],[""],["func fixVersion() {", "\tfmt.Println(\"== fix three: a version column\")", "\tw := &Wallet{balance: 10, version: 1}", "\ta, va := w.Read()", "\tb, vb := w.Read()", "\tfmt.Printf(\"both read balance %d at version %d\\n\", a, va)", "\trows := w.WriteIfVersion(a-cost, va)", "\tfmt.Printf(\"call A writes WHERE version = %d: %d row, now version %d\\n\", va, rows, w.version)", "\trows = w.WriteIfVersion(b-cost, vb)", "\tfmt.Printf(\"call B writes WHERE version = %d: %d rows\\n\", vb, rows)", "\tb, _ = w.Read() // re-read after zero rows", "\tif b < cost {", "\t\tfmt.Printf(\"call B re-reads %d: cannot pay %d, refuses\\n\", b, cost)", "\t}", "}"]),
+  map:[["fix one, spend(cost):","func fixOneStatement()"],["UPDATE SET balance = balance - cost","// Spend is UPDATE..return 1"],["if rows changed == 0","return 0 // the WHERE is false","rows = w.Spend(cost)..not enough money"],
+   ["fix two, locked(call):","func fixLockFirst()"],["SELECT balance ... FOR UPDATE","w.mu.Lock() // call A..so B waits"],["write balance - 8, commit","w.Write(a - cost)","w.mu.Unlock() // commit..call A writes %d and commits"],["the waiting call now reads 2","w.mu.Lock() // B's wait ends..w.mu.Unlock()"],
+   ["fix three, versioned(call):","func fixVersion()"],["read balance and version","a, va := w.Read()..both read balance"],["UPDATE ... WHERE version = seen","// WriteIfVersion is UPDATE..return 1","rows := w.WriteIfVersion..call B writes WHERE"],["on 0 rows: re-read","b, _ = w.Read() // re-read..refuses"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- fix one: check and write in one statement",
+"UPDATE wallet SET balance = balance - 8",
+"WHERE id = 7 AND balance >= 8;            -- 0 rows: not enough money",
+"",
+"-- fix two: lock the row first",
+"BEGIN;",
+"SELECT balance FROM wallet WHERE id = 7 FOR UPDATE;",
+"UPDATE wallet SET balance = 2 WHERE id = 7;",
+"COMMIT;                                   -- releases the lock",
+"",
+"-- fix three: a version column",
+"SELECT balance, version FROM wallet WHERE id = 7;",
+"UPDATE wallet SET balance = 2, version = version + 1",
+"WHERE id = 7 AND version = 1;             -- 0 rows: re-read"],
+  map:[["fix one, spend(cost):","-- fix one"],["UPDATE SET balance = balance - cost","UPDATE wallet SET balance = balance - 8..;"],["if rows changed == 0","0 rows: not enough money"],
+   ["fix two, locked(call):","-- fix two"],["SELECT balance ... FOR UPDATE","BEGIN;","FOR UPDATE"],["write balance - 8, commit","UPDATE wallet SET balance = 2 WHERE id = 7;","COMMIT;"],["the waiting call now reads 2","FOR UPDATE"],
+   ["fix three, versioned(call):","-- fix three"],["read balance and version","SELECT balance, version"],["UPDATE ... WHERE version = seen","UPDATE wallet SET balance = 2, version..0 rows: re-read"],["on 0 rows: re-read","0 rows: re-read"]]}]}};
+// CODE PANEL END
+const S={
+lost:{name:"wallet 7, cost 8 per call",st:[
+ {t:"Start: one wallet, two spends",pc:["wallet 7: balance 10"],b:"Wallet 7 holds 10. Two tool calls each cost 8. Only one of them can be paid.",w:"Each call does read, modify, write: read the balance, subtract in code, write the new number.",d:act().concat(wal("wallet 7: balance 10"))},
+ {t:"Call A reads 10",pc:["balance = SELECT", "new = balance - 8"],b:"Call A runs a plain SELECT balance: no lock, no check. It gets 10. In its own code it computes 10 - 8 = 2.",w:"The new value now lives only in call A's memory.",d:act(null,null,"read 10, plans to write 2").concat(wal("wallet 7: balance 10"),[aR()])},
+ {t:"Call B reads 10 too",pc:["call A reads 10, call B"],b:"Before A writes, call B reads the same row and also gets 10. It also plans to write 2.",w:"Both decisions are now based on the same old value.",d:act(null,null,"read 10, plans to write 2","read 10, plans to write 2").concat(wal("wallet 7: balance 10"),[aR(),bR()])},
+ {t:"Call A writes 2",pc:["UPDATE wallet SET balance = new", "call A writes 2"],b:"Call A runs UPDATE wallet SET balance = 2 and commits. The statement carries the new value only. It does not check what is in the row now.",w:"So far correct: 10 - 8 = 2.",d:act("c",null,"wrote 2","read 10, plans to write 2").concat(wal("wallet 7: balance 2","c"),[aW(),bR()])},
+ {t:"The failure: call B writes 2 on top",pc:["UPDATE wallet SET balance = new", "call B writes 2 on top"],b:"Call B runs the same UPDATE wallet SET balance = 2. Nothing compares 2 with the row's current value, so it overwrites A's 2 with its own 2. Two spends of 8, 16 in total, were paid from 10.",w:"A's write is lost: B overwrote it with a value computed from a read that was already out of date.",d:act("c","x","wrote 2","wrote 2 over A").concat(wal("wallet 7: 2, but 16 was spent","x"),[aW("x",1),bW("x"),T(450,320,"16 spent from 10, one spend left no trace","x","middle",16)])},
+ {t:"The default level does not save you",pc:["UPDATE wallet SET balance = new"],b:"Read committed, the default in PostgreSQL, allows this. PostgreSQL's repeatable read would abort B. MySQL's repeatable read would not.",w:"Do not count on the level. Remove the read-modify-write.",d:act("c","x","read committed: allowed","MySQL repeatable read: allowed").concat(wal("wallet 7: 2, but 16 was spent","x"))}
+]},
+fix:{name:"the same two calls, fixed",st:[
+ {t:"Fix one: one statement",pc:["fix one, spend(cost):", "UPDATE SET balance = balance - cost"],b:"Call A runs UPDATE wallet SET balance = balance - 8 WHERE id = 7 AND balance >= 8. The database checks and writes in one step. One row changed, balance 2.",w:"The arithmetic happens inside the database, on the current value.",d:act("c",null,"1 row changed").concat(wal("wallet 7: balance 2","c"),[aW()])},
+ {t:"Call B changes zero rows",pc:["UPDATE SET balance = balance - cost", "if rows changed == 0"],b:"Call B runs the same statement. The balance is 2, so balance >= 8 is false. Zero rows changed. The app answers 'not enough money'.",w:"Zero rows is the refusal. No spend was lost and none was overpaid.",d:act("c","w","1 row changed","0 rows changed: refused").concat(wal("wallet 7: balance 2","c"),[bW("w",1)])},
+ {t:"Fix two: lock the row first",pc:["fix two, locked(call):", "SELECT balance ... FOR UPDATE"],b:"Call A runs SELECT balance FROM wallet WHERE id = 7 FOR UPDATE. It reads 10 and holds the row lock. Call B's same query waits.",w:"Only one call can be between its read and its write at a time.",d:act("w","r","holds the row lock, read 10","waiting for the lock").concat(wal("wallet 7: balance 10, locked","w"),[aR("w"),bR("r",1)])},
+ {t:"B reads the new value",pc:["write balance - 8, commit", "the waiting call now reads 2"],b:"Call A writes 2 and commits, which releases the lock. Call B's read now returns 2. B sees it cannot pay and refuses.",w:"The wait was short, and B decided on the current value.",d:act("c","w","wrote 2, lock released","read 2: refused").concat(wal("wallet 7: balance 2","c"),[aW(),bR("w")])},
+ {t:"Fix three: a version column",pc:["fix three, versioned(call):", "read balance and version", "UPDATE ... WHERE version = seen", "on 0 rows: re-read"],b:"Both read balance 10 at version 1. A writes WHERE version = 1: one row, now version 2. B writes WHERE version = 1: zero rows. B re-reads, sees 2, refuses.",w:"Optimistic: no lock, a check at write time. Good when conflicts are rare.",d:act("c","w","WHERE version = 1: 1 row","WHERE version = 1: 0 rows").concat(wal("wallet 7: balance 2, version 2","c"),[aW(),bW("w",1)])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

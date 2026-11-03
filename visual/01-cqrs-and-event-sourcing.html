@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CQRS and event sourcing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.chip{transition:transform .6s ease,opacity .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.chip{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+/*code-panel*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{display:flex;gap:8px;flex-wrap:wrap}
+#codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+#codetabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*end-code-panel*/
+</style>
+</head>
+<body>
+<main>
+  <h1>CQRS and event sourcing: the neighbours</h1>
+  <p class="lede">The indexer writes blocks into warehouse tables. The graph sync turns them into a graph for questions. Press <b>Next</b> to watch a command, a projection and a query, then switch to event sourcing and rebuild a wallet from its events.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="cqrs">CQRS: write side and read side</button>
+    <button role="tab" aria-selected="false" data-mode="es">Event sourcing: replay and snapshot</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">A command, a projector and a query, or a state rebuilt from its events</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <!-- CQRS scene -->
+        <g data-mode="cqrs">
+          <rect x="20" y="40" width="160" height="64" rx="8" fill="var(--coord)"/>
+          <text x="100" y="67" fill="#fff" font-size="16">Indexer</text><text x="100" y="89" fill="#fff" font-weight="400">sends commands</text>
+          <rect x="20" y="300" width="160" height="64" rx="8" fill="var(--coord)"/>
+          <text x="100" y="327" fill="#fff" font-size="16">Analyst</text><text x="100" y="349" fill="#fff" font-weight="400">asks questions</text>
+          <rect id="w-box" class="box" x="300" y="40" width="240" height="64" rx="8" fill="var(--svc)"/>
+          <text x="420" y="67" fill="#fff" font-size="16">Write model</text><text id="w-sub" x="420" y="89" fill="#fff" font-weight="400">warehouse tables, block 1,004</text>
+          <rect id="p-box" class="box" x="680" y="40" width="200" height="64" rx="8" fill="var(--svc)"/>
+          <text x="780" y="67" fill="#fff" font-size="16">Projector</text><text id="p-sub" x="780" y="89" fill="#fff" font-weight="400">graph sync, idle</text>
+          <rect id="r-box" class="box" x="680" y="300" width="200" height="64" rx="8" fill="var(--svc)"/>
+          <text x="780" y="327" fill="#fff" font-size="16">Read model</text><text id="r-sub" x="780" y="349" fill="#fff" font-weight="400">graph, block 1,004</text>
+          <g id="cmd" class="msg">
+            <line x1="180" y1="72" x2="298" y2="72" stroke="var(--coord)" stroke-width="2.5" marker-end="url(#arr)"/>
+            <text id="cmd-t" x="240" y="62" fill="var(--coord)" font-size="13">IndexBlock 1005</text>
+          </g>
+          <g id="feed" class="msg">
+            <line x1="540" y1="72" x2="678" y2="72" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/>
+            <text x="609" y="62" fill="var(--fg)" font-size="13">new rows</text>
+          </g>
+          <g id="proj" class="msg">
+            <line x1="780" y1="104" x2="780" y2="298" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/>
+            <text x="790" y="200" fill="var(--undo)" font-size="13" text-anchor="start">builds links</text>
+          </g>
+          <g id="q" class="msg">
+            <line x1="180" y1="320" x2="678" y2="320" stroke="var(--coord)" stroke-width="2.5" marker-end="url(#arr)"/>
+            <text id="q-t" x="430" y="310" fill="var(--coord)" font-size="13">query: where did this money go?</text>
+          </g>
+          <g id="ans" class="msg">
+            <line id="ans-l" x1="678" y1="346" x2="182" y2="346" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/>
+            <text id="ans-t" x="430" y="370" fill="var(--ok)" font-size="13">two hops, then into an exchange</text>
+          </g>
+          <rect id="lag-box" class="box" x="300" y="160" width="320" height="76" rx="10" fill="var(--line)"/>
+          <text id="lag-t" x="460" y="192" fill="var(--fg)">both sides at block 1,004</text>
+          <text id="lag-2" x="460" y="216" fill="var(--fg)" font-weight="400">lag: none</text>
+          <text x="460" y="410" fill="var(--muted)" font-weight="400" font-size="13">commands only touch the write model, queries only touch the read model</text>
+        </g>
+        <!-- event sourcing scene -->
+        <g data-mode="es">
+          <text x="175" y="30" fill="var(--muted)" font-size="15">Event list of wallet W (append only)</text>
+          <rect id="e1" class="box" x="20" y="44" width="310" height="44" rx="8" fill="var(--line)"/><text id="e1t" x="40" y="72" fill="var(--fg)" text-anchor="start">1  Received 10 ETH</text>
+          <rect id="e2" class="box" x="20" y="100" width="310" height="44" rx="8" fill="var(--line)"/><text id="e2t" x="40" y="128" fill="var(--fg)" text-anchor="start">2  Sent 3 ETH</text>
+          <rect id="e3" class="box" x="20" y="156" width="310" height="44" rx="8" fill="var(--line)"/><text id="e3t" x="40" y="184" fill="var(--fg)" text-anchor="start">3  Received 5 ETH</text>
+          <rect id="e4" class="box" x="20" y="212" width="310" height="44" rx="8" fill="var(--line)"/><text id="e4t" x="40" y="240" fill="var(--fg)" text-anchor="start">4  Sent 2 ETH</text>
+          <rect id="e5" class="box" x="20" y="268" width="310" height="44" rx="8" fill="var(--line)"/><text id="e5t" x="40" y="296" fill="var(--fg)" text-anchor="start">5  Received 4 ETH</text>
+          <rect id="e6" class="box" x="20" y="324" width="310" height="44" rx="8" fill="var(--line)"/><text id="e6t" x="40" y="352" fill="var(--fg)" text-anchor="start">6  Sent 1 ETH</text>
+          <g id="ptr" class="msg chip" style="transform:translate(340px,66px)"><path d="M0 0 L22 -12 L22 12 Z" fill="var(--wait)"/><text x="30" y="5" fill="var(--wait)" text-anchor="start" font-size="13">reading</text></g>
+          <rect id="st-box" class="box" x="520" y="150" width="300" height="110" rx="10" fill="var(--svc)"/>
+          <text x="670" y="180" fill="#fff" font-size="16">State of wallet W</text>
+          <text id="st-t" x="670" y="210" fill="#fff">balance: nothing yet</text>
+          <text id="st-n" x="670" y="236" fill="#fff" font-weight="400">events read: 0</text>
+          <g id="snap" class="msg">
+            <rect x="520" y="290" width="300" height="70" rx="10" fill="var(--undo)"/>
+            <text x="670" y="318" fill="#fff">Snapshot after event 4</text>
+            <text x="670" y="342" fill="#fff" font-weight="400">balance 10, stored</text>
+          </g>
+          <g id="up" class="msg">
+            <rect x="420" y="40" width="460" height="76" rx="10" fill="var(--wait)"/>
+            <text x="650" y="68" fill="#1f2320">Upcaster, at read time</text>
+            <text x="650" y="92" fill="#1f2320" font-weight="400">v1 "Received 10" (no token) → v2 "Received 10 ETH"</text>
+          </g>
+          <text x="670" y="400" fill="var(--muted)" font-weight="400" font-size="13">state = fold of the events, in order</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--code-panel-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/01-cqrs-and-event-sourcing/main.go</code> (<code>go run .</code>).</p>
+    <div id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <!--end-code-panel-->
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a command or a query</span>
+    <span style="--c:var(--svc)">a model</span>
+    <span style="--c:var(--undo)">projection or snapshot</span>
+    <span style="--c:var(--wait)">lag, or work in progress</span>
+    <span style="--c:var(--ok)">up to date, or replayed</span>
+    <span style="--c:var(--fail)">stale or wrong</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>The chain, the warehouse and the graph are event sourcing and CQRS in the shape of the data, with no framework: blocks are the events, tables the write side, the graph the read side. Audit logs and money tracing use it because the history is the product.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use CQRS when reads and writes want different shapes and the read model is the bottleneck. Use event sourcing when the history matters. For a plain create, read, update, delete (CRUD) screen, use neither: they double the code and add a lag for nothing.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Plain CRUD</th><th>CQRS</th><th>Event sourcing</th></tr>
+      <tr><td>Stores</td><td>Current state</td><td>Write model plus read models</td><td>The list of events</td></tr>
+      <tr><td>Reads from</td><td>The same tables</td><td>A model built for reading</td><td>A fold of the events, or a snapshot</td></tr>
+      <tr><td>Lag</td><td>None</td><td>Yes, between write and read</td><td>Yes, for every projection</td></tr>
+      <tr><td>Fixing a bad read</td><td>Repair rows</td><td>Rebuild the read model</td><td>Replay the events</td></tr>
+      <tr><td>Extra cost</td><td>None</td><td>Two models, a projector</td><td>Upcasters, snapshots, replay time</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"CQRS splits the model that takes commands from the model that answers questions. Event sourcing stores the events and folds them into any read model. I use them when reads differ from writes or the history is the product, and I design every reader for the lag."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const STEPS={
+"cqrs":[
+ {"t": "Two models, one truth", "b": "CQRS (Command Query Responsibility Segregation) splits one system in two. Line 1: the write model takes commands and keeps the rules, here the warehouse tables. Line 2: the read model is built for questions, here the graph.", "w": "Each side gets the shape it needs. Tables are good at writing rows. A graph is good at \"where did the money go\"."},
+ {"t": "A command goes to the write model", "b": "The indexer sends IndexBlock 1005. Line 3 sets the write model to block 1,005 at once. The graph is still at 1,004: one block behind.", "w": "The write side is done at once. The read side is now one block behind.", "on": ["cmd"], "txt": {"w-sub": "warehouse tables, block 1,005", "lag-t": "write side 1,005, read side 1,004", "lag-2": "lag: 1 block"}, "fill": {"lag-box": "var(--wait)"}},
+ {"t": "The projector reads the new rows", "b": "The projector, the graph sync, runs line 4. Line 5 asks: is the graph behind the warehouse? 1,004 is below 1,005, so line 6 folds the rows of block 1,005 into links.", "w": "A projector is a loop: read what is new, update the read model, remember how far it got.", "on": ["feed"], "txt": {"w-sub": "warehouse tables, block 1,005", "p-sub": "graph sync, working", "lag-t": "write side 1,005, read side 1,004", "lag-2": "lag: 1 block"}, "fill": {"lag-box": "var(--wait)", "p-box": "var(--wait)"}},
+ {"t": "The read model catches up", "b": "Line 6 moves the graph to block 1,005. Line 5 now finds no gap, and the loop stops. The read model is always a little later than the write model. That gap is the lag.", "w": "The read model is always a little later than the write model. That gap is the lag.", "on": ["proj"], "txt": {"w-sub": "warehouse tables, block 1,005", "r-sub": "graph, block 1,005", "lag-t": "both sides at block 1,005", "lag-2": "lag: none"}, "fill": {"lag-box": "var(--ok)"}},
+ {"t": "The query reads the read model", "b": "The analyst asks: where did this money go? Line 7 reads the graph only. It never touches the warehouse tables, so a query never slows down a write.", "w": "Queries never slow down writes, and the read model can be shaped for the question.", "on": ["q", "ans"], "txt": {"w-sub": "warehouse tables, block 1,005", "r-sub": "graph, block 1,005", "lag-t": "both sides at block 1,005", "lag-2": "lag: none"}, "fill": {"lag-box": "var(--ok)"}},
+ {"t": "The failure that matters", "b": "Blocks 1,006 to 1,009 arrive. The write side is at 1,009, the graph still at 1,005. The analyst asks about block 1,008. Line 8 sees 1,008 is above 1,005, but with no lag shown line 10 answers: no outgoing money. Stale, and believed.", "w": "The reader saw stale data and believed it. The money did move. The graph has not been told yet.", "on": ["cmd", "q", "ans"], "txt": {"cmd-t": "4 more blocks", "w-sub": "warehouse tables, block 1,009", "p-sub": "graph sync, behind", "r-sub": "graph, block 1,005", "lag-t": "write side 1,009, read side 1,005", "lag-2": "lag: 4 blocks", "q-t": "where did the money in block 1,008 go?", "ans-t": "no outgoing money (stale)"}, "fill": {"lag-box": "var(--fail)", "r-box": "var(--fail)", "p-box": "var(--wait)", "ans-t": "var(--fail)"}, "stroke": {"ans-l": "var(--fail)"}},
+ {"t": "The UI handles the lag", "b": "Now line 9 runs instead. The answer says how fresh it is: graph at block 1,005, 4 blocks behind. Line 12 is that lag, 1,009 minus 1,005. The reader can wait, warn, or read that one transfer from the write side.", "w": "Lag is a fact to design for, not a bug to hide. A reader that knows the read model is behind can wait, warn, or ask the write side.", "on": ["cmd", "q", "ans"], "txt": {"cmd-t": "4 more blocks", "w-sub": "warehouse tables, block 1,009", "p-sub": "graph sync, behind", "r-sub": "graph, block 1,005", "lag-t": "write side 1,009, read side 1,005", "lag-2": "lag: 4 blocks, shown to the user", "q-t": "where did the money in block 1,008 go?", "ans-t": "not in the graph yet: graph is at block 1,005"}, "fill": {"lag-box": "var(--wait)", "p-box": "var(--wait)", "ans-t": "var(--wait)"}, "stroke": {"ans-l": "var(--wait)"}},
+ {"t": "Caught up", "b": "The projector loop reaches block 1,009. The analyst asks again. Line 8 finds 1,008 inside the graph, and line 11 answers: two hops, then into an exchange.", "w": "CQRS is worth it when reads and writes want different shapes. The price is a short lag that every reader must expect.", "on": ["proj", "q", "ans"], "txt": {"w-sub": "warehouse tables, block 1,009", "r-sub": "graph, block 1,009", "lag-t": "both sides at block 1,009", "q-t": "where did the money in block 1,008 go?"}, "fill": {"lag-box": "var(--ok)"}}
+],
+"es":[
+ {"t": "Store the events, not the state", "b": "Wallet W has six events, line 1: received 10, sent 3, received 5, sent 2, received 4, sent 1. Nothing stores the balance itself. The list only grows.", "w": "A blockchain is the purest event store. It never forgets a block."},
+ {"t": "Replay: fold the events", "b": "To know the balance, line 2 starts at 0 and line 4 walks the events in order. Line 7 makes a Sent negative and line 8 adds. 10 minus 3 plus 5: the balance is 12 after three events.", "w": "The state is a fold: a running total over the list.", "on": ["ptr"], "mv": {"ptr": [340, 178]}, "fill": {"e1": "var(--ok)", "e2": "var(--ok)", "e3": "var(--ok)"}, "txt": {"st-t": "balance: 12 ETH", "st-n": "events read: 3"}},
+ {"t": "Replay to the end", "b": "Line 4 carries on with events 4 to 6: minus 2, plus 4, minus 1. Line 9 returns 13 ETH after all six.", "w": "Any read model, a balance, a graph, a report, is a fold over the same events.", "on": ["ptr"], "mv": {"ptr": [340, 346]}, "fill": {"e1": "var(--ok)", "e2": "var(--ok)", "e3": "var(--ok)", "e4": "var(--ok)", "e5": "var(--ok)", "e6": "var(--ok)"}, "txt": {"st-t": "balance: 13 ETH", "st-n": "events read: 6"}},
+ {"t": "A bad projection", "b": "The projector had a bug, line 14: it read event 4 as 20 ETH sent instead of 2. 12 minus 20 plus 4 minus 1 is minus 5 ETH. The events themselves are still right.", "w": "The mistake is in the fold, not in the history. So the history can fix it.", "on": ["ptr"], "mv": {"ptr": [340, 346]}, "fill": {"e1": "var(--ok)", "e2": "var(--ok)", "e3": "var(--ok)", "e4": "var(--fail)", "e5": "var(--ok)", "e6": "var(--ok)", "st-box": "var(--fail)"}, "txt": {"st-t": "balance: -5 ETH (projector bug)", "st-n": "events read: 6"}},
+ {"t": "Rebuild from the events", "b": "Fix line 14 away. Throw the state away and run line 2 from 0 over all six events. The balance is 13 ETH again. A bad read model is never repaired row by row.", "w": "A bad read model is never repaired row by row. It is rebuilt from the events, as the indexer rebuilds from block 1 when its decoder changes.", "on": ["ptr"], "mv": {"ptr": [340, 346]}, "fill": {"e1": "var(--ok)", "e2": "var(--ok)", "e3": "var(--ok)", "e4": "var(--ok)", "e5": "var(--ok)", "e6": "var(--ok)"}, "txt": {"st-t": "balance: 13 ETH (rebuilt)", "st-n": "events read: 6"}},
+ {"t": "A snapshot", "b": "Replaying from the start gets slow on a long list. Line 12 saves the fold after event 4: 10 ETH. A snapshot is a cache of the fold.", "w": "A snapshot is a cache of the fold. It can always be thrown away and rebuilt from the events.", "on": ["snap"], "fill": {"e1": "var(--undo)", "e2": "var(--undo)", "e3": "var(--undo)", "e4": "var(--undo)"}, "txt": {"st-t": "balance: 10 ETH", "st-n": "saved as a snapshot"}},
+ {"t": "Replay from the snapshot", "b": "Line 13 starts the fold at the snapshot, 10, and applies only events 5 and 6: plus 4, minus 1. The balance is 13 ETH, after reading two events instead of six.", "w": "Snapshots shorten the replay. The events stay the truth.", "on": ["snap", "ptr"], "mv": {"ptr": [340, 346]}, "fill": {"e1": "var(--line)", "e2": "var(--line)", "e3": "var(--line)", "e4": "var(--line)", "e5": "var(--ok)", "e6": "var(--ok)"}, "txt": {"st-t": "balance: 13 ETH", "st-n": "events read: 2, from the snapshot"}},
+ {"t": "Old event shapes", "b": "Event 1 was written years ago in shape version 1, with no token. Line 5 calls line 10, which upgrades it to version 2, Received 10 ETH, each time it is read. The store is never edited.", "w": "Events are never rewritten. Old shapes are upgraded when read, or copied once into a new stream.", "on": ["up"], "fill": {"e1": "var(--wait)"}, "txt": {"e1t": "1  Received 10 (v1, no token)"}}
+]};
+const MODES=Object.keys(STEPS),$=id=>document.getElementById(id);
+const svg=document.querySelector(".stage svg"),base={};
+svg.querySelectorAll("[id]").forEach(el=>{base[el.id]={f:el.getAttribute("fill"),s:el.getAttribute("stroke"),t:el.children.length?null:el.textContent,d:el.getAttribute("stroke-dasharray")}});
+let mode=MODES[0],i=0,timer=null;
+function setA(el,a,v){v===null||v===undefined?el.removeAttribute(a):el.setAttribute(a,v);}
+function render(){
+  const s=STEPS[mode][i],reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${STEPS[mode].length}`;
+  svg.querySelectorAll("[data-mode]").forEach(el=>el.style.display=el.dataset.mode===mode?"":"none");
+  for(const id in base){const el=$(id),b=base[id];setA(el,"fill",b.f);setA(el,"stroke",b.s);setA(el,"stroke-dasharray",b.d);if(b.t!==null)el.textContent=b.t;}
+  for(const id in s.fill||{})$(id).setAttribute("fill",s.fill[id]);
+  for(const id in s.stroke||{})$(id).setAttribute("stroke",s.stroke[id]);
+  for(const id in s.dash||{})$(id).setAttribute("stroke-dasharray",s.dash[id]);
+  for(const id in s.txt||{})$(id).textContent=s.txt[id];
+  for(const id in s.mv||{}){const [x,y]=s.mv[id];$(id).style.transform=`translate(${x}px,${y}px)`;}
+  svg.querySelectorAll(".msg").forEach(el=>el.classList.remove("on"));
+  (s.on||[]).forEach((id,k)=>{const show=()=>$(id).classList.add("on");reduce?show():setTimeout(show,120*k+30)});
+  $("prev").disabled=i===0;$("next").disabled=i===STEPS[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(STEPS[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=STEPS[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+</script>
+<script id="code-panel">
+const CODE={"cqrs": {"pc": ["write model = warehouse tables            # takes commands", "read model  = graph                        # built for questions", "indexBlock(b): write.block = b             # a command, done at once", "projector loop:                            # the graph sync", "  while read.block < write.block:", "    read.block += 1; fold its rows into links", "query(block):                              # reads the graph only", "  if block > read.block:                    # not projected yet", "    if lag is shown: say 'graph at read.block, n behind'", "    else: answer from stale data            # the failure", "  answer from the graph", "# lag = write.block - read.block: design for it"], "real": ["// Write is the write model: the warehouse tables. Read is the graph.", "type Write struct{ Block int }", "type Read struct{ Block int }", "", "// Command: IndexBlock. Only the write model changes, at once.", "func IndexBlock(w *Write, b int) { w.Block = b }", "", "// Project is the graph sync: read what is new, update the graph, remember how far.", "func Project(w *Write, r *Read, max int) {", "\tfor r.Block < w.Block && max > 0 {", "\t\tr.Block++ // fold the rows of block r.Block into links", "\t\tmax--", "\t}", "}", "", "// Query reads the graph only, and says how fresh its answer is.", "func Query(w *Write, r *Read, block int, showLag bool) string {", "\tif block > r.Block {", "\t\tif showLag {", "\t\t\treturn fmt.Sprintf(\"not in the graph yet: graph is at block %d, %d behind\", r.Block, w.Block-r.Block)", "\t\t}", "\t\treturn \"no outgoing money\" // stale, and believed", "\t}", "\treturn \"two hops, then into an exchange\"", "}"], "map": {"1": [2], "2": [3], "3": [6], "4": [9], "5": [10], "6": [11], "7": [17], "8": [18], "9": [19, 20], "10": [22], "11": [24], "12": [20]}, "label": "Go"}, "es": {"pc": ["events of wallet W = append only list     # never changed or deleted", "fold(start, events):                       # the state is a fold", "  balance = start", "  for e in events, in order:", "    e = upcast(e)                           # old shapes, at read time", "    amount = e.eth", "    if e is Sent: amount = -amount", "    balance += amount", "  return balance", "upcast(e): if e.version == 1: e.version = 2  # v1 meant ETH", "rebuild: throw the state away, fold(0, all events)", "snapshot = fold(0, events 1..4)            # a cache of the fold", "fold(snapshot, events 5..6)                # shorter replay", "# the bug lives in the fold, never in the events"], "real": ["type Event struct {", "\tVersion int", "\tKind    string // \"Received\" or \"Sent\"", "\tETH     int", "}", "", "// Upcast turns an old v1 event into v2 when it is read. The store is never edited.", "func Upcast(e Event) Event {", "\tif e.Version == 1 {", "\t\te.Version = 2 // v1 had no token; it only ever meant ETH", "\t}", "\treturn e", "}", "", "// Fold replays events from a starting state. bug4 is the projector bug.", "func Fold(start int, events []Event, bug4 bool) int {", "\tbal := start", "\tfor k, e := range events {", "\t\te = Upcast(e)", "\t\tamt := e.ETH", "\t\tif bug4 && k == 3 {", "\t\t\tamt = 20 // read event 4 as 20 ETH sent", "\t\t}", "\t\tif e.Kind == \"Sent\" {", "\t\t\tamt = -amt", "\t\t}", "\t\tbal += amt", "\t}", "\treturn bal", "}"], "map": {"1": [1], "2": [16], "3": [17], "4": [18], "5": [19], "6": [20], "7": [24, 25], "8": [27], "9": [29], "10": [8, 10], "11": [15], "12": [15, 16], "13": [16], "14": [21, 22]}, "label": "Go"}};
+const PCS={"cqrs": [[1, 2], [3], [4, 5, 6], [5, 6], [7, 11], [7, 8, 10], [7, 8, 9, 12], [4, 5, 6, 7, 8, 11]], "es": [[1], [2, 3, 4, 6, 7, 8, 9], [4, 8, 9], [6, 14], [11, 2, 3, 4, 8, 9], [12], [13, 3, 4, 8, 9], [5, 10]]};
+let view="pc";
+function codeMode(){return (typeof mode!=="undefined"&&CODE[mode])?mode:Object.keys(CODE)[0];}
+function escC(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function drawCode(){
+  const m=codeMode(),c=CODE[m],step=(PCS[m]||[])[i]||[];
+  const real=view==="real"&&c.real;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(step);
+  if(real){hl=new Set();step.forEach(n=>(c.map[n]||[]).forEach(x=>hl.add(x)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("realtab").disabled=!c.real;
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=escC(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`;}).join("");
+}
+const renderNoCode=render;
+render=function(){renderNoCode();drawCode();};
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode();});
+drawCode();
+
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,578 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis versus Memcached</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Redis versus Memcached</h1>
+  <p class="lede">Chain Insights needs a shared cache for rate limits, a top list of screened addresses and drop messages. Press <b>Next</b> and compare how Memcached and Redis work inside. Then watch one slow command stop every Redis client.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="mc">Memcached</button>
+    <button role="tab" aria-selected="false" data-mode="rd">Redis</button>
+    <button role="tab" aria-selected="false" data-mode="slow">Redis: one slow command</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Clients sending commands to a cache server with four threads, a command queue and a feature list</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="cl" class="box" x="20" y="150" width="150" height="80" rx="8" fill="var(--coord)"/>
+        <text id="h-cl" data-on="cl" x="95.0" y="176" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Clients</text>
+        <text id="s-cl" data-on="cl" x="95.0" y="200" text-anchor="middle" font-size="14" fill="#fff">many at once</text>
+        <rect x="230" y="20" width="655" height="330" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <text id="srv" x="557" y="46" text-anchor="middle" font-size="16" font-weight="700" fill="var(--fg)"></text>
+        <rect id="th0" class="box" x="248" y="64" width="148" height="50" rx="8" fill="var(--line)"/>
+        <text id="t-th0" data-on="th0" x="322.0" y="94.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="th1" class="box" x="406" y="64" width="148" height="50" rx="8" fill="var(--line)"/>
+        <text id="t-th1" data-on="th1" x="480.0" y="94.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="th2" class="box" x="564" y="64" width="148" height="50" rx="8" fill="var(--line)"/>
+        <text id="t-th2" data-on="th2" x="638.0" y="94.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="th3" class="box" x="722" y="64" width="148" height="50" rx="8" fill="var(--line)"/>
+        <text id="t-th3" data-on="th3" x="796.0" y="94.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="qt" x="248" y="150" text-anchor="start" font-size="13" font-weight="700" fill="var(--muted)">Commands waiting</text>
+        <rect id="cq0" class="box" x="248" y="160" width="118" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-cq0" data-on="cq0" x="307.0" y="183.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="cq1" class="box" x="374" y="160" width="118" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-cq1" data-on="cq1" x="433.0" y="183.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="cq2" class="box" x="500" y="160" width="118" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-cq2" data-on="cq2" x="559.0" y="183.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="cq3" class="box" x="626" y="160" width="118" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-cq3" data-on="cq3" x="685.0" y="183.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="cq4" class="box" x="752" y="160" width="118" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-cq4" data-on="cq4" x="811.0" y="183.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="ft" x="248" y="232" text-anchor="start" font-size="13" font-weight="700" fill="var(--muted)">What it offers</text>
+        <rect id="f0" class="box" x="248" y="242" width="148" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-f0" data-on="f0" x="322.0" y="265.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="f1" class="box" x="406" y="242" width="148" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-f1" data-on="f1" x="480.0" y="265.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="f2" class="box" x="564" y="242" width="148" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-f2" data-on="f2" x="638.0" y="265.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="f3" class="box" x="722" y="242" width="148" height="36" rx="18.0" fill="var(--panel)"/>
+        <text id="t-f3" data-on="f3" x="796.0" y="265.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="nt" x="557" y="326" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-redis-vs-memcached/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">running, or offered</span>
+    <span style="--c:var(--coord)">Redis main thread</span>
+    <span style="--c:var(--wait)">waiting in the queue, or empty after a restart</span>
+    <span style="--c:var(--fail)">blocking every client</span>
+    <span style="--c:var(--line)">idle, or not offered</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Memcached: large plain caches of rendered pages or query results where many cores matter. Facebook ran it at huge scale. Redis: rate limits, sessions, leaderboards, queues, locks and invalidation messages.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Pick Redis unless you only need big plain values across many cores. Treat either one as a cache, not the system of record, unless you configure and test persistence. Ban <code>KEYS</code> and big <code>DEL</code> on shared Redis.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Memcached</th><th>Redis</th></tr>
+      <tr><td>Threads</td><td>Many, uses every core</td><td>One main thread for commands</td></tr>
+      <tr><td>Values</td><td>Opaque bytes</td><td>Strings, hashes, lists, sets, sorted sets, streams</td></tr>
+      <tr><td>Persistence and replicas</td><td>No</td><td>Yes, if configured</td></tr>
+      <tr><td>Publish-subscribe</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Main trap</td><td>Empty after every restart</td><td>One slow command blocks everyone</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Memcached is a multi-threaded plain key-value cache, Redis is a single-threaded data-structure server with persistence and publish-subscribe, so I pick Redis unless I only need big plain blobs across many cores.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[248,286,620];
+const TH=(a)=>{const f={},t={};a.forEach((v,k)=>{t["t-th"+k]=v[0];f["th"+k]=v[1]});return{fill:f,text:t};};
+const CQ=(a)=>{const f={},t={};a.forEach((v,k)=>{t["t-cq"+k]=v[0];f["cq"+k]=v[1]});return{fill:f,text:t};};
+const FT=(a)=>{const f={},t={};a.forEach((v,k)=>{t["t-f"+k]=v[0];f["f"+k]=v[1]});return{fill:f,text:t};};
+const M=(...xs)=>xs.reduce((o,x)=>({fill:{...o.fill,...x.fill},text:{...o.text,...x.text}}),{fill:{},text:{}});
+const EMPTYQ=CQ([["",PANEL],["",PANEL],["",PANEL],["",PANEL],["",PANEL]]);
+const steps={
+"mc":[
+ {pc:[1, 4, 5],t:"Memcached: many threads",b:"Memcached runs one worker thread per core. Clients' requests are spread across all four threads and served at the same time.",w2:"One big box uses all its cores for plain gets and sets.",
+  ...M(TH([["thread 1: get",OK],["thread 2: set",OK],["thread 3: get",OK],["thread 4: get",OK]]),EMPTYQ,FT([["",PANEL],["",PANEL],["",PANEL],["",PANEL]])),text:{...M(TH([["thread 1: get",OK],["thread 2: set",OK],["thread 3: get",OK],["thread 4: get",OK]])).text,srv:"Memcached",nt:"requests spread over all four threads",...EMPTYQ.text,"t-f0":"","t-f1":"","t-f2":"","t-f3":""},
+  a:[[170,175,246,95,""],[170,185,404,95,""],[170,195,562,95,""],[170,205,720,95,""]]},
+ {pc:[2],t:"Plain keys and values",b:"Each value is an opaque blob of bytes. Memcached can get it, set it and expire it. It does not know what is inside.",w2:"Simple on purpose: nothing to compute, nothing to block on.",
+  ...FT([["get, set, expire",OK],["value: opaque bytes",OK],["no persistence",LINE],["no replication",LINE]])},
+ {pc:[8, 9],t:"A restart empties it, by design",b:"Restart the Memcached process and every key is gone. Two Memcached nodes do not copy each other.",w2:"It is a pure cache. The source must always be able to rebuild it.",
+  ...M(TH([["empty",LINE],["empty",LINE],["empty",LINE],["empty",LINE]]),FT([["get, set, expire",OK],["value: opaque bytes",OK],["restart: empty",WAIT],["no replication",LINE]])),text:{...M(TH([["empty",LINE],["empty",LINE],["empty",LINE],["empty",LINE]]),FT([["get, set, expire",OK],["value: opaque bytes",OK],["restart: empty",WAIT],["no replication",LINE]])).text,nt:"the source rebuilds it on misses"}}
+],
+"rd":[
+ {pc:[1, 2, 3, 4],t:"Redis: one main thread",b:"Redis runs every command on one main thread, one after another. Other threads only help with network and background work.",w2:"Each command runs alone, so each one is atomic. No locks are needed.",
+  ...M(TH([["main thread",COORD],["network help",LINE],["network help",LINE],["background",LINE]]),CQ([["INCR rl:0xd8",WAIT],["ZINCRBY top",WAIT],["GET risk:0x77",WAIT],["PUBLISH drop",WAIT],["EXPIRE rl:0xd8",WAIT]]),FT([["",PANEL],["",PANEL],["",PANEL],["",PANEL]])),
+  text:{...M(TH([["main thread",COORD],["network help",LINE],["network help",LINE],["background",LINE]]),CQ([["INCR rl:0xd8",WAIT],["ZINCRBY top",WAIT],["GET risk:0x77",WAIT],["PUBLISH drop",WAIT],["EXPIRE rl:0xd8",WAIT]])).text,srv:"Redis","t-f0":"","t-f1":"","t-f2":"","t-f3":"",nt:""},a:[[170,190,246,178,"commands queue"]]},
+ {pc:[6, 7, 8],t:"A rate limit per wallet",b:"INCR rl:0xd8 adds one to the wallet's counter. The check on line 7: is the counter 1? Then EXPIRE gives it a 60-second life. The check on line 8: is it over 100? Then the request is refused. 103 requests in a minute: 3 refused.",w2:"A counter with expiry is a rate limit in two commands. Memcached cannot do this safely.",...M(CQ([["INCR rl:0xd8",OK],["ZINCRBY top",WAIT],["GET risk:0x77",WAIT],["PUBLISH drop",WAIT],["EXPIRE rl:0xd8",OK]]),FT([["counters + expiry",OK],["",PANEL],["",PANEL],["",PANEL]]))},
+ {pc:[9, 10],t:"A top list and drop messages",b:"ZINCRBY adds to an address's score in a sorted set: the most-screened addresses. PUBLISH sends drop risk:0x77 to every instance listening.",w2:"Data structures and publish-subscribe on the server. That is why Chain Insights picks Redis.",
+  ...M(CQ([["INCR rl:0xd8",OK],["ZINCRBY top",OK],["GET risk:0x77",OK],["PUBLISH drop",OK],["EXPIRE rl:0xd8",OK]]),FT([["counters + expiry",OK],["sorted sets",OK],["publish-subscribe",OK],["persistence, replicas",OK]]))}
+],
+"slow":[
+ {pc:[12],t:"The failure that matters: one slow command",b:"Someone runs KEYS * on a Redis with a million keys. Line 3 runs it to the end before the next command. In the program a GET queued behind it finishes at unit 1,000,001 instead of unit 2.",w2:"One thread means one slow command stops every client. Requests time out across the whole service.",
+  ...M(TH([["busy: KEYS *",FAIL],["network help",LINE],["network help",LINE],["background",LINE]]),CQ([["KEYS *",FAIL],["GET risk:0x77",WAIT],["INCR rl:0xd8",WAIT],["GET risk:0x18",WAIT],["PUBLISH drop",WAIT]]),FT([["counters + expiry",OK],["sorted sets",OK],["publish-subscribe",OK],["persistence, replicas",OK]])),
+  text:{...M(TH([["busy: KEYS *",FAIL],["network help",LINE],["network help",LINE],["background",LINE]]),CQ([["KEYS *",FAIL],["GET risk:0x77",WAIT],["INCR rl:0xd8",WAIT],["GET risk:0x18",WAIT],["PUBLISH drop",WAIT]]),FT([["counters + expiry",OK],["sorted sets",OK],["publish-subscribe",OK],["persistence, replicas",OK]])).text,srv:"Redis",nt:""},ban:["every client waits for one command",286]},
+ {pc:[13],t:"Fix: SCAN in small steps",b:"SCAN walks the keys a hundred at a time. Each step is its own command, so line 2 picks up the waiting GET after one step. The GET finishes at unit 101.",w2:"Never run an unbounded command on a shared Redis. Check the slow log for the ones that slip through.",
+  ...M(TH([["main thread",COORD],["network help",LINE],["network help",LINE],["background",LINE]]),CQ([["SCAN 0 COUNT 100",OK],["GET risk:0x77",OK],["SCAN 17 COUNT 100",OK],["INCR rl:0xd8",OK],["GET risk:0x18",OK]]))},
+ {pc:[14, 15],t:"UNLINK for big deletes",b:"Deleting one huge set with DEL frees its memory on the main thread. UNLINK removes the key at once and frees the memory on a background thread.",w2:"Same result, no pause for everyone else.",
+  ...M(TH([["main thread",COORD],["network help",LINE],["network help",LINE],["frees memory",OK]]),CQ([["UNLINK big:set",OK],["GET risk:0x77",OK],["INCR rl:0xd8",OK],["GET risk:0x18",OK],["PUBLISH drop",OK]])),text:{...M(TH([["main thread",COORD],["network help",LINE],["network help",LINE],["frees memory",OK]]),CQ([["UNLINK big:set",OK],["GET risk:0x77",OK],["INCR rl:0xd8",OK],["GET risk:0x18",OK],["PUBLISH drop",OK]])).text,nt:"big values are freed off the main thread"}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"mc": {
+"label": "Go",
+"pc": [
+"memcached = 4 worker threads, one per core",
+"data = map of key -> bytes             # it never looks inside",
+"",
+"on get(key) or set(key, bytes, ttl):",
+"  any free thread serves it            # 4 requests at the same time",
+"time for n gets = n / 4",
+"",
+"on restart:",
+"  data = empty                         # a pure cache, by design",
+"no copy between two nodes              # the source rebuilds it"
+],
+"real": [
+"type Memcached struct {",
+"\tthreads int",
+"\tdata    map[string][]byte // blobs it never looks inside",
+"}",
+"",
+"// Serve: the time, in units, for n gets of cost 1",
+"func (m *Memcached) Serve(n int) int {",
+"\treturn (n + m.threads - 1) / m.threads",
+"}",
+"",
+"// a restart empties it: the source must rebuild it",
+"func (m *Memcached) Restart() {",
+"\tm.data = map[string][]byte{}",
+"}",
+"",
+"mc := &Memcached{threads: 4, data: map[string][]byte{\"risk:0x77\": []byte(\"high\")}}",
+"units := mc.Serve(8) // 2 units: four threads at once"
+],
+"map": {
+"1": [
+1,
+2
+],
+"2": [
+3
+],
+"4": [
+6,
+7
+],
+"5": [
+8
+],
+"6": [
+16
+],
+"8": [
+11,
+12
+],
+"9": [
+13
+],
+"10": [
+11
+]
+}
+},
+"rd": {
+"label": "Go",
+"pc": [
+"one main thread runs the queue in order",
+"for each command in the queue:",
+"  run it to the end                   # nothing else runs meanwhile",
+"  so every command is atomic",
+"",
+"INCR rl:0xd8                          # rate limit per wallet",
+"if the counter is 1: EXPIRE rl:0xd8 60",
+"if the counter > 100: refuse",
+"ZINCRBY top 1 0x77                    # sorted set: most screened",
+"PUBLISH drops \"drop risk:0x77\"        # every instance hears it",
+"",
+"KEYS *          walks every key in one command   # all wait",
+"SCAN 0 COUNT 100  walks 100 keys per command     # others run between",
+"DEL bigset      frees memory on the main thread",
+"UNLINK bigset   frees memory on a background thread"
+],
+"real": [
+"// one thread: each command waits for all before it",
+"func Run(queue []cmd) map[string]int {",
+"\tt, done := 0, map[string]int{}",
+"\tfor _, c := range queue {",
+"\t\tt += c.cost // nothing else runs meanwhile",
+"\t\tdone[c.name] = t",
+"\t}",
+"\treturn done",
+"}",
+"",
+"if r.Incr(\"rl:0xd8\") == 1 {",
+"\tr.Expire(\"rl:0xd8\", 60)",
+"}",
+"if r.counters[\"rl:0xd8\"] > limit { // limit is 100",
+"\trefused++ // 103 requests: 3 refused",
+"}",
+"r.ZIncrBy(a, 1)",
+"r.Publish(\"drop risk:0x77\")",
+"",
+"slow := Run([]cmd{{\"KEYS *\", keys}, {\"GET risk:0x77\", 1}})",
+"// the GET finishes at unit 1,000,001",
+"for i := 0; i < keys/100; i++ {",
+"\tq = append(q, cmd{fmt.Sprint(\"SCAN step \", i), 100}) // a GET slips in between",
+"}",
+"// the GET finishes at unit 101",
+"unlink := Run([]cmd{{\"UNLINK bigset\", 1}, {\"GET risk:0x77\", 1}}) // GET at unit 2",
+"del := Run([]cmd{{\"DEL bigset\", 5_000_000}, {\"GET risk:0x77\", 1}}) // GET at unit 5,000,001"
+],
+"map": {
+"1": [
+2,
+3
+],
+"2": [
+4
+],
+"3": [
+5,
+6
+],
+"4": [
+5
+],
+"6": [
+11
+],
+"7": [
+11,
+12,
+13
+],
+"8": [
+14,
+15,
+16
+],
+"9": [
+17
+],
+"10": [
+18
+],
+"12": [
+20,
+21
+],
+"13": [
+22,
+23,
+24,
+25
+],
+"14": [
+27
+],
+"15": [
+26
+]
+}
+},
+"slow": {
+"label": "Go",
+"pc": [
+"one main thread runs the queue in order",
+"for each command in the queue:",
+"  run it to the end                   # nothing else runs meanwhile",
+"  so every command is atomic",
+"",
+"INCR rl:0xd8                          # rate limit per wallet",
+"if the counter is 1: EXPIRE rl:0xd8 60",
+"if the counter > 100: refuse",
+"ZINCRBY top 1 0x77                    # sorted set: most screened",
+"PUBLISH drops \"drop risk:0x77\"        # every instance hears it",
+"",
+"KEYS *          walks every key in one command   # all wait",
+"SCAN 0 COUNT 100  walks 100 keys per command     # others run between",
+"DEL bigset      frees memory on the main thread",
+"UNLINK bigset   frees memory on a background thread"
+],
+"real": [
+"// one thread: each command waits for all before it",
+"func Run(queue []cmd) map[string]int {",
+"\tt, done := 0, map[string]int{}",
+"\tfor _, c := range queue {",
+"\t\tt += c.cost // nothing else runs meanwhile",
+"\t\tdone[c.name] = t",
+"\t}",
+"\treturn done",
+"}",
+"",
+"if r.Incr(\"rl:0xd8\") == 1 {",
+"\tr.Expire(\"rl:0xd8\", 60)",
+"}",
+"if r.counters[\"rl:0xd8\"] > limit { // limit is 100",
+"\trefused++ // 103 requests: 3 refused",
+"}",
+"r.ZIncrBy(a, 1)",
+"r.Publish(\"drop risk:0x77\")",
+"",
+"slow := Run([]cmd{{\"KEYS *\", keys}, {\"GET risk:0x77\", 1}})",
+"// the GET finishes at unit 1,000,001",
+"for i := 0; i < keys/100; i++ {",
+"\tq = append(q, cmd{fmt.Sprint(\"SCAN step \", i), 100}) // a GET slips in between",
+"}",
+"// the GET finishes at unit 101",
+"unlink := Run([]cmd{{\"UNLINK bigset\", 1}, {\"GET risk:0x77\", 1}}) // GET at unit 2",
+"del := Run([]cmd{{\"DEL bigset\", 5_000_000}, {\"GET risk:0x77\", 1}}) // GET at unit 5,000,001"
+],
+"map": {
+"1": [
+2,
+3
+],
+"2": [
+4
+],
+"3": [
+5,
+6
+],
+"4": [
+5
+],
+"6": [
+11
+],
+"7": [
+11,
+12,
+13
+],
+"8": [
+14,
+15,
+16
+],
+"9": [
+17
+],
+"10": [
+18
+],
+"12": [
+20,
+21
+],
+"13": [
+22,
+23,
+24,
+25
+],
+"14": [
+27
+],
+"15": [
+26
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JWT Refresh Sessions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>JWTs, refresh tokens and sessions</h1>
+  <p class="lede">An API gets an access token that says <code>sub: 42</code>, <code>scope: graph:read</code>, and expires in 15 minutes. Press <b>Next</b> to watch it live, expire and rotate. The second tab shows the three classic mistakes.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="life">A token's life</button>
+    <button role="tab" aria-selected="false" data-mode="classics">Three classic mistakes</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated life of an access token and its refresh token</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-jwt-refresh-sessions/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">held, or still being checked</span>
+    <span style="--c:var(--ok)">checked and allowed, or a defence that held</span>
+    <span style="--c:var(--fail)">attacker, refused, or a hole</span>
+    <span style="--c:var(--undo)">rotated, revoked or replaced</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a JWT</h2>
+      <p>A public API called by agents and services: short-lived bearer JWTs, verified with RS256 or ES256, so the verifier holds only a public key and never the signing secret.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet a session</h2>
+      <p>A browser app with a server behind it: an HttpOnly, Secure, SameSite session cookie. Never keep a token in browser local storage, where any script on the page can read it.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Access JWT</th><th>Refresh token</th><th>Session cookie</th></tr>
+      <tr><td>Checked by</td><td>The API, alone, with a public key</td><td>The issuer only</td><td>The server, against its session store</td></tr>
+      <tr><td>Lives</td><td>Minutes</td><td>Days, rotated on every use</td><td>Until logout or idle timeout</td></tr>
+      <tr><td>Revoke</td><td>Wait for expiry, or a deny list</td><td>Revoke the family</td><td>Delete the row, instant</td></tr>
+      <tr><td>Fits</td><td>APIs, services, agents</td><td>Getting new access tokens</td><td>A browser and its own server</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A JWT is a signed statement that cannot be recalled, so I pin the algorithm, keep the expiry short, and rotate the refresh token."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"life":[["a", "App", "coord"], ["r", "Graph API", "svc"], ["s", "Issuer", "svc"], ["x", "Attacker", "fail"]],
+"classics":[["a", "App", "coord"], ["r", "Graph API", "svc"], ["s", "Issuer", "svc"], ["x", "Attacker", "fail"]]
+};
+const code={
+"life": {
+"label": "Go",
+"pc": [
+"on sign in: access = sign(RS256, {sub 42, scope graph:read, exp now+900s})",
+"            refresh = new id R1, in family 'this sign-in'",
+"API, on each call with token t:",
+"  alg, claims, sig = split t at the dots    # anyone can decode the claims",
+"  if alg != RS256: return 401               # the API picks the algorithm",
+"  if not rsaVerify(publicKey, header.claims, sig): return 401",
+"  if now >= claims.exp: return 401 expired",
+"  if claims.jti is on the deny list: return 401",
+"  return 200                                # the issuer was never asked",
+"issuer, on refresh with r:",
+"  if family(r) is revoked: return invalid_grant",
+"  if r was already used:                    # a second use is a thief",
+"    revoke family(r); return invalid_grant",
+"  mark r used; return new access + new refresh"
+],
+"real": [
+"func (s *issuer) issue(fam string, now int64) (access, refresh string) {",
+"\ts.n++",
+"\taccess = sign(\"RS256\", claims{Sub: \"42\", Scope: \"graph:read\", Exp: now + 15*60, Jti: fmt.Sprint(\"a\", s.n)})",
+"\trefresh = fmt.Sprint(\"R\", s.n)",
+"\ts.family[refresh] = fam",
+"\treturn",
+"}",
+"",
+"// verify pins RS256, checks the signature with the public key, the expiry",
+"// and the deny list. It never calls the issuer.",
+"func verify(tok string, now int64) error {",
+"\talg, c, body, sig := parse(tok)",
+"\tif alg != \"RS256\" {",
+"\t\treturn errors.New(\"401 only RS256\")",
+"\t}",
+"\tsum := sha256.Sum256([]byte(body))",
+"\tif rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, sum[:], sig) != nil {",
+"\t\treturn errors.New(\"401 bad signature\")",
+"\t}",
+"\tif now >= c.Exp {",
+"\t\treturn errors.New(\"401 expired\")",
+"\t}",
+"\tif denyList[c.Jti] {",
+"\t\treturn errors.New(\"401 on the deny list\")",
+"\t}",
+"\treturn nil",
+"}",
+"",
+"// refresh rotates: one use per refresh token. A second use is theft.",
+"func (s *issuer) refresh(r string, now int64) (string, string, error) {",
+"\tfam := s.family[r]",
+"\tif s.revoked[fam] {",
+"\t\treturn \"\", \"\", errors.New(\"invalid_grant: family revoked, sign in again\")",
+"\t}",
+"\tif s.used[r] {",
+"\t\ts.revoked[fam] = true // reuse: trust nobody in this family",
+"\t\treturn \"\", \"\", errors.New(\"invalid_grant: \" + r + \" reused, family revoked\")",
+"\t}",
+"\ts.used[r] = true",
+"\ta, nr := s.issue(fam, now)",
+"\treturn a, nr, nil",
+"}"
+],
+"map": {
+"1": [
+3
+],
+"2": [
+4,
+5
+],
+"3": [
+11
+],
+"4": [
+12
+],
+"5": [
+13,
+14,
+15
+],
+"6": [
+16,
+17,
+18,
+19
+],
+"7": [
+20,
+21,
+22
+],
+"8": [
+23,
+24,
+25
+],
+"9": [
+26
+],
+"10": [
+30
+],
+"11": [
+31,
+32,
+33,
+34
+],
+"12": [
+35
+],
+"13": [
+36,
+37
+],
+"14": [
+39,
+40,
+41
+]
+}
+},
+"classics": {
+"label": "Go",
+"pc": [
+"# broken verifier",
+"alg = header.alg                        # chosen by the token itself",
+"if alg != none: check the signature     # 'none' skips the check",
+"if now >= exp: return 401",
+"return 200",
+"# fixed verifier",
+"if alg != RS256: return 401             # the verifier decides",
+"check the RSA signature with the public key",
+"if now >= exp: return 401               # exp = now + 15 min, never 30 days",
+"if jti is on the deny list: return 401  # emergency recall",
+"return 200",
+"# browser app with its own server: a session cookie",
+"delete the session row -> the next request gets 401 at once"
+],
+"real": [
+"// verifyBroken lets the token's own header choose how it is checked.",
+"func verifyBroken(tok string, now int64) error {",
+"\talg, c, body, sig := parse(tok)",
+"\tif alg != \"none\" { // the token said \"do not check me\", and we obeyed",
+"\t\tsum := sha256.Sum256([]byte(body))",
+"\t\tif rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, sum[:], sig) != nil {",
+"\t\t\treturn errors.New(\"401 bad signature\")",
+"\t\t}",
+"\t}",
+"\tif now >= c.Exp {",
+"\t\treturn errors.New(\"401 expired\")",
+"\t}",
+"\treturn nil",
+"}",
+"",
+"var denyList = map[string]bool{}",
+"",
+"// verify pins RS256, checks the signature with the public key, the expiry",
+"// and the deny list. It never calls the issuer.",
+"func verify(tok string, now int64) error {",
+"\talg, c, body, sig := parse(tok)",
+"\tif alg != \"RS256\" {",
+"\t\treturn errors.New(\"401 only RS256\")",
+"\t}",
+"\tsum := sha256.Sum256([]byte(body))",
+"\tif rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, sum[:], sig) != nil {",
+"\t\treturn errors.New(\"401 bad signature\")",
+"\t}",
+"\tif now >= c.Exp {",
+"\t\treturn errors.New(\"401 expired\")",
+"\t}",
+"\tif denyList[c.Jti] {",
+"\t\treturn errors.New(\"401 on the deny list\")",
+"\t}",
+"\treturn nil",
+"}",
+"",
+"// sessionValid is the browser-app check: a server-side row, deleted at once.",
+"func sessionValid(sessions map[string]string, sid string) bool {",
+"\t_, ok := sessions[sid]",
+"\treturn ok",
+"}"
+],
+"map": {
+"1": [
+1,
+2
+],
+"2": [
+3
+],
+"3": [
+4,
+5,
+6,
+7,
+8
+],
+"4": [
+10,
+11,
+12
+],
+"5": [
+13
+],
+"6": [
+18,
+20
+],
+"7": [
+22,
+23,
+24
+],
+"8": [
+25,
+26,
+27,
+28
+],
+"9": [
+29,
+30,
+31
+],
+"10": [
+16,
+32,
+33,
+34
+],
+"11": [
+35
+],
+"12": [
+38,
+39
+],
+"13": [
+40,
+41
+]
+}
+}
+};
+const steps={
+"life":[
+ {"t": "Sign in", "b": "The app signs the user in. The issuer returns an access token that expires in 15 minutes, and a refresh token R1.", "w": "Two tokens with two jobs. The access token goes to the API. The refresh token goes back to the issuer only.", "m": [["s", "a", 120, "access (15 min) + refresh R1"]], "st": {"a": ["tokens held", "wait"], "s": ["R1 issued", "wait"]}, "pc": [1, 2]},
+ {"t": "Anyone can read it", "b": "A JWT (JSON Web Token) has three base64 parts: header, claims, signature. Anyone can decode the claims. Only the holder of the private key can make the signature.", "w": "A JWT is signed, not secret. Never put anything in the claims you would not show the holder.", "m": [["band", 0, 130, "header . claims (sub: 42, scope: graph:read, exp) . signature"]], "st": {"a": ["tokens held", "wait"], "s": ["R1 issued", "wait"]}, "pc": [4]},
+ {"t": "Verify without calling home", "b": "The API splits the token at its dots. The header says RS256, the one algorithm it accepts. It hashes header.claims with SHA-256 and checks the signature with the issuer's public key: valid. exp is 900 s on the toy clock and now is 0, so not expired. The id a1 is not on the deny list. 200.", "w": "Fast: no network hop per request. The price is that the issuer cannot pull the token back.", "m": [["a", "r", 120, "Bearer access token"], ["r", "a", 150, "200, rows"]], "st": {"a": ["tokens held", "ok"], "r": ["RS256 sig + exp ok", "ok"], "s": ["not asked", "idle"]}, "pc": [3, 4, 5, 6, 7, 8, 9]},
+ {"t": "Fifteen minutes pass", "b": "Now is 900 s. The check is now >= exp, and 900 >= 900 is true, so the API answers 401 expired. The signature is still valid. Only the clock changed.", "w": "Expiry is the revocation. A short life means a stolen access token dies soon.", "m": [["a", "r", 120, "Bearer access token"], ["r", "a", 150, "401 expired", "fail"]], "st": {"a": ["access expired", "fail"], "r": ["exp passed", "fail"], "s": ["not asked", "idle"]}, "pc": [7]},
+ {"t": "Refresh and rotate", "b": "The app sends R1 to the issuer. Check one: is R1's family revoked? No. Check two: was R1 used before? No. The issuer marks R1 used and returns a new access token and R2.", "w": "Rotation makes every refresh token single use. A second use of R1 can only be a thief.", "m": [["a", "s", 120, "refresh R1"], ["s", "a", 150, "new access + R2"]], "st": {"a": ["fresh tokens", "ok"], "s": ["R1 dead, R2 live", "undo"]}, "pc": [10, 11, 12, 14]},
+ {"t": "A stolen R1 is reused", "b": "An attacker copied R1 earlier and sends it now. Check one: is the family signin-1 revoked? Not yet. Check two: was R1 used before? Yes, once already. A second use can only be a copy.", "w": "Reuse is a theft signal. The issuer does not know which caller is real, so it trusts neither.", "m": [["x", "s", 120, "refresh R1 (stolen)", "fail"], ["band", 0, 165, "R1 used twice: theft signal", "fail"]], "st": {"a": ["fresh tokens", "ok"], "s": ["reuse seen", "fail"], "x": ["holds R1", "fail"]}, "pc": [10, 11, 12]},
+ {"t": "Revoke the whole family", "b": "The issuer marks the family signin-1 revoked and answers invalid_grant. When the real app then sends R2, check one, is the family revoked, says yes. So the app must sign in again, and the attacker is out too.", "w": "A small cost to the user cuts the theft off at once.", "m": [["s", "x", 120, "invalid_grant"], ["s", "a", 160, "family revoked", "undo"], ["a", "s", 200, "refresh R2"], ["s", "a", 230, "sign in again", "undo"]], "st": {"a": ["must sign in", "undo"], "s": ["family revoked", "undo"], "x": ["locked out", "ok"]}, "pc": [13, 11]}
+],
+"classics":[
+ {"t": "Mistake 1: the token picks its algorithm", "b": "The broken verifier reads alg from the token's own header. The header says none, so the if around the signature check is skipped. exp is far in the future. The verifier returns 200 for a token with no signature at all.", "w": "The token told the API how to check the token. So the attacker chose: do not check.", "m": [["x", "r", 130, "alg: none, no signature", "fail"], ["r", "x", 165, "200, rows", "fail"]], "st": {"r": ["trusted the header", "fail"], "x": ["in, unsigned", "fail"]}, "ac": {"r": "fail"}, "pc": [1, 2, 3, 5]},
+ {"t": "Fix 1: pin the algorithm", "b": "The fixed verifier compares alg with RS256 before anything else. none is not RS256, so it answers 401 only RS256. The token never gets to choose how it is checked.", "w": "The verifier decides how to verify. The token never does.", "m": [["x", "r", 130, "alg: none, no signature", "fail"], ["r", "x", 165, "401: RS256 only"]], "st": {"r": ["RS256 pinned", "ok"], "x": ["refused", "ok"]}, "pc": [6, 7]},
+ {"t": "Mistake 2: an expiry of days", "b": "The careless service set exp to now plus 30 days. On day 3 the check now >= exp is false and the signature is real, so the API answers 200 to whoever holds the copy.", "w": "The leaked token works for as long as its expiry says.", "m": [["band", 0, 120, "access token copied from a log file, exp in 30 days", "fail"], ["x", "r", 160, "Bearer leaked token", "fail"], ["r", "x", 190, "200, rows", "fail"]], "st": {"r": ["signature is real", "fail"], "x": ["in for 30 days", "fail"]}, "pc": [9]},
+ {"t": "Mistake 3: no way to revoke", "b": "The team spots the leak and wants to stop it. The API never asks the issuer, so there is no channel to say stop.", "w": "A signed statement cannot be recalled. Only its expiry ends it.", "m": [["s", "r", 120, "revoke? no channel", "fail"], ["x", "r", 160, "Bearer leaked token", "fail"], ["r", "x", 190, "still 200", "fail"]], "st": {"s": ["cannot recall", "fail"], "r": ["still accepts", "fail"], "x": ["still in", "fail"]}, "pc": [10]},
+ {"t": "Fix 2 and 3: short expiry and a deny list", "b": "New tokens get exp = now + 900 s. For the leak, the token id leak2 goes on the deny list. The verifier checks the list after the expiry: leak2 is on it, so it answers 401 on the deny list at second 60.", "w": "Short expiry bounds the damage to minutes. The deny list covers those minutes when it matters.", "m": [["s", "r", 120, "deny list: token id"], ["x", "r", 160, "Bearer leaked token", "fail"], ["r", "x", 190, "401"]], "st": {"s": ["deny list sent", "undo"], "r": ["15 min + deny list", "ok"], "x": ["out", "ok"]}, "pc": [9, 10]},
+ {"t": "The browser case: a session cookie", "b": "The server deletes the row sid-9. On the next request the lookup of sid-9 finds nothing, so the answer is 401 at once. There is no expiry to wait for.", "w": "Instant revocation and no token in browser storage. Simpler, and safer for that case.", "m": [["a", "r", 120, "Cookie: session id"], ["band", 0, 160, "server deletes the session row"], ["r", "a", 200, "401 at once", "undo"]], "st": {"a": ["HttpOnly cookie", "wait"], "r": ["session gone", "undo"]}, "pc": [12, 13]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

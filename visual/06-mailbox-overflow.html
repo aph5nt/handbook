@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mailbox Overflow</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Mailbox overflow and back-pressure</h1>
+  <p class="lede">A device actor receives 1,000 readings a second and can persist 200 a second. With a plain tell nothing slows the sender, so the mailbox grows in memory. Press <b>Next</b> and watch an hour pass. Then try a bounded mailbox, and a stream where the writer's demand slows the source.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="plain">Plain tell: it grows</button>
+    <button role="tab" aria-selected="false" data-mode="bound">Bounded mailbox</button>
+    <button role="tab" aria-selected="false" data-mode="stream">Stream with demand</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 330" aria-labelledby="stage-title">
+      <title id="stage-title">A fast sender, the mailbox between, and a slower actor</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-src" class="box" x="20" y="120" width="170" height="72" rx="8" fill="var(--coord)"/><text id="t-src" x="105" y="150" fill="#fff">device sender</text><text id="s-src" x="105" y="174" fill="#fff" font-size="13">1,000 readings/s</text>
+        <text id="t-depth" x="442" y="114" fill="var(--muted)" font-size="14">mailbox: 0 waiting</text>
+        <rect id="c-q1" class="box" x="250" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q2" class="box" x="298" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q3" class="box" x="346" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q4" class="box" x="394" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q5" class="box" x="442" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q6" class="box" x="490" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q7" class="box" x="538" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-q8" class="box" x="586" y="128" width="42" height="56" rx="5" fill="var(--line)"/>
+        <rect id="c-act" class="box" x="700" y="120" width="180" height="72" rx="8" fill="var(--svc)"/><text id="t-act" x="790" y="150" fill="#fff">device actor</text><text id="s-act" x="790" y="174" fill="#fff" font-size="13">writes 200/s</text>
+        <rect id="c-mem" class="box" x="250" y="235" width="384" height="42" rx="21" fill="var(--line)"/><text id="t-mem" x="442" y="261" fill="var(--fg)" font-size="14">heap: normal</text>
+        <rect id="c-dl" class="box" x="700" y="235" width="180" height="42" rx="21" fill="var(--line)"/><text id="t-dl" x="790" y="261" fill="var(--fg)" font-size="14">dead letters: 0</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--wait)">readings waiting in memory</span>
+    <span style="--c:var(--ok)">healthy, flat</span>
+    <span style="--c:var(--fail)">overflow, lost, or dead</span>
+    <span style="--c:var(--coord)">sender</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Any actor fed by a plain tell from a faster producer: telemetry, log lines, webhooks. Akka bounded mailboxes, Akka Streams and Reactive Streams, Go bounded channels. Mailbox depth is the health signal of an actor system: watch it and alert on it.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Telemetry ingest: a stream with demand end to end, so a slow writer slows the socket. An actor that must stay an actor: a bounded mailbox with a drop rule and a dead-letter metric. Never a plain tell from a fast source with nothing in between.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Plain tell</th><th>Bounded mailbox</th><th>Stream with demand</th></tr>
+      <tr><td>Memory</td><td>Grows without limit</td><td>Capped</td><td>Small fixed buffers</td></tr>
+      <tr><td>When the actor is slow</td><td>Queue grows, then out of memory</td><td>Extra readings dropped and counted</td><td>Source reads less, sender slows</td></tr>
+      <tr><td>Data lost</td><td>Everything queued, at the crash</td><td>The dropped readings</td><td>None. The sender buffers or slows</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Actors swap lock contention for mailbox growth, so I bound mailboxes, alert on their depth, and use streams with demand for pipelines."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-mailbox-overflow/main.go";
+const code={_:{pc:`
+sender: tell(writer, reading)          # 1,000 a second, never checks
+writer: take one, persist              # 200 a second
+depth grows by 1,000 - 200 = 800 a second
+no limit: the heap fills, the process dies, the queue is lost
+# bounded mailbox, capacity 10,000:
+tell: if depth < 10,000: put
+  else if pushTimeout == 0: deadLetters += 1   # drop and count
+  else: block the sender for pushTimeout       # its thread stalls
+alert when depth or dead letters stay high
+# stream, the writer pulls:
+writer: request(200)                   # demand goes upstream
+source: read at most 200 from the socket, send them down
+socket not read: TCP slows the device down
+writer: write 200, then request(200) again
+# a tell in the middle has no demand signal:
+stage: for each item: tell(actor, item)   # the leak
+fix: the stage waits for the actor's ack before the next item`,go:`
+for t := 1; t <= 60; t++ { // one tick is one second //@1
+	for i := 0; i < in; i++ { //@1
+		mailbox <- Reading{} // a tell: 1,000 //@1,16
+	}
+	tick <- struct{}{} // the writer takes 200 //@2,3
+	<-ack
+}
+fmt.Printf("  after %4d s: %d waiting\\n", t, (in-out)*t) //@3,4
+select { //@6
+case mailbox <- Reading{}: // room: put //@6
+default:
+	dead++ // full: dead letters, counted //@7
+}
+fmt.Printf("  t=%2d s: depth %d, dead letters %d (+%d)\\n", t, len(mailbox), dead, dead-last) //@9
+select { //@8
+case mailbox <- Reading{}: // waits for room //@8
+case <-time.After(50 * time.Millisecond): // push timeout //@8
+}
+demand <- out // the writer asks for 200 //@11,14
+for i := 0; i < out; i++ { //@14
+	<-data //@14
+}
+for n := range demand { // the source: only what was asked //@12
+	for i := 0; i < n; i++ { //@12
+		data <- Reading{} //@12
+	}
+}
+fmt.Printf("  the device holds back %d readings on its side, slowed by TCP\\n", (in*60)-sent) //@13
+mailbox <- Reading{} // the fix: one item //@17
+<-ack // wait for the actor before the next //@17`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET. The bound is mailbox configuration, in HOCON.
+device42.Tell(reading); // never checks //@1
+Receive<Reading>(r => Persist(r)); // 200 a second //@2
+akka.actor.default-mailbox.mailbox-type = "Akka.Dispatch.UnboundedMailbox" # no limit //@3,4
+bounded-mailbox { //@5
+  mailbox-type = "Akka.Dispatch.BoundedMailbox, Akka"
+  mailbox-capacity = 10000 //@6
+  mailbox-push-timeout-time = 0s  # 0: drop at once //@7
+}
+blocking-mailbox { mailbox-type = "Akka.Dispatch.BoundedMailbox, Akka" //@8
+  mailbox-capacity = 10000, mailbox-push-timeout-time = 50ms } # the sender blocks //@8
+// The stream: demand flows up from the sink.
+Source.FromPublisher(socket) //@11,12,13
+    .Grouped(200) //@14
+    .SelectAsync(1, batch => warehouse.WriteAsync(batch)) //@14
+    .RunWith(Sink.Ignore<Done>(), materializer); //@11
+// The leak, and the fix:
+Sink.ActorRef<Reading>(actor, Done.Instance); // no demand //@16
+Sink.ActorRefWithAck<Reading>(actor, Init, Ack, Done.Instance); //@17
+Context.System.EventStream.Subscribe(Self, typeof(DeadLetter)); // count drops, alert //@9`}};
+const Q=(n,c)=>{const f={};for(let k=1;k<=8;k++)f["c-q"+k]=k<=n?c:"line";return f;};
+const IN=[190,156,248,156],OUT=[636,156,700,156];
+const DEM=[[790,120,790,92,"","coord",true],[790,92,105,92,"request 200","coord",true,[440,84,"middle"]],[105,92,105,118,"","coord",true]];
+const tabInit={stream:{x:{"t-src":"socket source","s-src":"reads on demand","t-depth":"buffer: small, fixed","t-act":"batch writer","s-act":"writes 200/s"}}};
+const steps={
+plain:[
+ {pc:[1,2],t:"In faster than out",b:"The device sends 1,000 readings a second with a plain tell. The actor persists 200 a second.",w:"A plain tell has no back-pressure. A fast sender always wins.",a:[[...IN,"1,000/s"],[...OUT,"200/s"]]},
+ {pc:[3],t:"After one second",b:"1,000 came in and 200 went out. That leaves 800, and tell has no check that could refuse them. They wait in the mailbox, in memory.",w:"Removing locks did not remove overload. It moved it into memory.",f:Q(1,"wait"),x:{"t-depth":"mailbox: 800 waiting"},a:[[...IN,"1,000/s"],[...OUT,"200/s"]]},
+ {pc:[3],t:"After one minute",b:"800 times 60 seconds is 48,000 readings waiting. Nobody notices: the actor still writes 200 a second, as fast as it can.",w:"Nothing fails yet. The only signal is the mailbox depth.",f:Q(3,"wait"),x:{"t-depth":"mailbox: 48,000 waiting"},a:[[...IN,"1,000/s"],[...OUT,"200/s"]]},
+ {pc:[3,4],t:"After one hour",b:"About 2.9 million readings wait. The heap is nearly full. Garbage collection runs more and more often.",w:"800 a second for 3,600 seconds is 2,880,000 readings, all in memory.",f:{...Q(7,"wait"),"c-mem":"wait"},x:{"t-depth":"mailbox: 2,880,000 waiting","t-mem":"heap: nearly full"}},
+ {pc:[4],t:"Out of memory",b:"The process runs out of memory and dies.",w:"One slow actor took down the whole process, and every other actor in it.",f:{...Q(8,"fail"),"c-mem":"fail","c-act":"fail"},x:{"t-mem":"out of memory: process died","s-act":"gone"}},
+ {pc:[4],t:"The failure that matters: the queue is lost",b:"The process restarts. The mailbox lived only in memory, so every queued reading is gone. An hour of telemetry, lost.",w:"Fix: bound the mailbox, alert on its depth, or make the pipeline a stream with demand.",f:{...Q(0,"line"),"c-act":"svc","c-mem":"fail"},x:{"t-depth":"mailbox: 0 waiting","s-act":"restarted, writes 200/s","t-mem":"2.9 million readings lost"}}
+],
+bound:[
+ {pc:[5,6],t:"A mailbox with a limit",b:"The same flood, but the mailbox has a capacity of 10,000 and an overflow rule: drop the newest.",w:"A bounded mailbox caps the memory one actor can use.",a:[[...IN,"1,000/s"],[...OUT,"200/s"]]},
+ {pc:[6],t:"It fills to the limit",b:"Every tell checks: is the depth below 10,000? It grows by 800 a second, so 10,000 divided by 800 is 12.5 seconds. Then the mailbox holds 10,000, its cap.",w:"From here, memory stays flat however long the flood lasts.",f:{...Q(8,"wait"),"c-mem":"ok"},x:{"t-depth":"mailbox: 10,000, full","t-mem":"heap: flat"}},
+ {pc:[7],t:"Overflow goes to dead letters",b:"Now the check fails for most tells. The writer frees 200 places a second, so 200 get in and 800 a second are dropped and counted as dead letters.",w:"The process stays alive. The cost is the dropped readings, and that is visible.",a:[[...IN,"1,000/s"],[636,176,720,235,"800/s dropped","fail"]],f:{"c-dl":"fail"},x:{"t-dl":"dead letters: 800/s"}},
+ {pc:[9],t:"Alert on depth and drops",b:"A metric on mailbox depth and dead letters fires an alert. Someone adds capacity or a second writer.",w:"Mailbox depth is the health signal of an actor system.",f:{"c-act":"ok"},x:{"s-act":"alert sent"}},
+ {pc:[8],t:"The other rule: block the sender",b:"With a push timeout above 0, a full mailbox makes the sender wait for room. In the program a 50 ms timeout holds the only pool thread for 50 ms, for one reading. Every actor sharing that thread pool waits too.",w:"Blocking pushes the problem upstream onto threads. Prefer drop and count, or a stream.",f:{"c-src":"fail","c-dl":"line"},x:{"s-src":"thread blocked","t-dl":"dead letters: 0"}}
+],
+stream:[
+ {pc:[11],t:"The writer asks for work",b:"In a stream, the batch writer asks for 200 readings. Demand flows upstream.",w:"Reactive Streams: the consumer requests n, the producer sends at most n.",a:DEM},
+ {pc:[12],t:"The source reads only what was asked",b:"The socket source reads 200 readings and sends them down. The buffer between stays small.",w:"Data flows down only as fast as demand flows up.",f:{...Q(2,"wait"),"c-mem":"ok"},x:{"t-mem":"heap: flat"},a:[[...IN,"200"],[...OUT,"200"]]},
+ {pc:[13,14],t:"The sender is slowed, not the heap",b:"The socket reads less, so TCP (Transmission Control Protocol) tells the device to slow down. After 60 s the writer took 12,000 readings. The other 48,000 wait on the device, not in this heap.",w:"Overload is pushed back to where it started, not stored in the actor's memory.",f:{"c-src":"ok"},x:{"s-src":"device slowed by TCP"},a:DEM},
+ {pc:[16],t:"The failure: a tell in the middle",b:"Someone puts a stage that hands readings to an actor with a plain tell. The tell always succeeds, so the stage always asks for more. The demand signal stops there. After 60 s the mailbox holds 48,000 again.",w:"One tell in the middle breaks back-pressure for the whole chain.",f:{...Q(6,"fail"),"c-mem":"fail"},x:{"t-depth":"actor mailbox growing","t-mem":"heap growing again"},a:[[...IN,"1,000/s"],[...OUT,"tell, no demand","fail"]]},
+ {pc:[17],t:"The fix: stream end to end",b:"The stage uses a sink that waits for the actor to acknowledge each item, or the actor's mailbox is bounded.",w:"Keep the pipeline a stream from socket to warehouse.",f:{...Q(2,"wait"),"c-mem":"ok"},x:{"t-depth":"buffer: small, fixed","t-mem":"heap: flat"},a:DEM},
+ {pc:[9],t:"Watch the depth",b:"Even with streams, mailbox depth and stage buffer fill are the first metrics on the board.",w:"A growing queue is the earliest sign that something downstream is slow.",f:{"c-act":"ok"},x:{"s-act":"depth on the dashboard"}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

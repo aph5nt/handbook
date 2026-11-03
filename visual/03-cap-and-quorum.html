@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CAP and quorums</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>CAP and quorums</h1>
+  <p class="lede">A price service keeps a token price on three replicas (N = 3). A writer changes it from version 1 to version 2. A reader asks for it. Pick a tab, press <b>Next</b>, and watch which reads come back stale.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="w1">W = 1, R = 1</button>
+    <button role="tab" aria-selected="false" data-mode="w2">W = 2, R = 2</button>
+    <button role="tab" aria-selected="false" data-mode="part">Partition</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Writer, three replicas and a reader</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700" text-anchor="middle">
+        <rect class="box" x="30" y="150" width="160" height="60" rx="8" fill="var(--coord)"/>
+        <text x="110" y="186" fill="#fff">Writer</text>
+        <text id="w-note" x="110" y="236" fill="var(--muted)" font-size="14"></text>
+        <rect id="rd-box" class="box" x="720" y="150" width="160" height="60" rx="8" fill="var(--coord)"/>
+        <text id="rd-lbl" x="800" y="186" fill="#fff">Reader</text>
+        <text id="r-note" x="800" y="236" fill="var(--muted)" font-size="14"></text>
+        <rect id="bx-1" class="box" x="360" y="40" width="180" height="60" rx="8" fill="var(--svc)"/>
+        <text id="tx-1" x="450" y="76" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="360" y="160" width="180" height="60" rx="8" fill="var(--svc)"/>
+        <text id="tx-2" x="450" y="196" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="360" y="280" width="180" height="60" rx="8" fill="var(--svc)"/>
+        <text id="tx-3" x="450" y="316" fill="#fff"></text>
+      </g>
+      <g id="cut" class="msg" stroke="var(--fail)" stroke-width="3" stroke-dasharray="8 6">
+        <line x1="20" y1="252" x2="660" y2="252"/>
+        <text x="200" y="272" fill="var(--fail)" stroke="none" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">network split</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-cap-and-quorum/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">holds the newest version</span>
+    <span style="--c:var(--wait)">old version, not yet updated</span>
+    <span style="--c:var(--fail)">stale answer, refusal or lost message</span>
+    <span style="--c:var(--undo)">overlap node or repair</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet quorums</h2>
+      <p>Cassandra and DynamoDB let you set W and R per query. N = 3, W = 2, R = 2 survives one dead node for both reads and writes. W = 1, R = 1 is fast and fine for a view counter, never for a balance.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet CAP</h2>
+      <p>A graph database cluster with one leader refuses writes on the minority side of a split. That is CP. A DNS (Domain Name System) cache keeps answering old records. That is AP. The choice only exists while the network is split.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>W = 1, R = 1</th><th>W = 2, R = 2</th><th>Partition, CP</th><th>Partition, AP</th></tr>
+      <tr><td>Stale read possible</td><td>Yes</td><td>No, the sets overlap</td><td>No, it refuses</td><td>Yes</td></tr>
+      <tr><td>Write latency</td><td>One node</td><td>Two nodes</td><td>Majority only</td><td>Any node</td></tr>
+      <tr><td>Nodes that may die</td><td>Two for reads</td><td>One</td><td>Minority side stops</td><td>None stop</td></tr>
+      <tr><td>Fits</td><td>Counters, likes</td><td>Prices, profiles</td><td>Ledgers, locks</td><td>Feeds, caches, DNS</td></tr>
+      <tr><td>Interview line</td><td colspan="4">"If R plus W is greater than N, every read touches a node that saw the newest write. During a split, the minority side must refuse to stay consistent, or answer stale to stay available."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const R={1:70,2:190,3:310};
+let mode="w1",i=0,timer=null;
+const rdY=()=>mode==="part"?310:180;
+const steps={
+"w1":[
+ {t:"Start",b:"All three replicas hold version 1 of the price, so N = 3. The writer waits for one acknowledgement (W = 1). The reader asks one replica (R = 1). Line 10 checks: is 1 + 1 more than 3? No.",w:"Two is not more than three, so a read set and a write set may not meet.",st:["v1","v1","v1"],m:[],wn:"W = 1",rn:"R = 1",pc:[10]},
+ {t:"Write v2 to replica 1",b:"Line 2 sends version 2 to all three. Replica 1 answers first and stores it. Line 3 needs one ack and has one, so line 4 returns done. The copies to replicas 2 and 3 are still on the way.",w:"Fast: the writer waited for one node only.",st:["v2","v1","v1"],m:[["w",1,"write v2",0,-8],[1,"w","ack",0,8],["w",2,"in flight","slow",0],["w",3,"in flight","slow",0]],wn:"done after 1 ack",rn:"R = 1",pc:[1, 2, 3, 4]},
+ {t:"Copies still in flight",b:"Line 3 did not wait for the other two copies. They have not arrived, so replicas 2 and 3 still hold version 1. Line 14 will deliver them later.",w:"For a moment, two of three copies are old. Nothing has gone wrong yet.",st:["v2","v1","v1"],m:[],wn:"done",rn:"R = 1",pc:[3, 14]},
+ {t:"Read hits replica 3",b:"Line 6 asks one replica, and it happens to be replica 3, at version 1. Line 7 has one answer to compare, so version 1 is the newest it can see. Line 10 was false: this read set misses the write set.",w:"This is a stale read. Nothing failed, no error. The answer is simply old.",st:["v2","v1","v1"],m:[["r",3,"read",0,-8],[3,"r","v1 (stale)","bad",8]],wn:"done",rn:"got v1, stale",bad3:true,pc:[6, 7, 9, 10]},
+ {t:"Later, the copies agree",b:"Line 14 delivers the copies still in flight. Replicas 2 and 3 store version 2, and all three agree. Every read from now on returns version 2.",w:"This is eventual consistency: correct some time later. Good for a like counter. Bad for a balance.",st:["v2","v2","v2"],m:[],wn:"done",rn:"next read gets v2",pc:[14]}
+],
+"w2":[
+ {t:"Start",b:"Same three replicas at version 1. Now W = 2 and R = 2. Line 10 checks: is 2 + 2 more than 3? Yes.",w:"So any two readers and any two writers share at least one node.",st:["v1","v1","v1"],m:[],wn:"W = 2",rn:"R = 2",pc:[10]},
+ {t:"Write v2, wait for two",b:"Line 2 sends version 2 to all three. Replicas 1 and 2 ack, and replica 3 is slow. Line 3 now has two acks, which is W, so line 4 returns done.",w:"The write costs the slower of the two fastest nodes. That is the price of the overlap.",st:["v2","v2","v1"],m:[["w",1,"write v2",0,-8],["w",2,"write v2",0,-8],["w",3,"write v2 (slow)","slow",0],[1,"w","ack",0,8],[2,"w","ack",0,8]],wn:"done after 2 acks",rn:"R = 2",pc:[2, 3, 4]},
+ {t:"Read asks two replicas",b:"Line 6 asks replicas 2 and 3. Replica 2 answers version 2. Replica 3 answers version 1.",w:"One answer is old. That is fine, because one answer is guaranteed to be new.",st:["v2","v2","v1"],m:[["r",2,"read",0,-8],["r",3,"read",0,-8],[2,"r","v2","",8],[3,"r","v1","bad",8]],wn:"done",rn:"got v2 and v1",ov:2,pc:[5, 6]},
+ {t:"Newest version wins",b:"Line 7 compares 2 and 1 and keeps 2, so line 9 returns version 2. Replica 2 is the overlap from line 10: it is in both the write set (1, 2) and the read set (2, 3).",w:"R + W > N means a read always meets the newest write. It does not mean one global order for concurrent writers.",st:["v2","v2","v1"],m:[],wn:"done",rn:"returns v2",ov:2,pc:[7, 9, 10]},
+ {t:"Read repair",b:"Line 8 sees that replica 3 answered version 1, which is older than the newest, so it sends replica 3 version 2. All three now agree.",w:"Read repair heals stale copies on the read path. Line 14, anti-entropy, heals the rest in the background.",st:["v2","v2","v2"],m:[["r",3,"repair v2","repair",0]],wn:"done",rn:"returns v2",pc:[8]},
+ {t:"One node down is fine",b:"Replica 3 goes down. Line 3 still gets two acks, from replicas 1 and 2. Line 6 still reaches two nodes. With a second replica down, line 3 can only ever get one ack, so writes stop.",w:"N = 3 with W = 2 and R = 2 survives one failure for both reads and writes.",st:["v2","v2","down"],m:[],wn:"still works",rn:"still works",pc:[3, 6]}
+],
+"part":[
+ {t:"Start",b:"The cable to replica 3 is cut. Replicas 1 and 2 and the writer are on one side, which is 2 of 3. Replica 3 and one reader are on the other, which is 1 of 3.",w:"This is the only moment CAP talks about: a partition.",st:["v1","v1","v1"],m:[],cut:true,wn:"majority side",rn:"minority side",pc:[11]},
+ {t:"Write on the majority side",b:"Line 2 sends version 2. Replicas 1 and 2 ack, which meets W = 2, so line 4 returns done. The message to replica 3 never arrives.",w:"Two of three is a majority, so the write is valid. Replica 3 cannot know it is behind.",st:["v2","v2","v1"],m:[["w",1,"write v2",0,-8],["w",2,"write v2",0,-8],["w",3,"lost","bad",-30]],cut:true,wn:"done, majority",rn:"minority side",pc:[2, 3, 4]},
+ {t:"A read reaches replica 3",b:"The reader on the cut-off side asks replica 3 for the price. Replica 3 holds version 1 and can reach only itself: 1 of 3.",w:"Now replica 3 must choose. It cannot be both correct and responsive.",st:["v2","v2","v1"],m:[["r",3,"read",0,0]],cut:true,wn:"done",rn:"waiting",pc:[11]},
+ {t:"Choice 1: consistency (CP)",b:"Line 12 checks: is reachable 1 at most N / 2, which is 1.5? Yes. Replica 3 has no majority, so it answers with an error: try again later.",w:"No stale data was served. The price is unavailable on this side until the split heals. A ledger chooses this.",st:["v2","v2","refuses"],m:[[3,"r","error: no quorum","bad",0]],cut:true,wn:"done",rn:"got an error",pc:[12]},
+ {t:"Choice 2: availability (AP)",b:"Replay the same read with line 13 instead of line 12. Replica 3 skips the check and answers with what it has: version 1.",w:"Everyone gets an answer, but this one is old. A social feed or a DNS cache chooses this.",st:["v2","v2","v1"],m:[[3,"r","v1 (stale)","bad",0]],cut:true,wn:"done",rn:"got v1, stale",bad3:true,pc:[13]},
+ {t:"The split heals",b:"The cable is fixed. Line 14 delivers version 2 to replica 3. Both choices end in the same state: all three at version 2.",w:"PACELC: even with no split, waiting for a majority costs latency on every write. That trade never goes away.",st:["v2","v2","v2"],m:[],wn:"done",rn:"next read gets v2",pc:[14]}
+]};
+const $=id=>document.getElementById(id);
+const fillFor=v=>v==="v2"?"var(--ok)":v==="v1"?"var(--wait)":"var(--fail)";
+function pt(a,b){
+  const ry=rdY();
+  if(a==="w")return[[190,180],[360,R[b]]];
+  if(b==="w")return[[360,R[a]],[190,180]];
+  if(a==="r")return[[720,ry],[540,R[b]]];
+  return[[540,R[a]],[720,ry]];
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("w-note").textContent=s.wn;$("r-note").textContent=s.rn;
+  const ry=rdY();$("rd-box").setAttribute("y",ry-30);$("rd-lbl").setAttribute("y",ry+6);$("r-note").setAttribute("y",ry+56);
+  for(const k of[1,2,3]){const v=s.st[k-1];
+    $("tx-"+k).textContent=`Replica ${k}: ${v}`;
+    $("bx-"+k).setAttribute("fill",fillFor(v));
+    $("bx-"+k).setAttribute("stroke",s.ov===k?"var(--undo)":"none");$("bx-"+k).setAttribute("stroke-width",s.ov===k?6:0);}
+  $("rd-box").setAttribute("fill",s.bad3?"var(--fail)":"var(--coord)");
+  $("cut").classList.toggle("on",!!s.cut);
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const [a,b,txt,kind,dy]=m;const [[x1,y1],[x2,y2]]=pt(a,b);
+    const col=kind==="bad"?"var(--fail)":kind==="repair"?"var(--undo)":"var(--fg)";
+    const dash=kind==="slow"?' stroke-dasharray="6 5"':"";
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    el.innerHTML=`<line x1="${x1}" y1="${y1+dy}" x2="${x2}" y2="${y2+dy}" stroke="${col}"${dash} marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+dy-8}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,160*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+const code={"*": {"label": "Go", "pc": ["on write(v), done after W acks:", "  send v to all N replicas", "  wait until W replicas have acked        # the others are not waited for", "  return done", "on read(), asking R replicas:", "  ask R replicas for their version", "  newest = the highest version answered", "  send newest to any asked replica that is older   # read repair", "  return newest", "the overlap check: R + W > N              # read set meets write set", "a replica gets a read during a partition:", "  CP: if reachable <= N / 2: return error # no majority, so no proof", "  AP: return what it has                  # maybe old", "in the background: deliver every copy still in flight   # anti-entropy"], "real": ["// Overlap reports whether every read set meets every write set.", "func Overlap(r, w, n int) bool { return r+w > n }", "", "// Write sends v to all replicas. ackOrder is who answers first. It is done", "// after W acks. The others keep the copy in flight.", "func (c *Cluster) Write(v, w int, ackOrder []int) (bool, []int) {", "\tacks := []int{}", "\tfor _, id := range ackOrder {", "\t\trep := c.reps[id-1]", "\t\tif !rep.up {", "\t\t\tcontinue", "\t\t}", "\t\tif len(acks) == w {", "\t\t\tc.inFlight[id] = v // not waited for", "\t\t\tcontinue", "\t\t}", "\t\trep.version = v", "\t\tacks = append(acks, id)", "\t}", "\treturn len(acks) == w, acks", "}", "", "// Read asks the given R replicas, returns the newest version, and repairs any", "// replica that answered older.", "func (c *Cluster) Read(ask []int) (int, []int) {", "\tnewest := 0", "\tfor _, id := range ask {", "\t\tif v := c.reps[id-1].version; v > newest {", "\t\t\tnewest = v", "\t\t}", "\t}", "\trepaired := []int{}", "\tfor _, id := range ask {", "\t\tif c.reps[id-1].version < newest {", "\t\t\tc.reps[id-1].version = newest", "\t\t\trepaired = append(repaired, id)", "\t\t}", "\t}", "\treturn newest, repaired", "}", "", "// ReadCut is a read on replica id when it reaches only reachable replicas.", "func (c *Cluster) ReadCut(id, reachable int, consistent bool) (int, error) {", "\tif consistent && reachable <= len(c.reps)/2 {", "\t\treturn 0, fmt.Errorf(\"no quorum: reaches %d of %d\", reachable, len(c.reps))", "\t}", "\treturn c.reps[id-1].version, nil", "}", "", "// AntiEntropy delivers every copy still in flight.", "func (c *Cluster) AntiEntropy() {", "\tfor id, v := range c.inFlight {", "\t\tc.reps[id-1].version = v", "\t\tdelete(c.inFlight, id)", "\t}", "}"], "map": {"1": [6], "2": [8], "3": [13, 14], "4": [20], "5": [25], "6": [27], "7": [28], "8": [35], "9": [39], "10": [2], "11": [43], "12": [44], "13": [47], "14": [52, 53]}}};
+let view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

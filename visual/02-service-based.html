@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service-based architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Service-based architecture</h1>
+  <p class="lede">The indexer, the price oracle and the validator deploy on their own, but share one StarRocks cluster. Each owns its own database in it. A handful of coarse services and one database server is service-based architecture. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist" hidden>
+    <button role="tab" aria-selected="true" data-mode="sb" id="tab-sb">Coarse services, one cluster</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Three coarse services over one StarRocks cluster with a database each, and a published view</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-sb">
+          <g class="node" id="n-ix" data-c="c"><rect class="box" id="r-ix" x="40" y="30" width="220" height="56" rx="8"/><text id="t-ixl" x="150.0" y="54" text-anchor="middle" font-size="15">Indexer</text><text id="t-ixs" x="150.0" y="72" text-anchor="middle" font-size="12" font-weight="400">writes chain rows</text></g>
+          <g class="node" id="n-po" data-c="c"><rect class="box" id="r-po" x="340" y="30" width="220" height="56" rx="8"/><text id="t-pol" x="450.0" y="54" text-anchor="middle" font-size="15">Price oracle</text><text id="t-pos" x="450.0" y="72" text-anchor="middle" font-size="12" font-weight="400">writes day prices</text></g>
+          <g class="node" id="n-va" data-c="c"><rect class="box" id="r-va" x="640" y="30" width="220" height="56" rx="8"/><text id="t-val" x="750.0" y="54" text-anchor="middle" font-size="15">Validator</text><text id="t-vas" x="750.0" y="72" text-anchor="middle" font-size="12" font-weight="400">checks the rows</text></g>
+          <rect x="20" y="170" width="860" height="160" rx="12" fill="none" stroke="var(--line)" stroke-width="2"/>
+          <text x="40" y="318" fill="var(--fg)" font-size="14">One StarRocks cluster</text>
+          <g class="node" id="n-dbr" data-c="v"><rect class="box" id="r-dbr" x="40" y="220" width="220" height="70" rx="8"/><text id="t-dbrl" x="150.0" y="252" text-anchor="middle" font-size="15">robinhood</text><text id="t-dbrs" x="150.0" y="268" text-anchor="middle" font-size="12" font-weight="400">chain tables</text></g>
+          <g class="node" id="n-dbp" data-c="v"><rect class="box" id="r-dbp" x="340" y="220" width="220" height="70" rx="8"/><text id="t-dbpl" x="450.0" y="252" text-anchor="middle" font-size="15">prices</text><text id="t-dbps" x="450.0" y="268" text-anchor="middle" font-size="12" font-weight="400">price tables</text></g>
+          <g class="node" id="n-dbt" data-c="v"><rect class="box" id="r-dbt" x="640" y="220" width="220" height="70" rx="8"/><text id="t-dbtl" x="750.0" y="252" text-anchor="middle" font-size="15">telemetry</text><text id="t-dbts" x="750.0" y="268" text-anchor="middle" font-size="12" font-weight="400">check results</text></g>
+          <g class="arrow" id="a-w1" data-c="m"><path class="route" d="M150 86 L150 216" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-w2" data-c="m"><path class="route" d="M450 86 L450 216" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-w3" data-c="m"><path class="route" d="M750 86 L750 216" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-bad" data-c="x"><path class="route" d="M700 86 C640 150 320 160 220 216" stroke-dasharray="6 5" marker-end="url(#arr)"/><text id="t-badl" x="565" y="166" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">reads chain tables directly</text></g>
+          <g class="node" id="n-vw" data-c="h"><rect class="box" id="r-vw" x="240" y="120" width="180" height="40" rx="8"/><text id="t-vwl" x="330.0" y="145" text-anchor="middle" font-size="13">published view</text></g>
+          <g class="arrow" id="a-vv" data-c="x"><path class="route" d="M700 86 C660 120 520 140 424 140" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-vr" data-c="x"><path class="route" d="M240 140 C200 150 190 180 190 216" marker-end="url(#arr)"/></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-service-based/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a coarse service</span>
+    <span style="--c:var(--svc)">a database owned by one service</span>
+    <span style="--c:var(--ok)">a published contract</span>
+    <span style="--c:var(--fail)">a read across owners</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: one warehouse, many writers</h2>
+      <p>Several services on one StarRocks or Postgres server, each with its own database or schema. Readers from another service get a view, not the tables.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: a first split from a monolith</h2>
+      <p>Mark Richards describes service-based as the usual first step out of a monolith: carve out a few coarse domain services, keep one database server, and split data later only where needed.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Service-based</th><th>Microservices</th><th>Modular monolith</th></tr>
+      <tr><td>Units</td><td>4 to 12 coarse services</td><td>Many small services</td><td>One deploy</td></tr>
+      <tr><td>Database</td><td>One server, one schema each</td><td>One per service</td><td>One, schema per module</td></tr>
+      <tr><td>Calls between</td><td>Rare</td><td>Common</td><td>In-process</td></tr>
+      <tr><td>Cost</td><td>Moderate</td><td>High</td><td>Low</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Service-based architecture is a few coarse services sharing one database server, each owning its own schema, with no call chains between them."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+sb:[
+ {"t": "A few coarse services", "b": "Three services, each a whole business area: chain rows, prices, checks. Each has its own pipeline and deploys on its own.", "w": "Service-based architecture uses four to twelve coarse services, not dozens of small ones.", "pc": [1]},
+ {"t": "One database server, a database each", "b": "All three use one StarRocks cluster. The owner map has one entry per database: robinhood to the indexer, prices to the oracle, telemetry to the validator. A service writes only the database the map gives it.", "w": "One server to run and back up, but each service still owns its tables.", "a": {"w1": "c", "w2": "c", "w3": "c"}, "pc": [1, 2]},
+ {"t": "No call chains between services", "b": "The call map is empty. No service calls another on a request path. Each reads what it needs and writes its own database.", "w": "Without call chains, one slow service does not stall the others.", "m": "calls between services: 0", "pc": [3]},
+ {"t": "The failure: a direct read across", "b": "The validator reads robinhood.transfers, columns block and amount. The check asks: does the validator own robinhood? No. Is it a view? No. So it is a read across owners. The indexer renames amount to value and updates its own query. The validator's query still names amount, which is gone.", "w": "A shared server is fine. Shared tables are the slide toward a distributed monolith.", "n": {"va": "f", "dbr": "f"}, "a": {"bad": "f"}, "m": "broken readers: 1", "pc": [4, 5, 6, 7, 8]},
+ {"t": "The fix: a published view", "b": "The indexer publishes the view robinhood.transfers_v, with the same column names. The validator is granted the view and nothing else. The check now finds no read across owners: the view is a contract. The indexer renames amount to value again and remaps the view in the same change, so the view's amount reads value.", "w": "A view is the contract and the security layer between owners.", "n": {"va": "c", "dbr": "v", "vw": "ok"}, "a": {"bad": "x", "vv": "ok", "vr": "ok"}, "m": "broken readers: 0", "pc": [10, 11, 12, 13]},
+ {"t": "When to split further", "b": "If the validator's load or team ever differs a lot, it gets its own cluster. Until then, one cluster is cheaper to run.", "w": "Service-based is the pragmatic middle: independent deploys without a database per service.", "m": "clusters to run: 1, services: 3", "pc": [14]}
+]};
+const SCENE={"sb": "sb"};
+const CODE={
+ sb:{label:"Go",why:"",
+  pc:[
+   "owner = {robinhood: Indexer, prices: Oracle, telemetry: Validator}",
+   "one StarRocks cluster holds all three databases",
+   "calls between services on a request = none",
+   "readsAcross(s):",
+   "  a table s reads whose owner is not s, and that is not a view",
+   "renameColumn(table, old, new):",
+   "  the owner updates its own queries",
+   "  broken = readers whose query names a column that is gone",
+   "# the fix",
+   "publish view transfers_v over robinhood.transfers, same column names",
+   "grant Validator select on the view only",
+   "renameColumn: the owner remaps the view in the same change",
+   "readsAcross(Validator) is empty, broken is empty",
+   "split a database off only when its load or its team differs a lot"],
+  real:[
+   "func (c *Cluster) readsAcross(s string) []string {",
+   "\tvar out []string",
+   "\tfor name := range c.reads[s] {",
+   "\t\to := c.objects[name]",
+   "\t\tif c.owner[o.db] != s && !o.view { // a read across owners",
+   "\t\t\tout = append(out, name)",
+   "\t\t}",
+   "\t}",
+   "\tsort.Strings(out)",
+   "\treturn out",
+   "}",
+   "",
+   "func (c *Cluster) renameColumn(table, old, now string) []string {",
+   "\tdb := c.objects[table].db",
+   "\trename(c.objects[table].columns, old, now)",
+   "\trename(c.reads[c.owner[db]][table], old, now) // the owner updates its own queries",
+   "\tfor _, o := range c.objects { // and keeps its views working",
+   "\t\tif o.view && o.over == table && o.rename[old] == old {",
+   "\t\t\to.rename[old] = now",
+   "\t\t}",
+   "\t}",
+   "\tvar broken []string",
+   "\tfor s, objs := range c.reads {",
+   "\t\tfor name, cols := range objs {",
+   "\t\t\tif !c.resolves(name, cols) { // a column the query names is gone",
+   "\t\t\t\tbroken = append(broken, s+\" reading \"+name)",
+   "\t\t\t}",
+   "\t\t}",
+   "\t}",
+   "\tsort.Strings(broken)",
+   "\treturn broken",
+   "}",
+   "",
+   "// one cluster, one owner per database, no calls",
+   "owner: map[string]string{\"robinhood\": \"Indexer\", \"prices\": \"Oracle\", \"telemetry\": \"Validator\"},",
+   "calls: map[string][]string{},",
+   "",
+   "// the fix: a published view, and a grant on the view only",
+   "c.objects[\"robinhood.transfers_v\"] = &Object{",
+   "\tdb: \"robinhood\", view: true, over: \"robinhood.transfers\",",
+   "\trename: map[string]string{\"block\": \"block\", \"amount\": \"amount\"},",
+   "}",
+   "c.reads[\"Validator\"] = map[string][]string{",
+   "\t\"telemetry.checks\":      {\"check\", \"ok\"},",
+   "\t\"robinhood.transfers_v\": {\"block\", \"amount\"},",
+   "}"],
+  map:{"1": [35], "2": [34], "3": [36], "4": [1], "5": [3, 4, 5, 6, 7, 8], "6": [13, 15], "7": [16], "8": [22, 23, 24, 25, 26, 27, 28, 29, 30, 31], "10": [39, 40, 41, 42], "11": [43, 44, 45, 46], "12": [17, 18, 19, 20, 21], "13": [1, 5, 25], "14": [34]}}};
+let mode="sb";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

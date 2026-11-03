@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shuffle, broadcast, skew</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Shuffle, broadcast join and data skew</h1>
+  <p class="lede">A Spark job joins 600 swaps with the small pool table, then counts swaps per trader. One router address makes most of the swaps. Press <b>Next</b> to see which side of a join moves, and how one hot key stalls a whole job.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="join" id="tab-join">Broadcast versus shuffle</button>
+    <button role="tab" aria-selected="false" data-mode="skew" id="tab-skew">A hot key (skew)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title">
+      <title id="stage-title">Three worker nodes holding parts of the swaps table, with rows moving between them</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-shuffle-broadcast-skew/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">rows waiting</span>
+    <span style="--c:var(--wait)">moving or working</span>
+    <span style="--c:var(--undo)">small table, or its copies</span>
+    <span style="--c:var(--coord)">second big table</span>
+    <span style="--c:var(--ok)">done</span>
+    <span style="--c:var(--fail)">hot key, or out of memory</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet joins</h2>
+      <p>Facts joined to a small dimension: broadcast it. Two big fact tables: shuffle, or bucket both on the join key so the join is local, as StarRocks does with co-located tables.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet skew</h2>
+      <p>Any group by address on a chain: routers and exchanges are hot keys. Salt them, give them their own path, or let adaptive execution split the big partition.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Broadcast join</th><th>Shuffle join</th><th>Co-located buckets</th></tr>
+      <tr><td>What moves</td><td>The small table, to every node</td><td>Both tables, by key hash</td><td>Nothing</td></tr>
+      <tr><td>Fits</td><td>Big table with a small one</td><td>Two big tables</td><td>Two tables bucketed on the join key</td></tr>
+      <tr><td>Breaks when</td><td>The small side is not small</td><td>One key is hot</td><td>Bucket counts or keys differ</td></tr>
+      <tr><td>Skew fix</td><td>Rarely needed</td><td>Salt the hot key, or split it out</td><td>Pick a key without hot values</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Broadcast the small side, shuffle when both are big, and watch for a hot key that turns one node into the whole job."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"join": {"label": "Go", "pc": ["swaps: 600 rows, 200 on each of 3 nodes; pools: 4 rows on node 1", "a join needs rows with the same pool_id on the same node", "shuffle: for each swap s: send s to node hash(s.pool_id) % 3", "         send every pool row the same way", "broadcast: copy the 4 pool rows to the other 2 nodes", "each node: for each local swap s: look up pools[s.pool_id]", "two big tables: shuffle both, unless both are bucketed on pool_id"], "real": ["// owner picks the node that owns a key: a hash of the key, modulo the nodes.", "func owner(key string) int {", "\th := fnv.New32a()", "\th.Write([]byte(key))", "\treturn int(h.Sum32() % nodes)", "}", "", "// ShuffleJoin sends every swap and every pool to the node owning its pool id.", "func ShuffleJoin(parts [][]Swap, pools map[int]string) (moved int) {", "\tfor from, part := range parts {", "\t\tfor _, s := range part {", "\t\t\tif owner(fmt.Sprint(s.Pool)) != from {", "\t\t\t\tmoved++ // this swap crosses the network", "\t\t\t}", "\t\t}", "\t}", "\treturn moved + len(pools) // the pool rows are hashed and sent too", "}", "", "// BroadcastJoin copies the small pool table to every node and joins locally.", "func BroadcastJoin(parts [][]Swap, pools map[int]string) (moved, joined int) {", "\tmoved = len(pools) * (nodes - 1) // node 1 already holds the pools", "\tfor _, part := range parts {", "\t\tfor _, s := range part {", "\t\t\tif _, ok := pools[s.Pool]; ok {", "\t\t\t\tjoined++ // local lookup, no swap moves", "\t\t\t}", "\t\t}", "\t}", "\treturn moved, joined", "}", "", "\tparts := make([][]Swap, nodes)", "\tfor k, s := range all {", "\t\tparts[k%nodes] = append(parts[k%nodes], s) // the swaps arrive spread evenly", "\t}", "\tfmt.Printf(\"swaps %d on %d nodes (%d each), pools %d\\n\", len(all), nodes, len(parts[0]), len(pools))", "\tfmt.Println(\"shuffle join: rows moved\", ShuffleJoin(parts, pools))", "\tmoved, joined := BroadcastJoin(parts, pools)", "\tfmt.Println(\"broadcast join: rows moved\", moved, \"rows joined\", joined)"], "map": {"1": [33, 34, 35, 37], "2": [1, 2, 5], "3": [10, 11, 12, 13], "4": [17], "5": [22], "6": [23, 24, 25, 26], "7": [9, 12]}}, "skew": {"label": "Go", "pc": ["shuffle by trader: node = hash(trader) % 3", "on that node: count[trader] += 1", "router 0x7a06 makes 480 of 600 swaps -> one key, one node", "if a node holds more rows than its memory: out of memory", "missing: split a hot key before the shuffle", "salt: key = trader + \"#\" + (k % 3 + 1) for the hot key", "each node counts its piece", "final step: router count = #1 + #2 + #3"], "real": ["// owner picks the node that owns a key: a hash of the key, modulo the nodes.", "func owner(key string) int {", "\th := fnv.New32a()", "\th.Write([]byte(key))", "\treturn int(h.Sum32() % nodes)", "}", "", "// GroupByTrader shuffles rows by trader and returns the rows each node holds.", "// A salt splits one hot key into several keys before the hash.", "func GroupByTrader(all []Swap, hot string, salt int) (load [nodes]int, partial map[string]int) {", "\tpartial = map[string]int{}", "\tfor k, s := range all {", "\t\tkey := s.Trader", "\t\tif salt > 0 && key == hot {", "\t\t\tkey = fmt.Sprintf(\"%s#%d\", key, k%salt+1) // 0x7a06#1, #2 and #3 land on three nodes", "\t\t}", "\t\tload[owner(key)]++", "\t\tpartial[key]++", "\t}", "\treturn load, partial", "}", "", "// Combine adds the salted pieces back into one count per trader.", "func Combine(partial map[string]int, hot string, salt int) int {", "\tn := partial[hot]", "\tfor k := 1; k <= salt; k++ {", "\t\tn += partial[fmt.Sprintf(\"%s#%d\", hot, k)]", "\t}", "\treturn n", "}", "", "\tload, partial := GroupByTrader(all, router, 0)", "\tfmt.Println(\"group by trader, no salt: rows per node\", load, \"router rows\", partial[router])", "\tmemory := 300 // rows one node can hold in this story", "\tfor n, l := range load {", "\t\tif l > memory {", "\t\t\tfmt.Printf(\"node %d holds %d rows, limit %d: out of memory\\n\", n+1, l, memory)", "\t\t}", "\t}", "\tload, partial = GroupByTrader(all, router, 3)", "\tfmt.Println(\"group by trader, salt 3: rows per node\", load)", "\tfmt.Println(\"router count after combine:\", Combine(partial, router, 3))"], "map": {"1": [2, 5, 13, 17], "2": [18], "3": [32, 33], "4": [34, 35, 36, 37], "5": [14], "6": [14, 15, 40], "7": [17, 18, 41], "8": [24, 25, 26, 27, 29, 42]}}};
+
+const sw=(n,c="svc")=>["swaps "+n,c];
+const BASE=[[sw("part 1"),sw("part 2")],[sw("part 3"),sw("part 4")],[sw("part 5"),sw("part 6")]];
+const plus=(rows,extra)=>rows.map((r,k)=>r.concat(extra[k]||[]));
+const steps={
+"join":[
+ {pc:[1, 2],t:"Join swaps to pools",b:"A Spark job joins 600 swaps with the pool table on pool id. The swaps are spread over three nodes, 200 on each. The pool table is small, 4 rows, and sits on node 1.",w:"A join needs matching keys on the same node. Something has to move.",n:plus(BASE,[[["pools (small)","undo"]]]),q:"swaps JOIN pools ON pool_id"},
+ {pc:[3, 4],t:"Option 1: shuffle both sides",b:"A shuffle join hashes the pool id of every row and sends it to node hash % 3. Swaps already on their node stay. 400 swaps and 4 pool rows cross the network: 404 rows.",w:"Every swap crosses the network. For a big table that is the most expensive step of the job.",n:plus(BASE.map(r=>r.map(x=>[x[0],"wait"])),[[["pools (small)","wait"]]]),q:"shuffle: every row moves by hash",net:"all"},
+ {pc:[5],t:"Option 2: broadcast the small side",b:"A broadcast join copies the 4 pool rows to nodes 2 and 3: 8 rows move. All 600 swaps stay exactly where they are.",w:"Only the small table moves. The big one never touches the network.",n:plus(BASE,[[["pools (copy)","undo"]],[["pools (copy)","undo"]],[["pools (copy)","undo"]]]),q:"broadcast: copy pools to every node",net:"bc"},
+ {pc:[6],t:"Each node joins locally",b:"Every node looks up each of its own swaps in its own copy of the pools. 600 rows join, and all three nodes finish together.",w:"Broadcast the small side whenever it fits in each node's memory.",n:plus(BASE.map(r=>r.map(x=>[x[0],"ok"])),[[["pools (copy)","undo"]],[["pools (copy)","undo"]],[["pools (copy)","undo"]]]),q:"broadcast join",bars:[10,10,10]},
+ {pc:[7],t:"Two big tables",b:"Now swaps join transfers, both large. Neither fits on every node, so broadcast is out. Both are shuffled by key, unless both are already bucketed on the join key on the same nodes.",w:"Co-located buckets make even a big join move nothing.",n:plus(BASE,[[["transfers 1","coord"]],[["transfers 2","coord"]],[["transfers 3","coord"]]]),q:"swaps JOIN transfers: shuffle or co-located buckets"}
+],
+"skew":[
+ {pc:[1, 2],t:"Group swaps by trader",b:"A second job counts swaps per trader. Each row goes to node hash(trader) % 3. The six small traders land two per node.",w:"A hash spreads keys evenly. It does not spread rows evenly when one key has most of them.",n:[[sw("0xb2, 0x11")],[sw("0xf6, 0x88")],[sw("0xa1, 0xc3")]],q:"GROUP BY trader"},
+ {pc:[3],t:"One address is a hot key",b:"Router 0x7a06 makes 480 of the 600 swaps. Every one of its rows has the same key, so the same hash sends all 480 to node 3.",w:"This is skew: one key holds far more rows than all the others.",n:[[sw("0xb2, 0x11")],[sw("0xf6, 0x88")],[sw("0xa1, 0xc3"),["router 0x7a06","fail"],["router 0x7a06","fail"],["router 0x7a06","fail"]]],q:"GROUP BY trader"},
+ {pc:[4],t:"Two nodes wait for one",b:"Nodes 1 and 2 hold 40 rows each and finish quickly. Node 3 holds 520 rows: 480 for the router and 40 for its two small traders.",w:"The job is as slow as its slowest node.",n:[[sw("0xb2, 0x11","ok")],[sw("0xf6, 0x88","ok")],[sw("0xa1, 0xc3"),["router 0x7a06","fail"],["router 0x7a06","fail"],["router 0x7a06","fail"]]],q:"GROUP BY trader",bars:[10,10,4]},
+ {pc:[4, 5],t:"The failure that matters",b:"Each node can hold 300 rows. Node 3 holds 520, more than its limit, and runs out of memory. Nothing split the hot key before the shuffle, so the job fails at the last stage.",w:"Expect hot keys on a chain: routers and exchanges send most transfers.",n:[[sw("0xb2, 0x11","ok")],[sw("0xf6, 0x88","ok")],[["out of memory","fail"]]],q:"GROUP BY trader: job failed",bars:[10,10,9],fail:true},
+ {pc:[6],t:"Salt the hot key",b:"The job adds a suffix, a salt, to the hot key only: 0x7a06#1, #2 and #3, by row number % 3 + 1. The three keys hash to three different nodes, 160 router rows each.",w:"One hot key becomes three normal keys.",n:[[sw("0xb2, 0x11"),["router#1","wait"]],[sw("0xf6, 0x88"),["router#2","wait"]],[sw("0xa1, 0xc3"),["router#3","wait"]]],q:"GROUP BY trader + salt",net:"salt"},
+ {pc:[7, 8],t:"Count the pieces, then combine",b:"Each node now holds 200 rows: 160 router rows and 40 others. A small final step adds the three router counts: 480, the same answer.",w:"All nodes finish together. Adaptive engines such as Spark AQE (Adaptive Query Execution) can split skewed partitions on their own.",n:[[sw("0xb2, 0x11","ok"),["router#1","ok"]],[sw("0xf6, 0x88","ok"),["router#2","ok"]],[sw("0xa1, 0xc3","ok"),["router#3","ok"]]],q:"router count = #1 + #2 + #3",bars:[10,10,10]}
+]};
+function draw(s){
+  let o=B(150,10,600,36,s.fail?"var(--fail)":"var(--coord)")+T(450,34,s.q,{c:"#fff",s:15});
+  s.n.forEach((rows,k)=>{const x=40+k*290;o+=B(x,62,240,200,"var(--panel)",10,'stroke="var(--line)" stroke-width="2"')+T(x+120,84,"Node "+(k+1));
+    rows.forEach(([l,c],j)=>o+=B(x+16,96+j*38,208,30,"var(--"+c+")",6)+T(x+120,116+j*38,l,{c:"#fff",s:13}));
+    if(s.bars){const v=s.bars[k];o+=B(x,272,240,14,"var(--line)",7)+B(x,272,24*v,14,s.fail&&k===2?"var(--fail)":v===10?"var(--ok)":"var(--wait)",7);}});
+  if(s.net==="all")o+=L(280,140,330,140,"var(--wait)")+L(330,180,280,180,"var(--wait)")+L(570,140,620,140,"var(--wait)")+L(620,180,570,180,"var(--wait)")+M(T(450,310,"every swap crosses the network",{c:"var(--wait)"}));
+  if(s.net==="bc")o+=L(260,240,346,226,"var(--undo)")+M(`<path d="M160 262 Q 450 330 720 262" fill="none" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/>`)+M(T(450,320,"only the small table moves",{c:"var(--undo)"}));
+  if(s.net==="salt")o+=M(T(450,310,"one hot key split into three normal keys",{c:"var(--wait)"}));
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendezvous hashing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Rendezvous hashing</h1>
+  <p class="lede">Five cache servers split wallet keys between them. Instead of a ring, each client scores every server for a key and picks the highest score. Press <b>Next</b> to watch the scores pick an owner, then watch server B leave.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="score" id="tab-score">Highest score wins</button>
+    <button role="tab" aria-selected="false" data-mode="leave" id="tab-leave">Server B leaves, F joins</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 410" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A table of scores, one row per wallet key and one column per cache server</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-rendezvous-hashing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">highest score: the owner</span>
+    <span style="--c:var(--wait)">second-best server, takes over</span>
+    <span style="--c:var(--fail)">removed server, or a key that moves</span>
+    <span style="--c:var(--ok)">new server F</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Memcached and Redis client libraries that pick a server for a key. Content delivery networks choosing which edge server keeps a file. A job queue split across a few workers, where a worker that joins takes only its own share of the jobs.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Use rendezvous hashing for tens of servers: it is short to write, even by default, and needs no virtual nodes. Use a ring with a sorted lookup for thousands of servers, where scoring every server per key costs too much.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Hash ring</th><th>Rendezvous hashing</th></tr>
+      <tr><td>Owner of a key</td><td>Next node clockwise on the ring</td><td>Server with the highest hash(key + server)</td></tr>
+      <tr><td>Server leaves</td><td>Its keys go to the next node clockwise</td><td>Each key goes to its own second-best server</td></tr>
+      <tr><td>Even spread</td><td>Needs virtual nodes</td><td>Even by default</td></tr>
+      <tr><td>Lookup cost</td><td>A search in a sorted ring</td><td>One hash per server: N hashes</td></tr>
+      <tr><td>Hot key</td><td>Stays hot</td><td>Stays hot</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Rendezvous hashing scores every server for a key and picks the highest. It moves only 1/N of keys like a ring, with no ring and no virtual nodes, as long as N is small."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const SV="ABCDEF".split("");
+const KS=[["0x18",[87,95,28,47,73,84]],["0x9f",[46,76,56,46,8,17]],["0x2a",[90,81,50,9,12,29]],["0x4c",[14,67,49,43,80,90]],["0x51",[75,9,1,44,7,22]],["0x63",[55,60,49,1,95,62]],["0x77",[44,35,98,80,35,27]],["0x80",[71,16,67,85,10,42]]];
+const X=j=>190+j*90;
+function scene(s){
+  let b="";const msgs=[];
+  const live=SV.filter((v,j)=>(j<5||s.F)&&!(s.noB&&v==="B"));
+  b+=T(70,44,"wallet",{s:14,c:"var(--muted)"});
+  SV.forEach((v,j)=>{if(j===5&&!s.F)return;const gone=s.noB&&v==="B";
+    b+=R(X(j)-34,24,68,28,gone?"var(--fail)":j===5?"var(--ok)":"var(--svc)",{rx:6})+T(X(j),43,"cache "+v,{s:12,c:"#fff"});});
+  let moved=0;const cnt={};
+  KS.slice(0,s.rows).forEach(([k,sc],r)=>{const y=82+r*34;
+    const best=a=>{let m=-1,o=null;SV.forEach((v,j)=>{if(a.includes(v)&&sc[j]>m){m=sc[j];o=v}});return o};
+    const orig=best(SV.slice(0,5)),now=best(live);cnt[now]=(cnt[now]||0)+1;
+    b+=T(70,y+5,k,{s:14,w:400});
+    SV.forEach((v,j)=>{if(j===5&&!s.F)return;if(!s.scores)return;
+      const own=s.win&&v===now,gone=s.noB&&v==="B",was=s.noB&&v===orig&&orig!==now;
+      const f=own?(now!==orig?"var(--wait)":j===5?"var(--ok)":"var(--coord)"):was?"var(--fail)":"none";
+      b+=R(X(j)-26,y-14,52,26,f,{rx:13})+T(X(j),y+4,sc[j],{s:14,w:own?700:400,c:own||was?"#fff":gone?"var(--line)":"var(--fg)"});});
+    if(s.win&&s.noB||s.F){if(orig!==now){moved++;msgs.push(T(X(s.F?5:4)+48,y+5,"moves "+orig+" → "+now,{a:"start",s:13,c:"var(--fail)"}))}}
+  });
+  if(s.foot)msgs.push(T(450,s.rows*34+92,s.foot.replace("{m}",moved),{s:15,c:s.footK?KC[s.footK]:"var(--fg)"}));
+  if(s.ban)msgs.push(BANNER(394,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+score:[
+ {t:"Five cache servers, one wallet key",b:"Wallet 0x18 must live on one of five cache servers, A to E. There is no ring and no table of owners. The only input is the key and the list of servers.",w:"Every client must reach the same answer on its own, with no lookup service.",rows:1,pc:[2]},
+ {t:"Score every server for the key",b:"Lines 4 and 5 hash the key together with each server name and take it mod 100. For 0x18 that gives A 87, B 95, C 28, D 47, E 73. These are real SHA-256 scores from the program.",w:"The key and the server are hashed together, so each pair gets its own random-looking score. The hash must be strong: with FNV, similar server names scored alike.",rows:1,scores:true,pc:[1,4,5]},
+ {t:"The highest score wins",b:"Line 6 keeps the largest so far: A 87, then B 95, and C, D and E do not beat it. Line 7 returns B. Every client computes the same scores, so every client picks B.",w:"That is the whole rule: highest random weight wins. It is also called HRW hashing.",rows:1,scores:true,win:true,pc:[6,7]},
+ {t:"Every key gets its own winner",b:"Eight wallets, scored the same way. Line 6 picks a winner per row: B for 0x18 and 0x9f, A for 0x2a and 0x51, E for 0x4c and 0x63, C for 0x77, D for 0x80.",w:"No virtual nodes are needed. Random scores already spread the keys evenly.",rows:8,scores:true,win:true,foot:"A 2 keys, B 2, C 1, D 1, E 2",pc:[4,5,6,7]},
+ {t:"The cost: one hash per server",b:"Line 4 loops over every server on every lookup. With 5 servers that is 5 hashes, nothing at all.",w:"With 10,000 servers it is 10,000 hashes per lookup. Then a ring, with a sorted search, is the better tool.",rows:8,scores:true,win:true,foot:"5 servers: 5 hashes per key. 10,000 servers: 10,000 hashes per key.",footK:"wait",pc:[4]},
+ {t:"The failure: a hot key stays hot",b:"Wallet 0x18 gets most of the traffic. Line 7 returns B for it every time, so cache B takes all of it. Nothing in the score knows about popularity.",w:"Rendezvous hashing spreads keys, not popularity.",rows:8,scores:true,win:true,foot:"0x18 is hot: cache B takes most of the traffic",footK:"fail",ban:"Every request for wallet 0x18 lands on cache B.",pc:[7,11]},
+ {t:"The fix: split the hot key",b:"Line 12 stores the wallet under three keys. Each is scored on its own: 0x18#1 goes to cache D, 0x18#2 to A, 0x18#3 to E. A read picks one of them at random.",w:"Three servers now share the traffic of one wallet. The other fix is to give the hot key its own server.",rows:8,scores:true,win:true,foot:"0x18#1 on D, 0x18#2 on A, 0x18#3 on E",footK:"ok",pc:[12]}
+],
+leave:[
+ {t:"Who owns what",b:"The same eight wallets and five servers. Line 6 gives each key its highest-scoring server.",w:"Now change the set of servers and count what moves.",rows:8,scores:true,win:true,pc:[4,5,6]},
+ {t:"Cache B is removed",b:"Line 8 removes B from the list. Line 4 no longer scores it. A key's winner can change only if B was its winner, since every other winner is still in the list and still has the highest score.",w:"That is why only B's keys move: the check on line 6 gives the same answer for all the others.",rows:8,scores:true,win:true,noB:true,pc:[8,4,6]},
+ {t:"Each of B's keys goes to its own second-best",b:"Wallet 0x18 had A 87 as its next score, so it moves to A. Wallet 0x9f had C 56 next, so it moves to C. Line 10 lists exactly those two.",w:"A ring sends all of a dead node's keys to one neighbour. Rendezvous spreads them, because every key has its own second choice.",rows:8,scores:true,win:true,noB:true,foot:"{m} of 8 keys moved, all of them B's own",pc:[6,10]},
+ {t:"Cache F joins",b:"Line 9 adds F. F wins only where its score beats the current winner. That happens once: wallet 0x4c, where F scores 90 and E had 80. Every other key keeps its owner.",w:"A joining server takes about 1/N of the keys, and only from the servers that held them.",rows:8,scores:true,win:true,noB:true,F:true,foot:"{m} of 8 keys moved since B left and F joined",pc:[9,6,10]},
+ {t:"Compared with mod N",b:"With hash mod N, the single change from 5 servers to 4 moves 7 of these 8 keys, because the remainder of almost every number changes. Line 10 here counts 3 moved keys after two changes.",w:"Moving few keys means few cache misses. That is what consistent placement buys.",rows:8,scores:true,win:true,noB:true,F:true,foot:"3 of 8 keys moved in two changes. Mod N: 7 of 8 in one.",footK:"ok",pc:[10]}
+]};
+const code={"*": {"label": "Go", "pc": ["score(key, server) = hash(key + server + seed) mod 100", "owner(key, servers):", "  best = none, bestScore = -1", "  for each server s:                       # one hash per server", "    sc = score(key, s)", "    if sc > bestScore: best = s, bestScore = sc", "  return best                              # the same on every client", "a server leaves: servers = servers - B     # only B's keys change owner", "a server joins: servers = servers + F      # F wins only where it scores highest", "moved = keys whose owner changed", "a hot key: owner(key) stays one server     # hashing spreads keys, not popularity", "fix: store it as key#1, key#2, key#3       # each has its own winner"], "real": ["// Score hashes the key and the server together into a number from 0 to 99.", "// A strong hash matters: with a weak one, similar server names score alike.", "func Score(key, server string) int {", "\th := sha256.Sum256([]byte(key + \"/\" + server + \"/\" + seed))", "\treturn (int(h[0])<<8 | int(h[1])) % 100", "}", "", "// Owner scores every server for the key and returns the highest.", "func Owner(key string, servers []string) string {", "\tbest, bestScore := \"\", -1", "\tfor _, s := range servers { // one hash per server, per lookup", "\t\tif sc := Score(key, s); sc > bestScore {", "\t\t\tbest, bestScore = s, sc", "\t\t}", "\t}", "\treturn best", "}", "", "// Remove returns the server list without one server.", "func Remove(servers []string, gone string) []string {", "\tvar left []string", "\tfor _, s := range servers {", "\t\tif s != gone {", "\t\t\tleft = append(left, s)", "\t\t}", "\t}", "\treturn left", "}", "", "// Split stores a hot key under n keys, so n servers share its traffic.", "func Split(key string, n int, servers []string) []string {", "\tvar owners []string", "\tfor i := 1; i <= n; i++ {", "\t\towners = append(owners, Owner(fmt.Sprintf(\"%s#%d\", key, i), servers))", "\t}", "\treturn owners", "}", "", "// Moved lists the keys whose owner changed.", "func Moved(keys []string, before, after map[string]string) []string {", "\tvar moved []string", "\tfor _, k := range keys {", "\t\tif before[k] != after[k] {", "\t\t\tmoved = append(moved, fmt.Sprintf(\"%s %s->%s\", k, before[k], after[k]))", "\t\t}", "\t}", "\treturn moved", "}"], "map": {"1": [3, 4], "2": [9], "3": [10], "4": [11], "5": [12], "6": [12, 13], "7": [16], "8": [20], "9": [9], "10": [40, 43], "11": [16], "12": [31, 34]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

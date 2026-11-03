@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zuul gateway</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Zuul: one front door for every call</h1>
+  <p class="lede">Ola's TV asks Netflix to start a film. The request enters through Zuul, the API gateway, where filters check it, route it and send a small share to a canary. Then one slow backend tries to take the whole gateway down. Press <b>Next</b>.</p>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="tv" class="box" x="20" y="80" width="160" height="52" rx="8"/><text id="tv-t" x="100" y="111">Ola's TV</text>
+        <rect id="ph" class="box" x="20" y="260" width="160" height="52" rx="8"/><text id="ph-t" x="100" y="291">Ben's phone</text>
+        <rect x="220" y="30" width="260" height="340" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <text x="350" y="56" fill="var(--muted)">Zuul gateway</text>
+        <rect id="fi" class="box" x="240" y="80" width="220" height="48" rx="6"/><text id="fi-t" x="350" y="110" class="sm">inbound: who, allowed, limits</text>
+        <rect id="fr" class="box" x="240" y="160" width="220" height="48" rx="6"/><text id="fr-t" x="350" y="190" class="sm">routing: service, region, canary</text>
+        <rect id="fo" class="box" x="240" y="240" width="220" height="48" rx="6"/><text id="fo-t" x="350" y="270" class="sm">outbound: headers, metrics</text>
+        <text id="th" x="350" y="335" fill="var(--fg)" class="sm">threads busy: 3 of 200</text>
+        <rect id="a1" class="box" x="610" y="40" width="270" height="52" rx="8"/><text id="a1-t" x="745" y="71">Playback API</text>
+        <rect id="a2" class="box" x="610" y="150" width="270" height="52" rx="8"/><text id="a2-t" x="745" y="181">Playback API, canary</text>
+        <rect id="a3" class="box" x="610" y="260" width="270" height="52" rx="8"/><text id="a3-t" x="745" y="291">Playback API, other region</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">request being handled</span>
+    <span style="--c:var(--ok)">answered</span>
+    <span style="--c:var(--wait)">canary, or slow</span>
+    <span style="--c:var(--fail)">exhausted or failing</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Any public API in front of many services. Kong, Envoy, AWS API Gateway, Spring Cloud Gateway and NGINX play this role. Canary releases are often done here: 1 percent of traffic to the new version, compare, widen.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Keep the gateway thin: authentication, routing, limits, metrics. Business logic does not belong there. Give each route a timeout and shed load before the gateway itself runs out of threads or memory.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Zuul 1</th><th>Zuul 2</th></tr>
+      <tr><td>Model</td><td>One thread per request, blocking</td><td>Asynchronous, a few threads, Netty</td></tr>
+      <tr><td>A slow backend</td><td>Threads pile up, the gateway stalls</td><td>Requests wait in memory, threads stay free</td></tr>
+      <tr><td>Long connections</td><td>Costly</td><td>Cheap, suits push and websockets</td></tr>
+      <tr><td>Code style</td><td>Simple to read</td><td>Harder to debug</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Zuul is Netflix's API gateway: every device call enters through one door where filters check, route, canary and shed load, and it went asynchronous so a slow backend cannot exhaust it."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const D={main:{f:{tv:N,ph:N,fi:N,fr:N,fo:N,a1:N,a2:N,a3:N},x:{th:"threads busy: 3 of 200","a1-t":"Playback API"}}};
+const steps={main:[
+{t:"Ola's TV sends one request",b:"Ola presses Play. Her TV, device 4711, sends one request, 'start playback', to Zuul's single address. It carries her token and is her 3rd request this second.",w:"Devices know one address. Everything behind it can change without a device update.",f:{tv:C},m:[[180,106,238,104,"",C]],pc:[1]},
+ {t:"Inbound filters check it",b:"The inbound filters run in order, and any of them can stop the request. Auth asks 'is the token valid?': yes. Rate asks 'more than 10 requests this second?': 3, so no. A bot sending 40 a second would stop here with 429.",w:"Bad or abusive requests stop at the door and never reach a service.",f:{tv:C,fi:C},m:[[180,106,238,104,"",C],[350,128,350,158,"",C]],pc:[2,3,4,5]},
+ {t:"Routing: 99 percent to the current version",b:"The routing filter starts with 'Playback API in Ola's home region, us-east'. us-east is not drained. The canary check is 'device % 100 < 1': 4711 % 100 = 11, so no. The current version answers, and the outbound filter counts it in the metrics.",w:"Routing rules are code inside Zuul, changed without touching any device.",f:{tv:G,fi:G,fr:C,fo:G,a1:G},m:[[460,180,608,70,"99 %",C]],pc:[6,7,8,11,12]},
+ {t:"1 percent goes to the canary",b:"Ben's phone is device 9300. 9300 % 100 = 0, which is below 1, so the routing filter sends him to the canary, the new version under test. One device in a hundred lands here, always the same ones.",w:"A bad new version hurts 1 percent of users for minutes, not everyone. Its error rate is compared with the current version.",f:{ph:C,fi:G,fr:C,a2:Y},m:[[180,284,238,190,"",C],[460,186,608,176,"1 %",Y]],pc:[8]},
+ {t:"A region is evacuated",b:"During a regional drill, us-east is marked drained. The check 'is the home region drained?' is now yes, so the routing filter sends Ola's request to the same API in us-west.",w:"Zuul is the lever that makes regional failover a switch, not a project.",f:{tv:C,fr:C,a3:G},x:{"a1-t":"Playback API (drained)"},m:[[460,196,608,286,"failover",G]],pc:[6,7]},
+ {t:"The failure that matters: one slow backend",b:"The Playback API slows to 5 s per answer. In Zuul 1 each request holds a thread while it waits. At 50 requests a second, waiting needs 50 × 5 s = 250 threads, and Zuul has 200.",w:"All 200 threads wait on one service, so even requests for healthy services get no thread. One slow backend makes every service look down. There is no per-route timeout or limit to stop it.",f:{tv:R,ph:R,fi:R,fr:R,fo:R,a1:Y},x:{th:"threads busy: 200 of 200 (needs 250)","a1-t":"Playback API: 5 s"},m:[[460,170,608,66,"waiting",Y,true]],pc:[14,15]},
+ {t:"Zuul 2: asynchronous, with timeouts and shedding",b:"Zuul 2 runs on a few event-loop threads, and a waiting call holds memory, not a thread. Each call is cut at 1 s, so Playback has 50 × 1 s = 50 calls in flight, under its limit of 100. At 100 in flight, new Playback calls get a fast 503.",w:"The slow service hurts only its own route: Ola gets a fast error, and Ben's canary route still answers 200.",f:{tv:G,ph:G,fi:G,fr:G,fo:G,a1:Y,a2:G},x:{th:"threads busy: 8 of 8, none blocked","a1-t":"Playback API: cut at 1 s"},m:[[460,186,608,176,"",G]],pc:[9,10]}
+]};
+const code={main:{"label": "Go", "dir": "11-zuul-gateway", "pc": ["on request r:", "  for f in inbound filters:                  # run in order, any can stop it", "    if not f(r): return reject(f.status)", "  # auth: is r.token valid? else 401", "  # rate: has r.device sent more than 10 per second? then 429", "  route = \"playback-api in \" + home region", "  if home region is drained: route = same API in other region   # failover", "  if r.device % 100 < 1: route = canary                         # 1 % canary", "  if inFlight[route] >= 100: return 503     # Zuul 2: shed only this route", "  resp = call(route) with timeout 1 s       # Zuul 2: per-route timeout", "  for f in outbound filters: f(r, resp)     # metrics, headers", "  return resp", "", "blocking Zuul 1: one thread waits for each call", "  threadsNeeded = arrivals per second * latency     # 50 * 5 s = 250 > 200"], "real": ["var inbound = []Filter{", "\t{\"auth\", 401, func(r Request) bool { return r.Token == \"valid\" }},", "\t{\"rate\", 429, func(r Request) bool { return r.PerSecond <= 10 }},", "}", "", "func (g *Gateway) Handle(r Request, home, other string) (int, string) {", "\tfor _, f := range inbound {", "\t\tif !f.Pass(r) {", "\t\t\treturn f.Status, \"stopped by \" + f.Name", "\t\t}", "\t}", "\troute := \"playback-api@\" + home", "\tif g.Drained[home] {", "\t\troute = \"playback-api@\" + other", "\t}", "\tif r.Device%100 < 1 {", "\t\troute = \"playback-canary@\" + home", "\t}", "\tif g.InFlight[route] >= 100 {", "\t\treturn 503, \"shed: \" + route", "\t}", "\tif g.Latency[route] > time.Second {", "\t\treturn 504, \"timeout after 1 s: \" + route", "\t}", "\tg.Metrics[route]++", "\treturn 200, route", "}", "", "// ThreadsNeeded is Little's law for blocking Zuul 1: each call holds a thread.", "func ThreadsNeeded(perSecond int, latency time.Duration) int {", "\treturn int(float64(perSecond) * latency.Seconds())", "}", ""], "map": {"2": [2, 3, 7], "4": [2], "5": [3], "1": [6], "3": [8, 9], "6": [12], "7": [13, 14], "8": [16, 17], "9": [19, 20], "10": [22, 23], "11": [25], "12": [26], "14": [30], "15": [31]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

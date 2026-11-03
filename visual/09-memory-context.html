@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memory and context</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Memory and the context window</h1>
+  <p class="lede">A long coding session fills the window with tool output. The harness summarises the oldest turns into a short note. A rule the operator gave in turn 3 is lost in that summary. The next day, a file-based memory brings the rule back. Watch the window on the left fill, shrink and refill. Then switch tabs to see the prompt cache break.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Compaction loses a rule</button>
+    <button role="tab" aria-selected="false" data-mode="bad">The cache and the noisy memory</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">The context window as a stack of parts, and three memory stores outside it</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14">
+        <text x="30" y="28" font-weight="700" fill="var(--fg)">Context window</text>
+        <text id="pct" x="430" y="28" text-anchor="end" fill="var(--muted)"></text>
+        <rect x="30" y="40" width="400" height="344" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <g id="win"></g>
+        <text id="cst" x="30" y="408" font-weight="700" fill="var(--muted)"></text>
+      </g>
+      <g id="recall" class="msg"><path d="M516 290 L440 290" fill="none" stroke="var(--ok)" stroke-width="3" marker-end="url(#arr)"/><text x="478" y="280" text-anchor="middle" font-family="Atkinson Hyperlegible,system-ui" font-size="12" font-weight="700" fill="var(--ok)">recall</text></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14">
+        <text x="520" y="28" font-weight="700" fill="var(--fg)">Outside the window</text>
+        <rect id="s-buf" class="box" x="520" y="40" width="360" height="44" rx="8" fill="var(--line)"/><text x="536" y="67" fill="var(--fg)">Buffer: the last N messages</text>
+        <rect id="s-vec" class="box" x="520" y="94" width="360" height="44" rx="8" fill="var(--line)"/><text x="536" y="121" fill="var(--fg)">Vector memory: facts found by similarity</text>
+        <rect id="s-ent" class="box" x="520" y="148" width="360" height="236" rx="8" fill="var(--line)"/><text x="536" y="173" fill="var(--fg)" font-weight="700">Entity memory: one file per fact</text>
+        <g id="files"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-memory-context/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">stable prefix: system prompt, tools, skills</span>
+    <span style="--c:var(--coord)">tool output, trimmed</span>
+    <span style="--c:var(--undo)">summary made by compaction</span>
+    <span style="--c:var(--wait)">a rule given in a turn</span>
+    <span style="--c:var(--ok)">recalled fact, or cache hit</span>
+    <span style="--c:var(--fail)">lost rule, cache miss, noise</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A Claude Code memory folder: one fact per file and an index of one-line pointers. That is entity memory in plain files. Chat products keep a running summary plus the last few messages. Prompt caching rewards a prefix that stays the same, byte for byte, across calls.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Put rules in the system prompt or a skill, never only in a turn. Trim tool output before it enters the window. Keep timestamps and other changing text after the stable prefix. Save only the non-obvious: memory that repeats what the code already records is noise.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>In the window</th><th>Outside the window</th></tr>
+      <tr><td>What it is</td><td>Everything the model reads in this one call</td><td>Buffer, summary, vector store, entity files</td></tr>
+      <tr><td>Lifetime</td><td>Until compaction or the session ends</td><td>Across sessions, until deleted</td></tr>
+      <tr><td>Cost</td><td>Paid on every call, unless the prefix is cached</td><td>Paid only when recalled</td></tr>
+      <tr><td>Main failure</td><td>Compaction drops a rule</td><td>Saving everything, so the useful fact drowns</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The context window is the whole memory, so rules live in the stable prefix and facts are recalled, not kept forever."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const P=["system prompt, tools, skills (cached)",2,"svc"];
+const steps={
+"ok":[
+ {t:"The session starts",b:"The window holds the stable prefix first: system prompt, tools and skills. Then the first two turns.",w:"The prefix is the same on every call, so the provider can cache it.",win:[P,["turns 1 and 2",1,"muted"]],files:[],cst:"call 2"},
+ {t:"Turn 3: a rule",b:"The operator says: tests always run in the sandbox, never against the real home folder. The rule sits in turn 3, like any other message.",w:"A rule kept only in a turn lives exactly as long as that turn.",win:[P,["turns 1 and 2",1,"muted"],["turn 3: tests run in the sandbox",1,"wait"]],files:[],cst:"call 3"},
+ {t:"Work fills the window",b:"Turns 4 to 20 are builds and test runs. Each tool output is trimmed, but it still adds up. The window is 90% full.",w:"Every call re-sends the whole window. A full window is slow and expensive.",win:[P,["turns 1 and 2",1,"muted"],["turn 3: tests run in the sandbox",1,"wait"],["tool output (trimmed)",2,"coord"],["turns 4 to 20",2,"muted"],["tool output (trimmed)",1,"coord"]],files:[],cst:"call 20"},
+ {t:"Compaction",b:"The harness replaces turns 1 to 20 with a short summary: 'set up tests, fixed the build'. The rule from turn 3 is not in it.",w:"A summary keeps the gist. A rule is a detail, and details are what a summary drops.",win:[P,["summary: set up tests, fixed build",1,"undo"],["rule from turn 3: gone",1,"fail",1],["turn 21",1,"muted"]],files:[],cst:"call 21: compacted"},
+ {t:"The rule is broken",b:"In turn 22 the agent runs the tests against the real home folder. Nothing in its window says not to.",w:"The model did not disobey. It never saw the rule again.",win:[P,["summary: set up tests, fixed build",1,"undo"],["turn 21",1,"muted"],["turn 22: test run in the real home",1,"fail"]],files:[],cst:"call 22"},
+ {t:"Save the rule as its own fact",b:"The rule is written to entity memory as one file, with the reason it exists.",w:"One fact per file. It can be found, read and corrected on its own.",win:[P,["summary: set up tests, fixed build",1,"undo"],["turn 22: test run in the real home",1,"fail"]],files:[["tests run in the sandbox.md","ok"]],cst:"call 23"},
+ {t:"Next day: the rule is recalled",b:"A new session starts empty. The memory index is read, the matching file is recalled into the window, and the rule is back.",w:"Recall puts back only what is relevant, not yesterday's whole window.",win:[P,["recalled: tests run in the sandbox",1,"ok"],["turn 1",1,"muted"]],files:[["tests run in the sandbox.md","ok"]],show:["recall"],cst:"new session, call 1"},
+ {t:"Stronger still: the stable prefix",b:"The rule moves into the project instructions that load with the system prompt. Compaction never touches the prefix.",w:"Rules belong in the prefix or a skill. Facts belong in memory. Turns are for work.",win:[["prefix + rule: tests in the sandbox",2,"svc"],["turns 1 to 5",1,"muted"],["tool output (trimmed)",1,"coord"]],files:[["tests run in the sandbox.md","ok"]],cst:"survives every compaction"}
+],
+"bad":[
+ {t:"The prefix is cached",b:"Every call sends the whole window. The first part, the system prompt, tools and skills, is the same bytes each time, so the provider reads it from its cache.",w:"A cache hit on the prefix is cheaper and faster. The longer the prefix, the more it saves.",win:[["system prompt, tools, skills: hit",2,"ok"],["recent turns",2,"muted"]],files:[],cst:"call 2: prefix read from cache"},
+ {t:"A timestamp at the top",b:"Someone adds the current time as the first line of the system prompt, so the model knows the date.",w:"The prefix is now different on every call, by a few characters.",win:[["12:04:31 + system prompt, tools…",2,"fail"],["recent turns",2,"muted"]],files:[],cst:"call 3: prefix changed: miss"},
+ {t:"A miss on every call",b:"The cache compares the prefix byte for byte from the start. The time on the first line changes each second, so the match ends within the first line. In the program's run, 12 of 2,814 bytes match.",w:"Every call now pays full price for the whole prefix again.",win:[["12:04:58 + system prompt, tools…",2,"fail"],["recent turns",3,"muted"]],files:[],cst:"calls 4, 5, 6: miss, miss, miss"},
+ {t:"The fix: changing text goes last",b:"The time moves after the stable prefix, next to the newest turn. The compare now runs through the whole prefix: 2,813 of 2,814 bytes match.",w:"Order the window from most stable to least stable.",win:[["system prompt, tools, skills: hit",2,"ok"],["recent turns",3,"muted"],["now: 12:05",1,"muted"]],files:[],cst:"call 7: prefix read from cache"},
+ {t:"A second failure: memory that saves everything",b:"The memory folder is told to save every fact. It fills with what the code already records: the test runner, the folder layout, the build command.",w:"Recall now brings back a pile of files, and the one that matters is among them.",win:[["system prompt, tools, skills: hit",2,"ok"],["recalled: 8 files",3,"fail"],["recent turns",1,"muted"]],files:[["repo has a README.md","fail"],["tests use vitest.md","fail"],["src holds the code.md","fail"],["build with npm run build.md","fail"],["tests run in the sandbox.md","ok"],["main is the default branch.md","fail"],["there is a CI workflow.md","fail"],["files use 2 spaces.md","fail"]],show:["recall"],cst:"call 8"},
+ {t:"Save the non-obvious",b:"The files that repeat the code are deleted. What stays is what nobody could learn by reading the repository: a rule and its reason.",w:"A memory is worth saving when losing it would cause the same mistake again.",win:[["system prompt, tools, skills: hit",2,"ok"],["recalled: tests run in the sandbox",1,"ok"],["recent turns",1,"muted"]],files:[["tests run in the sandbox.md","ok"]],show:["recall"],cst:"call 9"}
+]};
+const NS="http://www.w3.org/2000/svg";
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function seg(g,x,y,w,h,label,c,ghost,fs){
+  const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+  el.innerHTML=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="var(--${c})" opacity="${ghost?0:.2}"/>`+
+   `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4" fill="none" stroke="var(--${c})" stroke-width="2"${ghost?' stroke-dasharray="6 4"':''}/>`+
+   `<text x="${x+12}" y="${y+h/2+5}" font-size="${fs}" fill="${ghost?"var(--fail)":"var(--fg)"}">${label}</text>`;
+  g.appendChild(el);const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,40);
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");r.nextElementSibling.setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){const r=$(k);r.setAttribute("fill",`var(--${s.box[k]})`);r.nextElementSibling.setAttribute("fill","#fff");}
+  document.querySelectorAll(".msg").forEach(m=>m.classList.toggle("on",(s.show||[]).includes(m.id)));
+  const w=$("win");w.innerHTML="";let y=44,used=0;
+  for(const p of s.win){const h=p[1]*33.6-4;seg(w,36,y,388,h,p[0],p[2],p[3],14);y+=p[1]*33.6;if(!p[3])used+=p[1];}
+  $("pct").textContent=`${used*10}% full, example`;$("pct").setAttribute("fill",used>=8?"var(--fail)":"var(--muted)");
+  const f=$("files");f.innerHTML="";s.files.forEach((p,k)=>seg(f,532,184+k*24.5,336,21,p[0],p[1],false,12));
+  $("cst").textContent=s.cst;
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+
+const CODE={"label": "Python", "pc": ["window = the stable prefix first, then the turns", "every message is a turn, a rule too", "when the window is nearly full: compact: old turns become a short summary", "cache read: compare with the last call, byte by byte from the start", "changing text goes after the stable prefix", "save a rule as its own memory file, with its reason", "new session: read the index, recall the matching files", "a rule that must always hold: put it in the prefix"], "real": ["class Session:", "    def __init__(self, prefix, memory):", "        self.prefix = prefix  # stable, sent first", "        self.turns = []", "        self.memory = memory  # files, outside the window", "", "    def add(self, turn):", "        self.turns.append(turn)", "", "    def compact(self):", "        self.turns = [fake_summarise(self.turns)]  # the rule may be lost here", "", "    def recall(self, topic):", "        self.turns += [f for f in self.memory if topic in f]  # matching files only", "", "    def window(self):", "        return \"\\n\".join([self.prefix] + self.turns)", "", "", "def save_fact(memory, fact, why):", "    memory.append(f\"{fact}. Why: {why}\")  # one file per fact", "", "", "def cache_read(previous, current):", "    n = 0", "    for a, b in zip(previous, current):  # byte for byte, from the start", "        if a != b:  # one change ends the match", "            break", "        n += 1", "    return n", "", "", "def build_prefix(stable, changing, changing_first=False):", "    if changing_first:", "        return changing + \"\\n\" + stable  # suppose the time goes first", "    return stable + \"\\n\" + changing  # changing text goes last"], "map": {"1": [3, 17], "8": [3], "2": [4, 8, 17], "6": [5, 20, 21], "3": [10, 11], "7": [13, 14], "4": [24, 26, 27, 30], "5": [35, 36]}, "path": "handbook/code/09-memory-context/main.py", "cmd": "python3 main.py", "note": ""},PCS={"ok": [[1], [2], [2], [3], [3], [6], [7], [1, 8]], "bad": [[1, 4], [5], [4], [5, 4], [6], [6]]};
+for(const t in PCS)PCS[t].forEach((p,k)=>{steps[t][k].pc=p;});
+let codeView="pc";
+function cesc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE,pc=(steps[mode][i].pc)||[];
+  const v=(codeView==="alt"&&!c.alt)?"real":codeView;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=cesc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const __render=render;render=function(){__render();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{codeView=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate limits and retries</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Rate limits: back off, add jitter, fall back</h1>
+  <p class="lede">At 09:00 every investigator starts work and the agent sends a burst of calls. Press <b>Next</b> and watch instant retries make the burst worse. The second tab shows backoff with jitter, a retry cap and a tested fallback model.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="storm">The 09:00 burst</button>
+    <button role="tab" aria-selected="false" data-mode="fix">Backoff, jitter, fallback</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Agent clients hitting a provider rate limit at 09:00, retrying together, then retrying with backoff and jitter and falling back to a second model</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-rate-limits-retries/main.py</code> (<code>python3 main.py</code>). The API call tab shows the Anthropic Messages API request for reference; it is not run.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+      <button data-v="api" aria-pressed="false" id="apitab">API call</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a client call</span>
+    <span style="--c:var(--fail)">429 or overloaded</span>
+    <span style="--c:var(--ok)">answered</span>
+    <span style="--c:var(--wait)">waiting before a retry</span>
+    <span style="--c:var(--undo)">fallback model</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every production client of a hosted model API. Providers limit requests per minute and tokens per minute, and return 429 with a retry-after time. An agent harness adds a per-session token budget, so one runaway loop cannot eat the account's limit.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Retry with exponential backoff plus random jitter, honour retry-after, and cap the retries. Then fall back to another region or model chosen in advance and tested on the golden set. Make requests idempotent, so a retry never repeats a side effect. Plan capacity by tokens per minute at peak.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Instant retries</th><th>Backoff with jitter and a fallback</th></tr>
+      <tr><td>After a 429</td><td>Every client retries at once</td><td>Each client waits a different, growing time</td></tr>
+      <tr><td>Load on the provider</td><td>Grows: the burst repeats</td><td>Spreads out</td></tr>
+      <tr><td>After many failures</td><td>Loops forever</td><td>Stops at the cap, then falls back</td></tr>
+      <tr><td>Side effects</td><td>Can repeat</td><td>Idempotent requests, safe to retry</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Rate limits are a fact of hosted models, so I back off with jitter, cap the retries, and fall back to a tested second model."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={storm:{"pc": ["request.idempotency_key = new_key()        # once, reused on every retry", "for attempt in 0 .. MAX_TRIES-1:           # the cap: 3 tries", "  response = call(model, request)", "  if response.status == 200: return response", "  # 429 too many requests, 529 overloaded", "  wait = max(retry_after, 2 * 2**attempt)  # honour retry-after, then double", "  wait += random(0, 1.5)                   # jitter: no lockstep", "  sleep(wait)", "return call(fallback_model, request)       # chosen and tested in advance", "tool.write(note): if key seen: return \"already done\"", "# wrong: on 429, retry at once with no wait"], "real": ["CAPACITY = 4          # example: calls the provider accepts per second for this account", "RETRY_AFTER = 2.0     # seconds, from the provider's retry-after header", "MAX_TRIES = 3         # the retry cap", "NEW_CALLS = [8, 8, 7, 8, 8]   # new agent calls arriving each second from 09:00", "SEEDS = {1: 8, 2: 5, 3: 1373, 4: 2}   # one seeded jitter source per client, so the run repeats", "", "def instant_retries(new_calls):", "    \"\"\"Every limited call retries in the next second, with no wait.\"\"\"", "    limited, waiting = [], 0", "    for arrivals in new_calls:", "        offered = arrivals + waiting", "        waiting = max(0, offered - CAPACITY)", "        limited.append(waiting)", "    return limited", "", "def backoff(attempt, rng):", "    \"\"\"Wait before retry number attempt+1: honour retry-after, double, add jitter.\"\"\"", "    base = max(RETRY_AFTER, RETRY_AFTER * 2 ** attempt)", "    return round(base + rng.uniform(0, 1.5), 1)", "", "def call_with_retries(answers, rng, fallback):", "    \"\"\"answers: what the provider says on each try. Returns the result and the waits.\"\"\"", "    waits = []", "    for attempt in range(MAX_TRIES):", "        status = answers[attempt]", "        if status == 200:", "            return \"answered\", waits", "        if attempt + 1 < MAX_TRIES:", "            waits.append(backoff(attempt, rng))", "    return fallback(), waits          # after the cap: the tested fallback model", "", "class NoteTool:", "    \"\"\"A tool with a side effect: it writes a note.\"\"\"", "    def __init__(self):", "        self.notes, self.seen = [], set()", "", "    def write(self, text, key=None):", "        if key is not None and key in self.seen:", "            return \"already done\"     # same idempotency key: no second write", "        self.notes.append(text)", "        if key is not None:", "            self.seen.add(key)", "        return \"written\""], "map": {"1": [38, 39, 41, 42], "2": [3, 24], "3": [4, 25], "4": [1, 26, 27], "5": [2, 25], "6": [18], "7": [19], "8": [28, 29], "9": [30], "10": [38, 39], "11": [7, 8, 9, 10, 11, 12, 13, 14]}, "api": ["# Anthropic Messages API, for reference (not run)", "client = anthropic.Anthropic(max_retries=0)   # this loop does the retries", "for attempt in range(3):", "    try:", "        return client.messages.create(model=\"claude-opus-5-5\",", "                                      max_tokens=500, messages=msgs)", "    except anthropic.RateLimitError as e:      # 429", "        wait = float(e.response.headers.get(\"retry-after\", 2))", "    except anthropic.APIStatusError as e:", "        if e.status_code < 500:                 # 500 and 529 overloaded retry", "            raise", "        wait = 2", "    time.sleep(max(wait, 2 * 2**attempt) + random.uniform(0, 1.5))", "return client.messages.create(model=\"claude-haiku-5-5\",   # tested fallback", "                              max_tokens=500, messages=msgs)", "# The SDK retries 429 and 5xx by itself, 2 times by default: max_retries sets it"], "amap": {"2": [3], "3": [5, 6], "4": [5], "5": [7, 8, 9, 10], "6": [8, 13], "7": [13], "8": [13], "9": [14, 15]}}};
+code.fix=code.storm;
+//ENDCODE
+const LIM=4;
+const steps={
+"storm":[
+ {t:"09:00: the burst",b:"Eight investigators start work at once. The agent sends 8 calls in the same second, and keeps sending about 8 new calls every second after.",w:"Demand is not smooth. It comes in bursts at the start of the day.",calls:8,ok:8,t0:1,pc:[3]},
+ {t:"Over the limit",b:"The example limit is 4 calls per second for this account. 4 calls are answered. 4 get 429: too many requests, with retry-after 2 seconds.",w:"Providers limit requests per minute and tokens per minute.",calls:8,ok:4,t0:1,lim:1,pc:[3, 4, 5]},
+ {t:"Instant retries",b:"The 4 failed calls retry at once, with no wait. Second 2 offers 4 retries plus 8 new calls: 12 for 4 slots, so 8 hit the limit. The wait line is missing.",w:"Retrying at once puts the same burst back on the provider.",calls:8,ok:4,t0:2,lim:1,again:1,pc:[6, 11]},
+ {t:"The failure: the storm grows",b:"Every failure makes another instant retry, and nothing caps the tries. Calls hitting the limit each second: 4, 8, 11, 15, 19. Users see errors for minutes.",w:"Instant retries in a loop turn a short limit into an outage.",storm:1,pc:[2, 11]},
+ {t:"A side effect repeats",b:"One retried call was a tool call that had already written a note before the error came back. The retry carries no idempotency key, so the tool writes it again: 2 notes.",w:"Retrying a call that already did something repeats the side effect.",storm:1,dup:1,pc:[1, 10]}
+],
+"fix":[
+ {t:"Honour retry-after",b:"The provider said: retry after 2 seconds. The wait line takes the larger of retry-after and the backoff, so each client waits at least 2 seconds.",w:"The provider knows its own load. Listen to it.",bk:[2,2,2,2],pc:[6]},
+ {t:"Add jitter",b:"Each client adds a random extra wait between 0 and 1.5 seconds: 2.3, 2.9, 2.1 and 3.4 seconds. The retries arrive spread out, not together.",w:"Jitter stops clients from retrying in lockstep.",bk:[2.3,2.9,2.1,3.4],spread:1,pc:[7]},
+ {t:"Back off further each time",b:"A client that fails again doubles its base wait, then adds jitter. Client 3's schedule: 2.1, then 4.3, then 8.6 seconds.",w:"Exponential backoff gives the provider room to recover.",bk:[2.3,2.9,2.1,3.4],spread:1,expo:1,pc:[6, 7, 8]},
+ {t:"Overloaded: 529",b:"Client 3 tries a third time and the provider answers 529: overloaded. The loop counts tries, and the cap is three, so it stops retrying.",w:"A cap stops a client from waiting forever.",bk:[2.3,2.9,2.1,3.4],spread:1,expo:1,cap:1,pc:[2, 5]},
+ {t:"Fall back",b:"After the cap, the client sends the same request to a fallback model, chosen in advance and tested on the golden set. It answers.",w:"The fallback is decided before the outage, not during it.",bk:[2.3,2.9,2.1,3.4],spread:1,expo:1,cap:1,fb:1,pc:[9]},
+ {t:"Idempotent requests",b:"Each request carries an idempotency key, here note-7f2. The tool checks the key: the first call writes the note, the retry gets \"already done\". One note.",w:"Safe retries need requests that can run twice with one effect.",bk:[2.3,2.9,2.1,3.4],spread:1,expo:1,cap:1,fb:1,idem:1,pc:[1, 10]}
+]};
+function scene(s){
+  let h=R(20,30,160,50,"var(--coord)","Agent clients","#fff",15)+R(500,30,180,50,"var(--muted)","Provider","#fff",15);
+  h+=T(590,100,`limit: ${LIM} calls per second`,"var(--muted)",13,"middle",1);
+  if(s.calls){for(let k=0;k<s.calls;k++){const y=120+k*26;const ok=k<s.ok;
+      h+=A(182,y,496,y,ok?"var(--ok)":"var(--fail)",ok?`call ${k+1}: answered`:(s.again?`retry ${k-3}: 429 again`:`call ${k+1}: 429`));}
+    h+=T(20,348,s.again?"second 2: retries plus new calls, still over the limit":"second 1","var(--muted)",13,"start",1);}
+  if(s.storm){const bars=[4,8,11,15,19];h+=T(20,118,"Calls hitting the limit each second",null,14,"start",1);
+    bars.forEach((v,k)=>{const x=40+k*90;h+=`<rect class="box" x="${x}" y="${330-v*10}" width="60" height="${v*10}" rx="4" fill="var(--fail)"/>`+T(x+30,348,"second "+(k+1),"var(--muted)",12,"middle")+T(x+30,322-v*10,v,"var(--fail)",13,"middle",1);});
+    if(s.dup)h+=R(500,200,380,60,"var(--fail)","note written twice by a retried tool call","#fff",14);
+    else h+=T(500,250,"errors for minutes","var(--fail)",16,"start",1);}
+  if(s.bk){h+=T(20,118,"Wait before retry (seconds)",null,14,"start",1);
+    s.bk.forEach((v,k)=>{const y=132+k*44;const w=v*50;
+      h+=T(20,y+22,"client "+(k+1),null,13,"start",1)+R(90,y,w,30,"var(--wait)",v+" s","#fff",13);
+      if(s.expo&&k===2){h+=R(90+w+6,y,200,30,"var(--wait)","4.3 s","#fff",13)+R(90+w+212,y,s.cap?120:100,30,s.cap?"var(--fail)":"var(--wait)",s.cap?"529, cap":"8.6 s","#fff",13);}
+      else h+=R(90+w+6,y,90,30,"var(--ok)","answered","#fff",13);});
+    if(!s.spread)h+=T(380,330,"all four retry at the same moment","var(--fail)",14,"start",1);
+    if(s.fb){h+=R(700,250,180,50,"var(--undo)","Fallback model","#fff",14);h+=A(532,236,696,270,"var(--undo)","same request");h+=T(790,320,"answered","var(--ok)",14,"middle",1);}
+    if(s.idem)h+=T(20,340,"idempotency key: a retried tool call writes its note once","var(--ok)",14,"start",1);}
+  if(s.calls||s.storm||s.bk)h+=T(880,22,"Example numbers, not a measurement","var(--muted)",13,"end",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

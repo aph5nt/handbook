@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SKIP LOCKED queue</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>SKIP LOCKED: a job queue in SQL</h1>
+  <p class="lede">Price fetch jobs wait in a PostgreSQL table, and three workers poll it. With plain <code>FOR UPDATE</code> they queue behind the same first job. With <code>SKIP LOCKED</code> each takes a different job. The last tab shows the failure: a transaction held open while a long job runs.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="plain">Plain FOR UPDATE</button>
+    <button role="tab" aria-selected="false" data-mode="skip">FOR UPDATE SKIP LOCKED</button>
+    <button role="tab" aria-selected="false" data-mode="long">The failure: a long transaction</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">SKIP LOCKED queue: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a worker</span>
+    <span style="--c:var(--wait)">job locked by a worker</span>
+    <span style="--c:var(--coord)">waiting for a lock</span>
+    <span style="--c:var(--ok)">job done</span>
+    <span style="--c:var(--undo)">released back to ready</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL job queues: River (Go) and good_job (Ruby) are built on <code>SKIP LOCKED</code>. MySQL 8 supports it too. It suits a few thousand jobs a minute with workers that already talk to the database.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Claim a job in a short transaction, set <code>status = 'running'</code> and a <code>claimed_until</code> time, and commit before the work starts. A reaper resets claims that ran out. Make every job idempotent. For high volume, or many consumers of one event, move to Kafka or a real queue.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>FOR UPDATE</th><th>FOR UPDATE SKIP LOCKED</th><th>Kafka or a queue service</th></tr>
+      <tr><td>Locked row</td><td>Wait for it</td><td>Skip it, take the next</td><td>Partitions or leases per consumer</td></tr>
+      <tr><td>Workers in parallel</td><td>One at a time on the head job</td><td>Yes, each on its own job</td><td>Yes</td></tr>
+      <tr><td>Fits</td><td>One row everybody must take in turn</td><td>A job table next to your data</td><td>High volume, fan-out to many readers</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"FOR UPDATE SKIP LOCKED lets many workers each take a different row, so a table becomes a safe job queue."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const W=j=>[30,70+100*j];
+const sc=(wk,jobs,ex)=>[...[0,1,2].map(j=>B(30,70+100*j,190,wk[j][0],wk[j][1],44)),F(540,40,340,300,"table jobs"),...jobs.map((x,j)=>B(560,70+52*j,300,x[0],x[1],40))].concat(ex||[]);
+const to=(w,j,k,d)=>A(222,92+100*w,556,90+52*j,"",k,d);
+const R=(n)=>"job "+n+": ready";
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-skip-locked-queue/main.go</code> keeps the jobs table and the row locks of open transactions. It replays three workers with plain FOR UPDATE, with SKIP LOCKED, and with a short claim and a reaper, and prints every value quoted here (<code>go run .</code>). SQLite has no FOR UPDATE SKIP LOCKED, so the SQL is shown as PostgreSQL, not run here.";
+const CODE={
+plain:{pc:["jobs 1 to 5: status ready · workers 1, 2, 3",
+"pick(worker): SELECT id ... WHERE status = 'ready' ORDER BY id LIMIT 1 FOR UPDATE",
+"  walk the ready rows in id order",
+"  row locked by another worker: wait for it",
+"  row free: lock it, return it",
+"worker 1: pick -> job 1",
+"workers 2 and 3: pick -> wait for job 1",
+"commit, then the next worker moves: 1 job per round",
+"right when everyone needs the same row: one seat, one wallet"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Pick is SELECT id FROM jobs WHERE status = 'ready' ORDER BY id LIMIT 1", "// FOR UPDATE, with SKIP LOCKED when skip is true.", "// It returns the job it locked, or the job it must wait for.", "func (q *Queue) Pick(tx string, skip bool) (id, waitsFor int) {", "\tfor _, j := range q.jobs {", "\t\tif j.status != \"ready\" {", "\t\t\tcontinue", "\t\t}", "\t\tif h, locked := q.locks[j.id]; locked && h != tx {", "\t\t\tif skip {", "\t\t\t\tcontinue // SKIP LOCKED: a locked row is treated as not there", "\t\t\t}", "\t\t\treturn 0, j.id // plain FOR UPDATE: wait for this row", "\t\t}", "\t\tq.locks[j.id] = tx", "\t\treturn j.id, 0", "\t}", "\treturn 0, 0", "}"],[""],["// drain runs rounds of three workers until no job is ready.", "// It returns how many jobs ran in each round.", "func drain(q *Queue, skip bool) []int {", "\trounds := []int{}", "\tfor q.Ready() > 0 {", "\t\tran := 0", "\t\tfor w := 1; w <= 3; w++ {", "\t\t\tif id, _ := q.Pick(fmt.Sprintf(\"worker %d\", w), skip); id != 0 {", "\t\t\t\tran++", "\t\t\t}", "\t\t}", "\t\tfor w := 1; w <= 3; w++ {", "\t\t\tq.Commit(fmt.Sprintf(\"worker %d\", w), \"done\")", "\t\t}", "\t\trounds = append(rounds, ran)", "\t}", "\treturn rounds", "}"],[""],["func plain() {", "\tfmt.Println(\"== plain FOR UPDATE, five jobs, three workers\")", "\tq := NewQueue(5)", "\tid, _ := q.Pick(\"worker 1\", false)", "\tfmt.Printf(\"worker 1 locks job %d\\n\", id)", "\t_, w2 := q.Pick(\"worker 2\", false)", "\t_, w3 := q.Pick(\"worker 3\", false)", "\tfmt.Printf(\"worker 2 waits for job %d, worker 3 waits for job %d, jobs 2 to 5 free\\n\", w2, w3)", "\tq.Commit(\"worker 1\", \"done\")", "\tfmt.Printf(\"jobs per round for a fresh queue: %v\\n\", drain(NewQueue(5), false))", "}"]),
+  map:[["jobs 1 to 5","q := NewQueue(5)"],["pick(worker): SELECT","func (q *Queue) Pick("],["walk the ready rows","for _, j := range q.jobs {..continue"],
+   ["row locked by another worker: wait","if h, locked := q.locks[j.id]; locked && h != tx {","return 0, j.id // plain FOR UPDATE"],["row free: lock it","q.locks[j.id] = tx..return j.id, 0"],
+   ["worker 1: pick -> job 1","id, _ := q.Pick(\"worker 1\", false)..worker 1 locks job"],["workers 2 and 3","_, w2 := q.Pick..worker 2 waits for job"],
+   ["commit, then the next worker","q.Commit(\"worker 1\", \"done\")","func drain(..return rounds","jobs per round for a fresh queue"],
+   ["right when everyone","return 0, j.id // plain FOR UPDATE"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- each worker, plain FOR UPDATE",
+"BEGIN;",
+"SELECT id FROM jobs WHERE status = 'ready'",
+"ORDER BY id LIMIT 1",
+"FOR UPDATE;                      -- workers 2 and 3 wait on job 1",
+"-- fetch the price",
+"UPDATE jobs SET status = 'done' WHERE id = 1;",
+"COMMIT;                          -- the next worker moves on"],
+  map:[["jobs 1 to 5","SELECT id FROM jobs"],["pick(worker): SELECT","SELECT id FROM jobs..FOR UPDATE;"],["walk the ready rows","ORDER BY id LIMIT 1"],["row locked by another worker: wait","FOR UPDATE;"],
+   ["row free: lock it","FOR UPDATE;"],["worker 1: pick -> job 1","BEGIN;..FOR UPDATE;"],["workers 2 and 3","FOR UPDATE;"],["commit, then the next worker","-- fetch the price..COMMIT;"],["right when everyone","FOR UPDATE;"]]}]},
+skip:{pc:["pick(worker): ... ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED",
+"  row locked by another worker: skip it, look at the next",
+"  row free: lock it, return it",
+"worker 1 -> job 1",
+"worker 2 skips job 1 -> job 2",
+"worker 3 skips jobs 1, 2 -> job 3",
+"each fetches, sets status = 'done', commits: locks freed",
+"loop: worker 1 -> job 4, worker 2 -> job 5",
+"worker 2 crashes: rollback frees job 5, it is still ready",
+"worker 3 -> job 5"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Pick is SELECT id FROM jobs WHERE status = 'ready' ORDER BY id LIMIT 1", "// FOR UPDATE, with SKIP LOCKED when skip is true.", "// It returns the job it locked, or the job it must wait for.", "func (q *Queue) Pick(tx string, skip bool) (id, waitsFor int) {", "\tfor _, j := range q.jobs {", "\t\tif j.status != \"ready\" {", "\t\t\tcontinue", "\t\t}", "\t\tif h, locked := q.locks[j.id]; locked && h != tx {", "\t\t\tif skip {", "\t\t\t\tcontinue // SKIP LOCKED: a locked row is treated as not there", "\t\t\t}", "\t\t\treturn 0, j.id // plain FOR UPDATE: wait for this row", "\t\t}", "\t\tq.locks[j.id] = tx", "\t\treturn j.id, 0", "\t}", "\treturn 0, 0", "}"],[""],["// Commit writes the new status on every row tx locked, then frees the locks.", "func (q *Queue) Commit(tx, status string) {", "\tfor _, j := range q.jobs {", "\t\tif q.locks[j.id] == tx {", "\t\t\tj.status = status", "\t\t\tdelete(q.locks, j.id)", "\t\t}", "\t}", "}"],[""],["// Rollback frees the locks of tx and keeps the rows as they were.", "func (q *Queue) Rollback(tx string) {", "\tfor id, h := range q.locks {", "\t\tif h == tx {", "\t\t\tdelete(q.locks, id)", "\t\t}", "\t}", "}"],[""],["func skipLocked() {", "\tfmt.Println(\"== SKIP LOCKED, five jobs, three workers\")", "\tq := NewQueue(5)", "\tfor w := 1; w <= 3; w++ {", "\t\tid, wait := q.Pick(fmt.Sprintf(\"worker %d\", w), true)", "\t\tfmt.Printf(\"worker %d locks job %d, waits for %d\\n\", w, id, wait)", "\t}", "\tfor w := 1; w <= 3; w++ {", "\t\tq.Commit(fmt.Sprintf(\"worker %d\", w), \"done\")", "\t}", "\tfmt.Printf(\"after the commits: jobs 1 to 3 done, ready %d\\n\", q.Ready())", "\ta, _ := q.Pick(\"worker 1\", true)", "\tb, _ := q.Pick(\"worker 2\", true)", "\tfmt.Printf(\"next loop: worker 1 locks job %d, worker 2 locks job %d\\n\", a, b)", "\tq.Rollback(\"worker 2\") // worker 2 crashes: its transaction rolls back", "\t_, held := q.locks[5]", "\tstatus := q.jobs[4].status", "\tfmt.Printf(\"worker 2 crashes: job 5 locked %v, status %s\\n\", held, status)", "\tc, _ := q.Pick(\"worker 3\", true)", "\tq.Commit(\"worker 1\", \"done\")", "\tq.Commit(\"worker 3\", \"done\")", "\tfmt.Printf(\"worker 3 locks job %d and finishes it, ready %d\\n\", c, q.Ready())", "\tfmt.Printf(\"jobs per round for a fresh queue: %v\\n\", drain(NewQueue(5), true))", "}"]),
+  map:[["pick(worker): ...","func (q *Queue) Pick("],["skip it, look at the next","if skip {..continue // SKIP LOCKED"],["row free: lock it","q.locks[j.id] = tx..return j.id, 0"],
+   ["worker 1 -> job 1","for w := 1; w <= 3; w++ {#1..worker %d locks job %d, waits"],["worker 2 skips","for w := 1; w <= 3; w++ {#1..worker %d locks job %d, waits"],["worker 3 skips","for w := 1; w <= 3; w++ {#1..worker %d locks job %d, waits"],
+   ["each fetches, sets status","func (q *Queue) Commit(..delete(q.locks, j.id)","for w := 1; w <= 3; w++ {#2..after the commits","jobs per round for a fresh queue"],
+   ["loop: worker 1 -> job 4","a, _ := q.Pick..next loop:"],["worker 2 crashes","func (q *Queue) Rollback(..delete(q.locks, id)","q.Rollback(\"worker 2\")..job 5 locked %v"],
+   ["worker 3 -> job 5","c, _ := q.Pick..worker 3 locks job %d and finishes"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- each worker, SKIP LOCKED",
+"BEGIN;",
+"SELECT id FROM jobs WHERE status = 'ready'",
+"ORDER BY id LIMIT 1",
+"FOR UPDATE SKIP LOCKED;          -- worker 2 gets job 2, worker 3 job 3",
+"-- fetch the price",
+"UPDATE jobs SET status = 'done' WHERE id = :id;",
+"COMMIT;                          -- frees the lock",
+"-- a crash is a ROLLBACK: the lock goes, the row stays ready"],
+  map:[["pick(worker): ...","BEGIN;..SKIP LOCKED;"],["skip it, look at the next","SKIP LOCKED;"],["row free: lock it","SELECT id FROM jobs"],["worker 1 -> job 1","BEGIN;..SKIP LOCKED;"],
+   ["worker 2 skips","worker 2 gets job 2"],["worker 3 skips","worker 2 gets job 2"],["each fetches, sets status","-- fetch the price..COMMIT;"],["loop: worker 1 -> job 4","BEGIN;..SKIP LOCKED;"],
+   ["worker 2 crashes","-- a crash is a ROLLBACK"],["worker 3 -> job 5","SKIP LOCKED;"]]}]},
+long:{pc:["one transaction: BEGIN, pick SKIP LOCKED, run the 10-minute export, COMMIT",
+"  the open transaction's snapshot holds back cleanup",
+"  dead versions kept = minutes open x updates per minute",
+"claim(worker, now): a short transaction",
+"  pick SKIP LOCKED, status = 'running', claimed_until = now + 15, COMMIT",
+"work with no transaction open",
+"short UPDATE status = 'done'",
+"reap(now): running rows with claimed_until < now go back to ready"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Claim is the short transaction: pick with SKIP LOCKED, set status = 'running'", "// and claimed_until = now + 15 minutes, commit at once.", "func (q *Queue) Claim(tx string, now int) int {", "\tid, _ := q.Pick(tx, true)", "\tif id == 0 {", "\t\treturn 0", "\t}", "\tq.jobs[id-1].claimedUntil = now + 15", "\tq.Commit(tx, \"running\") // the claim lives in the row, not in a lock", "\treturn id", "}"],[""],["// Reap is UPDATE jobs SET status = 'ready' WHERE status = 'running'", "// AND claimed_until < now(). It returns the jobs it put back.", "func (q *Queue) Reap(now int) []int {", "\tback := []int{}", "\tfor _, j := range q.jobs {", "\t\tif j.status == \"running\" && j.claimedUntil < now {", "\t\t\tj.status = \"ready\"", "\t\t\tback = append(back, j.id)", "\t\t}", "\t}", "\treturn back", "}"],[""],["// keptDead counts the dead row versions cleanup cannot remove at minute now:", "// any version that died after the oldest open transaction began.", "func keptDead(oldestOpen, now, updatesPerMinute int) int {", "\tif oldestOpen < 0 {", "\t\treturn 0 // no transaction open: cleanup removes every dead version", "\t}", "\treturn (now - oldestOpen) * updatesPerMinute", "}"],[""],["func longJob() {", "\tfmt.Println(\"== a 10-minute export\")", "\tq := NewQueue(3)", "\tfor w := 1; w <= 3; w++ {", "\t\tq.Pick(fmt.Sprintf(\"worker %d\", w), true) // BEGIN, lock, then work inside", "\t}", "\tfmt.Printf(\"claim and work in one transaction: %d row locks held for 10 minutes\\n\", len(q.locks))", "\tfmt.Printf(\"at minute 10 with 100 updates a minute elsewhere: dead versions kept %d\\n\", keptDead(0, 10, 100))", "", "\tq = NewQueue(3)", "\tid := q.Claim(\"worker 1\", 0)", "\tfmt.Printf(\"short claim: job %d running, claimed until minute %d, row locks held %d\\n\", id, q.jobs[id-1].claimedUntil, len(q.locks))", "\tq.jobs[id-1].status = \"done\" // the export ran with no transaction open, then a short UPDATE", "\tfmt.Printf(\"work outside, then mark done: job %d %s, dead versions kept %d\\n\", id, q.jobs[id-1].status, keptDead(-1, 10, 100))", "", "\tlost := q.Claim(\"worker 2\", 3) // worker 2 dies at minute 3 holding the claim", "\tfmt.Printf(\"worker 2 claims job %d at minute 3 and dies; reap at minute 10 puts back %v\\n\", lost, q.Reap(10))", "\tfmt.Printf(\"reap at minute 19 puts back %v\\n\", q.Reap(19))", "}"]),
+  map:[["one transaction: BEGIN","for w := 1; w <= 3; w++ {..BEGIN, lock, then work inside","claim and work in one transaction"],["snapshot holds back cleanup","func keptDead("],
+   ["dead versions kept =","return (now - oldestOpen)","at minute 10 with 100 updates"],["claim(worker, now)","func (q *Queue) Claim(","id := q.Claim(\"worker 1\", 0)"],
+   ["pick SKIP LOCKED, status = 'running'","id, _ := q.Pick(tx, true)..return id","short claim:"],["work with no transaction open","if oldestOpen < 0 {..return 0 // no transaction open"],
+   ["short UPDATE status = 'done'","q.jobs[id-1].status = \"done\"","work outside, then mark done"],["reap(now)","func (q *Queue) Reap(..return back","lost := q.Claim..reap at minute 19"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- the failure: claim and work in one transaction",
+"BEGIN;",
+"SELECT id FROM jobs WHERE status = 'ready' ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;",
+"-- the 10-minute export runs here, the snapshot stays open",
+"COMMIT;",
+"",
+"-- the fix, step 1: claim in a short transaction",
+"UPDATE jobs SET status = 'running',",
+"       claimed_until = now() + interval '15 minutes'",
+"WHERE id = (SELECT id FROM jobs WHERE status = 'ready'",
+"            ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED)",
+"RETURNING id;                    -- commits at once",
+"-- step 2: the export runs here, no transaction open",
+"UPDATE jobs SET status = 'done' WHERE id = :id;",
+"-- step 3: the reaper",
+"UPDATE jobs SET status = 'ready'",
+"WHERE status = 'running' AND claimed_until < now();"],
+  map:[["one transaction: BEGIN","-- the failure..COMMIT;"],["snapshot holds back cleanup","the snapshot stays open"],["dead versions kept =","the snapshot stays open"],
+   ["claim(worker, now)","-- the fix, step 1"],["pick SKIP LOCKED, status = 'running'","UPDATE jobs SET status = 'running'..RETURNING id;"],["work with no transaction open","-- step 2: the export"],
+   ["short UPDATE status = 'done'","UPDATE jobs SET status = 'done'"],["reap(now)","-- step 3: the reaper..claimed_until < now();"]]}]}};
+// CODE PANEL END
+const S={
+plain:{name:"three workers, plain FOR UPDATE",st:[
+ {t:"Start: five jobs ready",pc:["jobs 1 to 5: status ready \u00b7 workers 1, 2, 3", "pick(worker): SELECT id ... WHERE status = 'ready' ORDER BY id LIMIT 1 FOR UPDATE"],b:"Five price fetch jobs wait with status ready. Three workers each run SELECT id FROM jobs WHERE status = 'ready' ORDER BY id LIMIT 1 FOR UPDATE.",w:"Each worker locks the job it picks, so nobody else takes it.",d:sc([["worker 1","s"],["worker 2","s"],["worker 3","s"]],[1,2,3,4,5].map(n=>[R(n),"n"]))},
+ {t:"Worker 1 locks job 1",pc:["  walk the ready rows in id order", "  row free: lock it, return it", "worker 1: pick -> job 1"],b:"Worker 1 gets job 1 and holds its row lock while it fetches the price.",w:"So far, fine.",d:sc([["worker 1: job 1","s"],["worker 2","s"],["worker 3","s"]],[["job 1: locked","w"],...[2,3,4,5].map(n=>[R(n),"n"])],[to(0,0,"w")])},
+ {t:"Workers 2 and 3 ask for the same job",pc:["  row locked by another worker: wait for it", "workers 2 and 3: pick -> wait for job 1"],b:"The query sorts by id, so workers 2 and 3 also pick job 1. It is locked. Both wait.",w:"Jobs 2 to 5 sit free while two workers wait in line.",d:sc([["worker 1: job 1","s"],["worker 2: waiting","r"],["worker 3: waiting","r"]],[["job 1: locked","w"],...[2,3,4,5].map(n=>[R(n),"n"])],[to(0,0,"w"),to(1,0,"r",1),to(2,0,"r",1)])},
+ {t:"One worker at a time",pc:["commit, then the next worker moves: 1 job per round"],b:"Worker 1 commits. Only then does a waiting worker get a row. Each round of three workers runs 1 job, so 5 jobs take 5 rounds.",w:"Three workers, the speed of one.",d:sc([["worker 1: done","c"],["worker 2: job 2","s"],["worker 3: waiting","r"]],[["job 1: done","c"],["job 2: locked","w"],...[3,4,5].map(n=>[R(n),"n"])],[to(1,1,"w"),to(2,1,"r",1),T(30,370,"3 workers, 1 job at a time","x","start",15)])},
+ {t:"Where plain FOR UPDATE is right",pc:["right when everyone needs the same row: one seat, one wallet"],b:"When everyone must take the same row in turn, such as one seat or one wallet, waiting is the point. A queue of independent jobs is not that case.",w:"Pick the lock by the question: must I have this row, or any free row?",d:sc([["worker 1: done","c"],["worker 2: done","c"],["worker 3: job 3","s"]],[["job 1: done","c"],["job 2: done","c"],["job 3: locked","w"],[R(4),"n"],[R(5),"n"]],[to(2,2,"w")])}
+]},
+skip:{name:"three workers, SKIP LOCKED",st:[
+ {t:"Worker 1 locks job 1 with SKIP LOCKED",pc:["pick(worker): ... ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED", "  row free: lock it, return it", "worker 1 -> job 1"],b:"Add SKIP LOCKED to the same query. Worker 1 locks job 1.",w:"SKIP LOCKED changes only what happens at a locked row.",d:sc([["worker 1: job 1","s"],["worker 2","s"],["worker 3","s"]],[["job 1: locked","w"],...[2,3,4,5].map(n=>[R(n),"n"])],[to(0,0,"w")])},
+ {t:"Worker 2 skips job 1, takes job 2",pc:["  row locked by another worker: skip it, look at the next", "  row free: lock it, return it", "worker 2 skips job 1 -> job 2"],b:"Worker 2 reaches job 1, sees the lock, skips it, and locks job 2.",w:"No waiting. A locked row is treated as not there.",d:sc([["worker 1: job 1","s"],["worker 2: job 2","s"],["worker 3","s"]],[["job 1: locked","w"],["job 2: locked","w"],...[3,4,5].map(n=>[R(n),"n"])],[to(0,0,"w"),to(1,0,"m",1),to(1,1,"w")])},
+ {t:"Worker 3 takes job 3",pc:["  row locked by another worker: skip it, look at the next", "worker 3 skips jobs 1, 2 -> job 3"],b:"Worker 3 skips jobs 1 and 2 and locks job 3. All three work at once.",w:"Three workers, three jobs, no waits.",d:sc([["worker 1: job 1","s"],["worker 2: job 2","s"],["worker 3: job 3","s"]],[["job 1: locked","w"],["job 2: locked","w"],["job 3: locked","w"],[R(4),"n"],[R(5),"n"]],[to(0,0,"w"),to(1,1,"w"),to(2,2,"w")])},
+ {t:"Each marks its job done and commits",pc:["each fetches, sets status = 'done', commits: locks freed", "loop: worker 1 -> job 4, worker 2 -> job 5"],b:"Each worker fetches its price, sets status = 'done', and commits. The locks are released. A fresh queue drains in 2 rounds: 3 jobs, then 2. In the next loop worker 1 locks job 4 and worker 2 locks job 5.",w:"Each job ran exactly once, and in parallel.",d:sc([["worker 1: job 4","s"],["worker 2: job 5","s"],["worker 3: idle","n"]],[["job 1: done","c"],["job 2: done","c"],["job 3: done","c"],["job 4: locked","w"],["job 5: locked","w"]],[to(0,3,"w"),to(1,4,"w")])},
+ {t:"A worker crashes: the job comes back",pc:["worker 2 crashes: rollback frees job 5, it is still ready", "worker 3 -> job 5"],b:"Worker 2 crashes halfway through job 5. Its transaction rolls back, the lock disappears, and job 5 is ready again. Worker 3 takes it.",w:"The database cleans up a dead worker for free. The job must be idempotent, because part of it may already have run.",d:sc([["worker 1: job 4","s"],["worker 2: crashed","x"],["worker 3: job 5","s"]],[["job 1: done","c"],["job 2: done","c"],["job 3: done","c"],["job 4: locked","w"],["job 5: released, retaken","u"]],[to(0,3,"w"),to(2,4,"w")])}
+]},
+long:{name:"a 10-minute job in one transaction",st:[
+ {t:"Claim and work in one transaction",pc:["one transaction: BEGIN, pick SKIP LOCKED, run the 10-minute export, COMMIT"],b:"A worker locks a job with SKIP LOCKED, then runs a 10-minute export inside the same transaction, and commits at the end.",w:"It works. But the transaction stays open for 10 minutes.",d:sc([["worker 1: job 1, 10 min","w"],["worker 2: job 2, 10 min","w"],["worker 3: job 3, 10 min","w"]],[["job 1: locked","w"],["job 2: locked","w"],["job 3: locked","w"],[R(4),"n"],[R(5),"n"]],[to(0,0,"w"),to(1,1,"w"),to(2,2,"w")])},
+ {t:"The failure: open snapshots pile up dead rows",pc:["  the open transaction's snapshot holds back cleanup", "  dead versions kept = minutes open x updates per minute"],b:"Three transactions stay open for minutes. Their snapshots stop cleanup. Every update to the jobs table, and to every other table, leaves dead versions nobody can remove. With 100 updates a minute elsewhere, the program counts 1,000 kept after 10 minutes.",w:"The queue table and its neighbours bloat. Queries over them slow down.",d:sc([["worker 1: open 10 min","x"],["worker 2: open 10 min","x"],["worker 3: open 10 min","x"]],[["job 1: locked","w"],["job 2: locked","w"],["job 3: locked","w"],[R(4),"n"],[R(5),"n"]],[T(30,370,"open transactions block cleanup: dead rows pile up","x","start",15)])},
+ {t:"Fix step 1: claim in a short transaction",pc:["claim(worker, now): a short transaction", "  pick SKIP LOCKED, status = 'running', claimed_until = now + 15, COMMIT"],b:"Lock the job with SKIP LOCKED, set status = 'running' and claimed_until = now() + 15 minutes, and commit at once. Job 1 is running, claimed until minute 15, and 0 row locks are held.",w:"The claim lives in the row, not in a lock. The transaction lasted milliseconds.",d:sc([["worker 1: claimed job 1","s"],["worker 2","s"],["worker 3","s"]],[["job 1: running until 10:15","w"],...[2,3,4,5].map(n=>[R(n),"n"])],[to(0,0,"w")])},
+ {t:"Fix step 2: work outside, then mark done",pc:["work with no transaction open", "short UPDATE status = 'done'"],b:"The worker runs the export with no transaction open, then sets status = 'done' in another short transaction.",w:"No lock and no snapshot is held during the long work.",d:sc([["worker 1: done","c"],["worker 2","s"],["worker 3","s"]],[["job 1: done","c"],...[2,3,4,5].map(n=>[R(n),"n"])])},
+ {t:"Fix step 3: a reaper for lost claims",pc:["reap(now): running rows with claimed_until < now go back to ready"],b:"A worker dies holding a claim. Nothing rolls back now, because the claim was committed. Worker 2 claims job 2 at minute 3, so the claim runs to minute 18, and dies. A reaper sets jobs whose claimed_until has passed back to ready: at minute 10 it puts back nothing, at minute 19 it puts back job 2.",w:"The short claim trades free cleanup for a reaper. The job must still be idempotent.",d:sc([["worker 1: died","x"],["reaper","s"],["worker 3","s"]],[["job 1: ready again","u"],...[2,3,4,5].map(n=>[R(n),"n"])],[to(1,0,"u")])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

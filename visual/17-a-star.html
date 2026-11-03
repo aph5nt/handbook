@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A* search</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,opacity .35s}
+.hl{animation:pop .45s ease-out}
+@keyframes pop{from{opacity:.25}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.box{transition:none}.hl{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.codetabs{display:flex;gap:8px;flex-wrap:wrap}
+.codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>A* search</h1>
+  <p class="lede">A delivery robot crosses a warehouse floor with a wall in the middle. Dijkstra spreads out evenly in every direction. A* adds a guess of the distance left and heads for the goal. Same floor, same shortest path, far fewer cells searched.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="dj">Dijkstra</button>
+    <button role="tab" aria-selected="false" data-mode="as">A*</button>
+    <button role="tab" aria-selected="false" data-mode="over">A* with a guess too high</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">A grid floor with a wall, cells coloured by search state</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, with a run of this exact story, is in <code>handbook/code/17-a-star/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs codetabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--line)">wall</span>
+    <span style="--c:var(--coord)">cell expanded</span>
+    <span style="--c:var(--wait)">frontier: found, not yet expanded</span>
+    <span style="--c:var(--ok)">the path found</span>
+    <span style="--c:var(--fail)">a path that is not the shortest</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet A*</h2>
+      <p>Route planning in maps and games, robot path planning, and puzzle solvers where the guess counts misplaced tiles. A fund-tracing search toward a known target can rank its frontier by an estimate of hops left.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Pick a guess that never overestimates: on a grid with four moves, the Manhattan distance, rows apart plus columns apart. A guess of 0 is safe but no faster than Dijkstra. A guess that is too high is faster and can be wrong.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Dijkstra</th><th>A*, guess never too high</th><th>A*, guess too high</th></tr>
+      <tr><td>Frontier ordered by</td><td>g: cost so far</td><td>g + h</td><td>g + a too-big h</td></tr>
+      <tr><td>Path</td><td>Shortest</td><td>Shortest</td><td>Maybe longer</td></tr>
+      <tr><td>Cells expanded</td><td>Most</td><td>Fewer</td><td>Fewest</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A* is Dijkstra with a guess of the distance left. I order the frontier by g plus h. If h never overestimates, the first path to the goal is the shortest, and far fewer nodes are expanded."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const GR={open:["............","............","......#.....","S.....#....G","......#.....","......#.....","............"],
+ trap:["............","......##....","...#...#....","S..#...#...G","...#...#....","...#........","............"]};
+function run(g,w){const G=GR[g],R=G.length,Cn=G[0].length;let S,E;G.forEach((r,y)=>[...r].forEach((c,x)=>{if(c==="S")S=[x,y];if(c==="G")E=[x,y];}));
+ const key=(x,y)=>y*Cn+x,dist={},prev={},order=[],done=new Set(),hh=(x,y)=>w*(Math.abs(x-E[0])+Math.abs(y-E[1]));let open=[[hh(...S),0,S[0],S[1]]];dist[key(...S)]=0;const fr=[];
+ while(open.length){open.sort((a,b)=>a[0]-b[0]||a[1]-b[1]||a[3]-b[3]||a[2]-b[2]);const[f,gg,x,y]=open.shift();const k=key(x,y);if(done.has(k))continue;done.add(k);order.push(k);fr.push(open.map(o=>key(o[2],o[3])));if(x===E[0]&&y===E[1])break;
+  for(const[dx,dy]of[[1,0],[0,1],[-1,0],[0,-1]]){const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=Cn||ny>=R||G[ny][nx]==="#")continue;const nk=key(nx,ny),ng=gg+1;if(dist[nk]===undefined||ng<dist[nk]){dist[nk]=ng;prev[nk]=k;open.push([ng+hh(nx,ny),ng,nx,ny]);}}}
+ const path=[];let k=key(...E);while(k!==undefined){path.push(k);k=prev[k];}return{G,Cn,order,fr,path,len:path.length-1};}
+const RUN={dj:run("open",0),as:run("open",1),best:run("trap",1),over:run("trap",3)};
+const st=(r,frac,o={})=>Object.assign({r,frac},o);
+const steps={
+"dj":[
+ {t:"Start",b:"The robot is at S, the goal at G. Each move costs 1. Grey cells are a wall. Here weight = 0, so f = g + 0 × h: the guess is off, and the heap orders by g, the cost so far.",w:"Dijkstra pops the cell with the lowest cost so far, g.",...st("dj",0),pc:[1,3,4]},
+ {t:"Spreading out",b:"After S, the next pops are the cells at g = 1: above, right, below. There is a tie among them, so nothing favours the goal. A cell behind S is taken as eagerly as a cell toward G.",w:"It knows nothing about where the goal is.",...st("dj",.3),pc:[5,6,7,8,10,11,12,13,14]},
+ {t:"Still spreading",b:"The rings reach the wall. Each wall cell fails the check 'wall or off the floor', so nothing is pushed there, and the rings flow around both ends.",w:"Every cell closer than the goal gets expanded first.",...st("dj",.7),pc:[5,6,8,10,11,12,13,14]},
+ {t:"Goal reached",b:"The goal is popped, so the loop stops. The walk back along parents gives 15 steps. 77 cells were expanded to find it.",w:"Correct, but it searched almost the whole floor.",...st("dj",1,{path:1}),pc:[6,9,15]}
+],
+"as":[
+ {t:"Start: add a guess",b:"Same function, weight = 1, so f = g + h. h is the Manhattan distance to G: rows apart plus columns apart. S has g = 0 and h = 11, so f = 11.",w:"h never overestimates on a grid with four moves. That makes it admissible.",...st("as",0),pc:[1,2,3,4]},
+ {t:"Heading for the goal",b:"From S, the right cell has f = 1 + 10 = 11. The upper cell has f = 1 + 12 = 13. The heap gives the lowest f, so the right cell goes first, and so on to the wall.",w:"Cells behind the robot have a big h and wait.",...st("as",.35),pc:[5,6,8,10,12,13,14]},
+ {t:"Around the wall",b:"At the wall, moving right fails the wall check. The way round goes up, and each step up adds to both g and h, so f rises from 11 to 13 and on to 15. Only then does A* widen.",w:"The guess steers the search. It does not decide the answer.",...st("as",.75),pc:[6,10,11,12,13,14]},
+ {t:"Goal reached",b:"The goal is popped: the same 15 steps as Dijkstra. Only 46 cells were expanded, against 77.",w:"With a guess that never overestimates, the first path to the goal is the shortest.",...st("as",1,{path:1}),pc:[6,9,15]},
+ {t:"Compare",b:"The one difference between the two runs is weight, in the f of each push. 15 steps both times. 46 cells against 77: 40% fewer.",w:"A* is Dijkstra plus a good guess. With h = 0 it is exactly Dijkstra.",...st("as",1,{path:1,cmp:1}),pc:[4,14]}
+],
+"over":[
+ {t:"A different floor",b:"A floor with two walls and a gap. First, weight = 1, the honest guess. The run expands 75 cells and returns 17 steps.",w:"This is the shortest path. Remember its length.",...st("best",1,{path:1}),pc:[1,2,14,15]},
+ {t:"Triple the guess",b:"Now weight = 3. f = g + 3 × h, so h counts three times as much as the cost so far. The heap prefers any cell nearer G, even by a costly way.",w:"It looks smarter. It expands even fewer cells: 30.",...st("over",.5),pc:[6,14]},
+ {t:"The failure that matters",b:"G is popped after 19 steps, and the loop stops at once. The honest run found 17. Nothing can improve the route after that first pop of G.",w:"Keep h admissible when the shortest path matters. Games sometimes accept this trade on purpose, as weighted A*.",...st("over",1,{path:1,bad:1}),pc:[6,9,15]}
+]};
+function draw(s){let h="";const r=RUN[s.r],G=r.G,Cn=r.Cn,CS=48,X0=450-Cn*CS/2,Y0=12;const n=Math.max(1,Math.round(r.order.length*s.frac));
+ const exp=new Set(r.order.slice(0,s.frac?n:0)),fr=new Set(s.frac&&s.frac<1?r.fr[n-1]:[]),path=new Set(s.path?r.path:[]);
+ G.forEach((row,y)=>[...row].forEach((c,x)=>{const k=y*Cn+x;let f="var(--panel)";if(c==="#")f="var(--muted)";else if(path.has(k))f=s.bad?"var(--fail)":"var(--ok)";else if(exp.has(k))f="var(--coord)";else if(fr.has(k))f="var(--wait)";
+  h+=R(X0+x*CS,Y0+y*CS,CS-3,CS-3,f,{rx:4,st:"var(--line)"});if(c==="S"||c==="G")h+=T(X0+x*CS+(CS-3)/2,Y0+y*CS+30,c,{s:18,c:f==="var(--panel)"?"var(--fg)":"#fff"});}));
+ const y=Y0+G.length*CS+26;
+ h+=T(450,y,s.cmp?`Dijkstra: ${RUN.dj.order.length} cells expanded · A*: ${RUN.as.order.length} cells · both paths ${RUN.as.len} steps`:`cells expanded: ${s.frac?n:0}`+(s.path?` · path: ${r.len} steps`+(s.bad?`, shortest is ${RUN.best.len}`:""):""),{s:17,c:s.bad?"var(--fail)":"var(--fg)"});
+ return h;}
+const code={"dj": {"label": "Python","pc": ["search(floor, weight):","  h(cell) = columns apart + rows apart      # weight 0 turns the guess off","  dist = {start: 0}","  frontier = heap with (weight × h(start), 0, start)","  while frontier is not empty:","    f, g, cell = pop the lowest f           # f = g + weight × h","    if cell is done: skip it","    mark cell done, count it","    if cell == goal: stop","    for each neighbour of cell:","      if wall or off the floor: skip it","      if g + 1 < dist[neighbour]:","        dist[neighbour] = g + 1","        push (g + 1 + weight × h(neighbour), g + 1, neighbour)","  walk the parents back from the goal"],"real": ["def find(floor, mark):","    return next((x, y) for y, row in enumerate(floor) for x, c in enumerate(row) if c == mark)","","","def search(floor, weight):","    start, goal = find(floor, \"S\"), find(floor, \"G\")","","    def h(x, y):                                 # the guess: columns apart plus rows apart","        return abs(x - goal[0]) + abs(y - goal[1])","","    dist, parent, done, order = {start: 0}, {}, set(), []","    frontier = [(weight * h(*start), 0, start[1], start[0])]","    while frontier:","        f, g, y, x = heapq.heappop(frontier)     # the lowest f = g + weight * h","        if (x, y) in done:                       # an old entry: skip it","            continue","        done.add((x, y))","        order.append((x, y))                     # one more cell expanded","        if (x, y) == goal:","            break","        for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):","            nx, ny = x + dx, y + dy","            if not (0 <= ny < len(floor) and 0 <= nx < len(floor[0])) or floor[ny][nx] == \"#\":","                continue","            if (nx, ny) not in dist or g + 1 < dist[(nx, ny)]:","                dist[(nx, ny)], parent[(nx, ny)] = g + 1, (x, y)","                heapq.heappush(frontier, (g + 1 + weight * h(nx, ny), g + 1, ny, nx))","    steps, at = 0, goal","    while at in parent:                          # walk the parents back","        at, steps = parent[at], steps + 1","    return len(order), steps, order"],"map": {"1": [5],"2": [8,9],"3": [11],"4": [12],"5": [13],"6": [14],"7": [15],"8": [17,18],"9": [19],"10": [21,22],"11": [23],"12": [25],"13": [26],"14": [27],"15": [28,29,30]}},"as": {"label": "Python","pc": ["search(floor, weight):","  h(cell) = columns apart + rows apart      # weight 0 turns the guess off","  dist = {start: 0}","  frontier = heap with (weight × h(start), 0, start)","  while frontier is not empty:","    f, g, cell = pop the lowest f           # f = g + weight × h","    if cell is done: skip it","    mark cell done, count it","    if cell == goal: stop","    for each neighbour of cell:","      if wall or off the floor: skip it","      if g + 1 < dist[neighbour]:","        dist[neighbour] = g + 1","        push (g + 1 + weight × h(neighbour), g + 1, neighbour)","  walk the parents back from the goal"],"real": ["def find(floor, mark):","    return next((x, y) for y, row in enumerate(floor) for x, c in enumerate(row) if c == mark)","","","def search(floor, weight):","    start, goal = find(floor, \"S\"), find(floor, \"G\")","","    def h(x, y):                                 # the guess: columns apart plus rows apart","        return abs(x - goal[0]) + abs(y - goal[1])","","    dist, parent, done, order = {start: 0}, {}, set(), []","    frontier = [(weight * h(*start), 0, start[1], start[0])]","    while frontier:","        f, g, y, x = heapq.heappop(frontier)     # the lowest f = g + weight * h","        if (x, y) in done:                       # an old entry: skip it","            continue","        done.add((x, y))","        order.append((x, y))                     # one more cell expanded","        if (x, y) == goal:","            break","        for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):","            nx, ny = x + dx, y + dy","            if not (0 <= ny < len(floor) and 0 <= nx < len(floor[0])) or floor[ny][nx] == \"#\":","                continue","            if (nx, ny) not in dist or g + 1 < dist[(nx, ny)]:","                dist[(nx, ny)], parent[(nx, ny)] = g + 1, (x, y)","                heapq.heappush(frontier, (g + 1 + weight * h(nx, ny), g + 1, ny, nx))","    steps, at = 0, goal","    while at in parent:                          # walk the parents back","        at, steps = parent[at], steps + 1","    return len(order), steps, order"],"map": {"1": [5],"2": [8,9],"3": [11],"4": [12],"5": [13],"6": [14],"7": [15],"8": [17,18],"9": [19],"10": [21,22],"11": [23],"12": [25],"13": [26],"14": [27],"15": [28,29,30]}},"over": {"label": "Python","pc": ["search(floor, weight):","  h(cell) = columns apart + rows apart      # weight 0 turns the guess off","  dist = {start: 0}","  frontier = heap with (weight × h(start), 0, start)","  while frontier is not empty:","    f, g, cell = pop the lowest f           # f = g + weight × h","    if cell is done: skip it","    mark cell done, count it","    if cell == goal: stop","    for each neighbour of cell:","      if wall or off the floor: skip it","      if g + 1 < dist[neighbour]:","        dist[neighbour] = g + 1","        push (g + 1 + weight × h(neighbour), g + 1, neighbour)","  walk the parents back from the goal"],"real": ["def find(floor, mark):","    return next((x, y) for y, row in enumerate(floor) for x, c in enumerate(row) if c == mark)","","","def search(floor, weight):","    start, goal = find(floor, \"S\"), find(floor, \"G\")","","    def h(x, y):                                 # the guess: columns apart plus rows apart","        return abs(x - goal[0]) + abs(y - goal[1])","","    dist, parent, done, order = {start: 0}, {}, set(), []","    frontier = [(weight * h(*start), 0, start[1], start[0])]","    while frontier:","        f, g, y, x = heapq.heappop(frontier)     # the lowest f = g + weight * h","        if (x, y) in done:                       # an old entry: skip it","            continue","        done.add((x, y))","        order.append((x, y))                     # one more cell expanded","        if (x, y) == goal:","            break","        for dx, dy in ((1, 0), (0, 1), (-1, 0), (0, -1)):","            nx, ny = x + dx, y + dy","            if not (0 <= ny < len(floor) and 0 <= nx < len(floor[0])) or floor[ny][nx] == \"#\":","                continue","            if (nx, ny) not in dist or g + 1 < dist[(nx, ny)]:","                dist[(nx, ny)], parent[(nx, ny)] = g + 1, (x, y)","                heapq.heappush(frontier, (g + 1 + weight * h(nx, ny), g + 1, ny, nx))","    steps, at = 0, goal","    while at in parent:                          # walk the parents back","        at, steps = parent[at], steps + 1","    return len(order), steps, order"],"map": {"1": [5],"2": [8,9],"3": [11],"4": [12],"5": [13],"6": [14],"7": [15],"8": [17,18],"9": [19],"10": [21,22],"11": [23],"12": [25],"13": [26],"14": [27],"15": [28,29,30]}}};
+let view="pc";
+function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(key,pcs){
+  const c=code[key]||code[Object.keys(code)[0]],box=document.getElementById("codebox");if(!c||!box)return;
+  const lines=view==="pc"?c.pc:c.real;pcs=pcs||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Python";
+  box.innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));if(typeof redrawCode==="function")redrawCode();});
+function T(x,y,txt,o={}){return `<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" font-size="${o.s||15}" font-weight="${o.w||700}" fill="${o.c||"var(--fg)"}">${txt}</text>`}
+function R(x,y,w,h,fill,o={}){return `<rect class="box${o.hl?" hl":""}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??6}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?' stroke-dasharray="6 4"':""}/>`}
+function A(x1,y1,x2,y2,c="var(--fg)",lab="",o={}){return `<line class="${o.hl?"hl":""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${o.sw||2.5}"${o.dash?' stroke-dasharray="6 4"':""}${o.nohead?"":' marker-end="url(#arr)"'}/>`+(lab?T((x1+x2)/2+(o.dx||0),(y1+y2)/2+(o.dy??-8),lab,{c:o.lc||c,s:o.s||14}):"")}
+function C(x,y,r,fill,txt,o={}){return `<circle class="box${o.hl?" hl":""}" cx="${x}" cy="${y}" r="${r}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="3"`:""}/>`+T(x,y+6,txt,{c:o.fg||"#fff",s:o.s||17})}
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s,mode);
+  if(typeof code!=="undefined")drawCode(mode,s.pc);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+function redrawCode(){if(typeof code!=="undefined")drawCode(mode,steps[mode][i].pc);}
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

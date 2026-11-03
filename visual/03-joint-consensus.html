@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Joint consensus</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Changing cluster membership: joint consensus</h1>
+  <p class="lede">An etcd cluster of three nodes must grow to five. Press <b>Next</b> to watch two leaders appear when nodes switch member lists one by one, then watch the joint step make that impossible.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="unsafe" id="tab-unsafe">Unsafe: switch one by one</button>
+    <button role="tab" aria-selected="false" data-mode="joint" id="tab-joint">Joint consensus</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Five cluster nodes, their member lists, and who can win an election</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. Appending C-old,new and C-new to the log is pseudo code only: the program checks the vote rule each list implies. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-joint-consensus/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">leader</span>
+    <span style="--c:var(--svc)">follower</span>
+    <span style="--c:var(--line)">new node, not yet a member</span>
+    <span style="--c:var(--wait)">no majority</span>
+    <span style="--c:var(--fail)">a second leader</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p><code>etcdctl member add</code> and <code>member remove</code> change one node at a time, through the log. Consul and the HashiCorp Raft library follow the same rule. Growing a three-node graph database cluster to five works the same way.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Always change membership through the cluster's own command, never by editing each node's list by hand. Add one node, wait until it has caught up, then add the next.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Switch each node by hand</th><th>Joint consensus or one at a time</th></tr>
+      <tr><td>Majority rule during the change</td><td>Each node uses its own list</td><td>Both lists must agree, or lists differ by one node</td></tr>
+      <tr><td>Can two leaders appear</td><td>Yes</td><td>No: any two majorities overlap</td></tr>
+      <tr><td>Goes through the log</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Used by</td><td>Nobody, on purpose</td><td>etcd, Consul, every Raft library</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A membership change goes through the log, one node at a time or through a joint step, so the old and new majorities always overlap."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const NX=[110,280,450,620,790],NY=170;
+function scene(s){
+  let b="";const msgs=[];
+  if(s.groups){b+=R(40,70,500,190,"none",{st:"var(--undo)",dash:true})+T(60,92,"old list: 1, 2, 3",{a:"start",s:13,c:"var(--undo)"});
+    b+=R(30,60,850,215,"none",{st:"var(--coord)",dash:true})+T(860,82,"new list: 1 to 5",{a:"end",s:13,c:"var(--coord)"});}
+  if(s.part)b+=`<line x1="365" y1="40" x2="365" y2="300" stroke="var(--fail)" stroke-width="3" stroke-dasharray="8 6"/>`+T(365,32,"network split",{c:"var(--fail)",s:13});
+  s.n.forEach(([cfg,role],k)=>{const x=NX[k];const f=role==="L"?"var(--coord)":role==="L2"?"var(--fail)":role==="N"?"var(--line)":"var(--svc)";
+    b+=`<circle cx="${x}" cy="${NY}" r="40" fill="${f}" class="box"/>`+T(x,NY-4,"node "+(k+1),{c:role==="N"?"var(--fg)":"#fff",s:16})+T(x,NY+16,role==="L"||role==="L2"?"leader":role==="N"?"new":"follower",{c:role==="N"?"var(--fg)":"#fff",s:12,w:400});
+    b+=CHIP(x,NY+56,150,cfg,cfg.startsWith("joint")?"var(--wait)":"var(--line)");});
+  (s.v||[]).forEach(([a,c,l,kd])=>{const x1=NX[a],x2=NX[c];msgs.push(`<path d="M${x1} ${NY-42} Q${(x1+x2)/2} ${NY-100} ${x2} ${NY-42}" fill="none" stroke="${KC[kd||"n"]}" stroke-width="2.5" marker-end="url(#arr)"/>`+(l?T((x1+x2)/2,NY-80,l,{s:13,c:KC[kd||"n"]}):""))});
+  (s.tally||[]).forEach(([x,txt,kd])=>msgs.push(T(x,330,txt,{s:14,c:KC[kd||"n"]})));
+  if(s.ban)msgs.push(BANNER(370,s.ban));
+  if(s.note)msgs.push(`<rect x="20" y="352" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--coord)" stroke-dasharray="6 4"/>`+T(450,371,s.note,{}));
+  return{base:b,msgs};
+}
+const O="old: 1, 2, 3",N="new: 1 to 5",J="joint: old AND new";
+const steps={
+unsafe:[
+ {t:"Three members, two new nodes",b:"Nodes 1, 2 and 3 form the cluster and node 1 leads. Nodes 4 and 5 are new and hold the five-node list. Line 3: a majority of 3 is more than 1.5, so 2. A majority of 5 is 3.",w:"Which list a node holds decides what line 6 counts as a win.",n:[[O,"L"],[O,"F"],[O,"F"],[N,"N"],[N,"N"]],pc:[1,2,3]},
+ {t:"The operator switches node 3",b:"Someone edits node 3's member list by hand (line 9). Node 3 now holds the list of five. Nodes 1 and 2 still hold the list of three.",w:"For a while, nodes disagree about the list L that line 6 uses.",n:[[O,"L"],[O,"F"],[N,"F"],[N,"F"],[N,"F"]],pc:[9]},
+ {t:"The network splits",b:"The cable between the halves fails. Nodes 1 and 2 are on one side, nodes 3, 4 and 5 on the other. Each side will run line 6 with the list it holds.",w:"Nothing in line 6 asks whether the other side might also win.",n:[[O,"L"],[O,"F"],[N,"F"],[N,"F"],[N,"F"]],part:true,pc:[5,6]},
+ {t:"Nodes 1 and 2: a majority of three",b:"Node 1 gets node 2's vote in term 5. Line 6 with the old list: votes {1, 2} in 1, 2, 3 is 2, and 2 is more than 1.5. Node 1 wins term 5.",w:"By the old rules, this is correct.",n:[[O,"L"],[O,"F"],[N,"F"],[N,"F"],[N,"F"]],part:true,v:[[1,0,"vote, term 5","ok"]],tally:[[195,"2 of 3: majority","ok"]],pc:[2,3,5,6]},
+ {t:"The failure: nodes 3, 4, 5 also win",b:"Node 3 gets the votes of nodes 4 and 5 in term 5. Line 6 with the new list: 3 of 5, and 3 is more than 2.5. Node 3 also wins term 5.",w:"Line 7, the joint check, never ran: each side used one list. The two majorities share no node, so two leaders accept writes.",n:[[O,"L"],[O,"F"],[N,"L2"],[N,"F"],[N,"F"]],part:true,v:[[3,2,"vote","ok"],[4,2,"vote, term 5","ok"]],tally:[[195,"leader 1: 2 of 3","fail"],[620,"leader 3: 3 of 5","fail"]],ban:"Two leaders in term 5: the old and new majorities do not overlap.",pc:[6,7,9]}
+],
+joint:[
+ {t:"The leader writes the joint list",b:"Line 11: node 1 appends one special entry, C-old,new, to the log. Every node takes it from the log in the same order, so every node now holds the joint configuration.",w:"The change travels through the log like any write, never by hand.",n:[[J,"L"],[J,"F"],[J,"F"],[J,"F"],[J,"F"]],v:[[0,2,"log: C-old,new"]],pc:[10,11]},
+ {t:"The rule: both majorities",b:"With a joint configuration, line 5 is false, so lines 7 and 8 run: a candidate needs 2 of nodes 1, 2, 3 AND 3 of nodes 1 to 5.",w:"Two out of the old list and three out of the new list, at the same time.",n:[[J,"L"],[J,"F"],[J,"F"],[J,"F"],[J,"F"]],groups:true,pc:[4,5,7,8]},
+ {t:"The same split: nobody can win alone",b:"The cable fails again. Side {1, 2}: old 2 of 3 passes, new 2 of 5 fails. Side {3, 4, 5}: old 1 of 3 fails, new 3 of 5 passes. Line 7 AND line 8 is false on both sides.",w:"Neither side holds both majorities, so neither can elect a second leader. Writes wait, which is safe.",n:[[J,"L"],[J,"F"],[J,"F"],[J,"F"],[J,"F"]],groups:true,part:true,tally:[[195,"old 2 of 3, new 2 of 5: no","wait"],[620,"old 1 of 3, new 3 of 5: no","wait"]],pc:[7,8]},
+ {t:"The split heals, the leader writes C-new",b:"The cable is back. All five store C-old,new: old 3 of 3 and new 5 of 5, so it commits. Line 12: the leader now appends the final list, C-new.",w:"C-new may only be written after C-old,new has committed under the joint rule.",n:[[J,"L"],[J,"F"],[J,"F"],[J,"F"],[J,"F"]],v:[[0,4,"log: C-new","ok"]],pc:[12]},
+ {t:"C-new is committed",b:"Line 13: three of the five nodes have stored C-new, a majority of the new list. From now on line 6 runs with the list of five only.",w:"The cluster grew from three to five and at no moment could two leaders exist.",n:[[N,"L"],[N,"F"],[N,"F"],[N,"F"],[N,"F"]],pc:[13,6]},
+ {t:"The simpler way: one node at a time",b:"Line 14: most systems add one node at a time, 3 to 4, then 4 to 5. Line 15 checks every pair of majorities: 2 of {1, 2, 3} and 3 of {1, 2, 3, 4} always share a node. The program confirms it, and shows that 3 straight to 5 does not.",w:"One-at-a-time is safe for the same reason as the joint step: the majorities always overlap.",n:[[O+", 4","L"],[O+", 4","F"],[O+", 4","F"],[O+", 4","F"],["not yet","N"]],note:"2 of 3 and 3 of 4 always share a node",pc:[14,15]}
+]};
+const code={"*": {"label": "Go", "pc": ["config = one member list, or joint(old, new)", "isMajority(votes, list):", "  return count(votes in list) > len(list) / 2", "canWin(votes, config):", "  if config has one list L:", "    return isMajority(votes, L)          # the list this node holds", "  return isMajority(votes, old)          # joint: both majorities", "     and isMajority(votes, new)", "unsafe: a node's list is edited by hand  # nodes disagree on L", "safe change, run by the leader:", "  append C-old,new to the log            # every node, same order", "  when it commits under canWin: append C-new", "  when C-new commits: only new counts", "simpler: add one node at a time", "  every majority of N meets every majority of N+1"], "real": ["// Config is a member list. When New is set, the joint rule applies.", "type Config struct {", "\tOld []int", "\tNew []int // empty when not in a joint configuration", "}", "", "// IsMajority: more than half of members are among the votes.", "func IsMajority(votes map[int]bool, members []int) bool {", "\tn := 0", "\tfor _, m := range members {", "\t\tif votes[m] {", "\t\t\tn++", "\t\t}", "\t}", "\treturn n > len(members)/2", "}", "", "// CanWin decides if a candidate with these votes wins under config c.", "func CanWin(votes map[int]bool, c Config) bool {", "\tif len(c.New) == 0 {", "\t\treturn IsMajority(votes, c.Old) // one list: one majority", "\t}", "\t// joint configuration: a majority of the old AND of the new list", "\treturn IsMajority(votes, c.Old) && IsMajority(votes, c.New)", "}", "", "// Overlap reports whether every majority of a and every majority of b", "// share at least one node. It tries every subset, for small clusters.", "func Overlap(a, b []int) bool {", "\tall := map[int]bool{}", "\tfor _, x := range append(append([]int{}, a...), b...) {", "\t\tall[x] = true", "\t}", "\tnodes := []int{}", "\tfor x := range all {", "\t\tnodes = append(nodes, x)", "\t}", "\tfor m1 := 0; m1 < 1<<len(nodes); m1++ {", "\t\tfor m2 := 0; m2 < 1<<len(nodes); m2++ {", "\t\t\ts1, s2 := set(nodes, m1), set(nodes, m2)", "\t\t\tif IsMajority(s1, a) && IsMajority(s2, b) && !shares(s1, s2) {", "\t\t\t\treturn false", "\t\t\t}", "\t\t}", "\t}", "\treturn true", "}"], "map": {"1": [2], "2": [8], "3": [11, 15], "4": [19], "5": [20], "6": [21], "7": [24], "8": [24], "9": [3], "10": [4], "11": [4], "12": [24], "13": [21], "14": [29], "15": [41]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

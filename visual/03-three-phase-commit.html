@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Three-phase commit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Three-phase commit</h1>
+  <p class="lede">Two-phase commit blocks when the coordinator dies after the votes. Three-phase commit adds a pre-commit step so the participants can finish alone. Press <b>Next</b> to see it work after a crash, then fail under a network partition.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="crash" id="tab-crash">Coordinator crash: 3PC finishes</button>
+    <button role="tab" aria-selected="false" data-mode="part" id="tab-part">Partition: half committed</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A coordinator, a payment service and a stock service running three-phase commit</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-three-phase-commit/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">coordinator</span>
+    <span style="--c:var(--wait)">voted, or pre-committed</span>
+    <span style="--c:var(--ok)">committed</span>
+    <span style="--c:var(--undo)">aborted</span>
+    <span style="--c:var(--fail)">crashed, cut off, or inconsistent</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Almost nowhere in production. It is an interview question about why 2PC blocks. Spanner removes the blocking another way: it runs 2PC, and each participant and the coordinator is a Paxos group, so no single crash stops it.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Inside one trust domain, make the coordinator fault tolerant by replicating it, rather than adding a phase. Across services, use a saga with compensations instead of any commit protocol.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>2PC</th><th>3PC</th><th>2PC over Paxos groups</th></tr>
+      <tr><td>Rounds</td><td>2</td><td>3</td><td>2, each one replicated</td></tr>
+      <tr><td>Coordinator crash</td><td>Participants block, holding locks</td><td>Participants finish by timeout</td><td>A new coordinator replica takes over</td></tr>
+      <tr><td>Network partition</td><td>Blocks, but stays consistent</td><td>Can commit on one side and abort on the other</td><td>Majority side continues, stays consistent</td></tr>
+      <tr><td>Needs</td><td>Nothing about timing</td><td>A bound on message delay</td><td>A majority of each group</td></tr>
+      <tr><td>Used by</td><td>Databases, XA</td><td>Textbooks</td><td>Spanner</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"3PC removes 2PC's blocking only if message delay is bounded. A real partition makes it commit on one side and abort on the other, so real systems replicate the coordinator instead."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const X={c:150,p:450,s:750},W=200,CHY=300,CW=220;
+const NAMES={c:"Coordinator",p:"Payment",s:"Stock"};
+const BOXC={c:"var(--coord)",p:"var(--svc)",s:"var(--svc)"};
+// Lifeline scene: s.st = chip per actor [text,kind], s.box = fill override, s.m = [a,b,y,text,kind] or ["note",0,y,text], s.cut = x of a network cut
+function scene(s){
+  let b="";
+  const names=Object.assign({},NAMES,s.names||{});
+  for(const k in X){
+    const f=(s.box&&s.box[k])||BOXC[k];
+    b+=BOX(X[k]-W/2,16,W,52,f,names[k]);
+    b+=`<line x1="${X[k]}" y1="68" x2="${X[k]}" y2="${CHY-6}" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;
+    const c=s.st[k];if(c)b+=CHIP(X[k],CHY,CW,c[0],c[1]==="n"?"var(--line)":KC[c[1]]||"var(--line)");
+  }
+  if(s.cut)b+=`<line x1="${s.cut}" y1="80" x2="${s.cut}" y2="${CHY-34}" stroke="var(--fail)" stroke-width="4" stroke-dasharray="10 6"/>`+T(s.cut,CHY-14,"network cut",{s:13,c:"var(--fail)"});
+  const msgs=(s.m||[]).map(([a,c,y,txt,kd])=>{
+    if(a==="note")return `<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--wait)" stroke-dasharray="6 4"/>`+T(450,y+1,txt,{c:"var(--fg)"});
+    const x1=X[a],x2=c==="cut"?s.cut-8:X[c],dx=x1<x2?6:-6;return ARROW(x1+dx,y,x2-dx,y,txt,KC[kd||"n"],{dash:kd==="lost"});});
+  if(s.ban)msgs.push(BANNER(CHY+52,s.ban));
+  return{base:b,msgs};
+}
+
+const idle=["idle","n"],yes=["voted yes","wait"],pre=["pre-committed","wait"];
+const CR={c:"var(--fail)"};
+const steps={
+crash:[
+ {t:"Start: one order, two participants",b:"A customer orders a phone. Payment and stock must both commit, or both abort. Each participant has a state: idle, voted, pre-committed, committed or aborted. Line 9 acts on that state whenever a participant hears nothing.",w:"In 2PC, a coordinator crash after the votes leaves both stuck and locked. 3PC adds one round so the state alone can decide.",st:{c:["running","c"],p:idle,s:idle},pc:[1]},
+ {t:"Phase 1: can you commit?",b:"Line 2 asks both. Line 6 runs in each participant: lock the rows, vote yes, set state to voted. Line 3 checks: any no or missing vote? None, so the coordinator goes on.",w:"So far this is the same as 2PC's prepare.",st:{c:["collecting votes","c"],p:yes,s:yes},m:[["c","p",100,"can you commit?"],["c","s",125,"can you commit?"],["p","c",165,"yes","ok"],["s","c",190,"yes","ok"]],pc:[2,3,6]},
+ {t:"Phase 2: pre-commit",b:"Line 4 sends pre-commit. Line 7 sets each participant's state to pre-committed, and each acknowledges. A pre-commit is only sent when all votes were yes, so that state proves it.",w:"This is the new knowledge 3PC adds: a pre-committed participant knows every vote was yes.",st:{c:["sent pre-commit","c"],p:pre,s:pre},m:[["c","p",100,"pre-commit"],["c","s",125,"pre-commit"],["p","c",165,"ack","ok"],["s","c",190,"ack","ok"],["note",0,240,"everyone now knows all voted yes"]],pc:[4,7]},
+ {t:"The coordinator crashes",b:"The coordinator dies before line 5, so do-commit is never sent and line 8 never runs. In 2PC, this is where both participants would sit locked forever.",w:"Both participants are pre-committed, and each has a timer running.",box:CR,st:{c:["crashed","fail"],p:pre,s:pre},m:[["note",0,150,"coordinator crashed before do-commit"]],pc:[5]},
+ {t:"Both time out and commit",b:"Line 9 fires in payment. Line 10 checks: is the state pre-committed? Yes, so it commits. Stock runs the same check, with the same answer.",w:"No blocking. The order completes without the coordinator, and the program prints both as committed.",box:CR,st:{c:["crashed","fail"],p:["committed","ok"],s:["committed","ok"]},m:[["note",0,150,"timeout in pre-commit: commit"]],pc:[9,10]},
+ {t:"A crash one step earlier",b:"Replay with the crash before line 4. Both states are voted. Line 9 fires, line 10 fails, and line 11 matches: state voted means abort. Neither knows the other's vote, so abort is the only safe guess.",w:"The rule: pre-committed on timeout means commit, voted on timeout means abort. It works only when both hold the same state.",box:CR,st:{c:["crashed","fail"],p:["aborted","undo"],s:["aborted","undo"]},m:[["note",0,150,"timeout before pre-commit: abort"]],pc:[9,11]}
+],
+part:[
+ {t:"Votes are in",b:"Same order. Line 6 ran in both, so both states are voted. Line 3 sees two yes votes. Then the network between the coordinator and stock is cut.",w:"A partition is not a crash. Stock is alive. It simply hears nothing.",st:{c:["collecting votes","c"],p:yes,s:yes},m:[["p","c",120,"yes","ok"],["s","c",150,"yes","ok"]],pc:[3,6]},
+ {t:"Pre-commit reaches only payment",b:"Line 4 sends pre-commit to both. Payment runs line 7 and becomes pre-committed. The message to stock is lost, so stock stays voted.",w:"The rule on line 9 reads the state, and the two states now differ.",cut:600,st:{c:["sent pre-commit","c"],p:pre,s:yes},m:[["c","p",110,"pre-commit"],["c","cut",150,"pre-commit (lost)","lost"],["p","c",190,"ack","ok"]],pc:[4,7]},
+ {t:"The coordinator dies too",b:"The coordinator stops before line 5. Nobody will ever send do-commit. Both timers are running.",w:"3PC was built for exactly this moment: it will now decide with timeouts.",cut:600,box:CR,st:{c:["gone","fail"],p:pre,s:yes},pc:[5]},
+ {t:"Payment times out and commits",b:"Line 9 fires in payment. Line 10 checks: is the state pre-committed? Yes. Payment commits and charges the card.",w:"Payment's reasoning is correct for what payment knows.",cut:600,box:CR,st:{c:["gone","fail"],p:["committed","ok"],s:yes},pc:[9,10]},
+ {t:"Stock times out and aborts",b:"Line 9 fires in stock. Line 10 fails, because the state is voted. Line 11 matches, so stock aborts and releases the phone.",w:"Stock's reasoning is also correct for what stock knows. Stock cannot tell a lost pre-commit from one that was never sent.",cut:600,box:CR,st:{c:["gone","fail"],p:["committed","ok"],s:["aborted","undo"]},pc:[9,11]},
+ {t:"The failure: half committed",b:"Line 12 names the flaw: lines 10 and 11 assume that hearing nothing means nothing was sent. The cut breaks that. The program prints: payment committed, stock aborted.",w:"2PC would have blocked here, but it would never have split. 3PC trades blocking for a wrong answer. Its timeout rule is safe only if messages are never late.",cut:600,box:CR,st:{c:["gone","fail"],p:["committed","fail"],s:["aborted","fail"]},ban:"Payment committed and stock aborted. The order is half done.",pc:[10,11,12]},
+ {t:"The real fix: replicate the coordinator",b:"Keep 2PC, and make the coordinator three replicas (line 13). The decision is stored only when a majority holds it: 2 of 3 is more than half, so losing one replica changes nothing. Line 14: no participant decides by timeout.",w:"Spanner does this with Paxos groups. Do not add a phase. Make the decider itself survive a failure.",names:{c:"Coordinator group (Paxos)"},st:{c:["majority alive","c"],p:["committed","ok"],s:["committed","ok"]},m:[["c","p",120,"commit"],["c","s",150,"commit"]],pc:[13,14]}
+]};
+const code={"*": {"label": "Go", "pc": ["coordinator:", "  send \"can you commit?\" to all", "  if any vote is no or missing: send abort, stop", "  send pre-commit to all, wait for acks", "  send do-commit to all", "participant, on can-commit: lock rows, vote yes, state = voted", "participant, on pre-commit: state = pre-committed, ack", "participant, on do-commit: commit", "participant, on timeout:", "  if state == pre-committed: commit        # every vote was yes", "  if state == voted: abort                 # it never heard the result", "the flaw: lines 10 and 11 assume \"nothing heard\" means \"nothing sent\"", "fix: coordinator is 3 replicas, decision stored by a majority", "fix: participants ask the group, no timeout decides"], "real": ["// OnCanCommit locks the rows and votes yes.", "func (p *Participant) OnCanCommit() bool {", "\tp.State = \"voted\"", "\treturn true", "}", "", "// OnPreCommit records that everyone voted yes.", "func (p *Participant) OnPreCommit() { p.State = \"pre-committed\" }", "", "// OnDoCommit makes the change final.", "func (p *Participant) OnDoCommit() { p.State = \"committed\" }", "", "// OnTimeout decides alone, from what this participant knows.", "func (p *Participant) OnTimeout() {", "\tswitch p.State {", "\tcase \"pre-committed\":", "\t\tp.State = \"committed\" // everyone voted yes", "\tcase \"voted\":", "\t\tp.State = \"aborted\" // it never heard the result", "\t}", "}", "", "// Run3PC is the coordinator. After a crash, every participant times out.", "func Run3PC(parts []*Participant, sc Scenario) {", "\tfor _, p := range parts {", "\t\tif !p.OnCanCommit() {", "\t\t\treturn", "\t\t}", "\t}", "\tif !sc.CrashBeforePreCommit {", "\t\tfor _, p := range parts {", "\t\t\tif sc.PreCommitReaches[p.Name] {", "\t\t\t\tp.OnPreCommit()", "\t\t\t}", "\t\t}", "\t\tif !sc.CrashBeforeDoCommit {", "\t\t\tfor _, p := range parts {", "\t\t\t\tp.OnDoCommit()", "\t\t\t}", "\t\t\treturn", "\t\t}", "\t}", "\tfor _, p := range parts {", "\t\tp.OnTimeout() // the coordinator is gone", "\t}", "}", "", "// Decide writes the outcome only if a majority of the group stores it.", "func (g *Group) Decide(outcome string) bool {", "\tif 2*g.alive <= 3 {", "\t\treturn false", "\t}", "\tg.decision = outcome", "\treturn true", "}"], "map": {"1": [24], "2": [26], "3": [4], "4": [33], "5": [38], "6": [2, 3], "7": [8], "8": [11], "9": [14, 44], "10": [16, 17], "11": [18, 19], "12": [13], "13": [49, 50], "14": [53]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

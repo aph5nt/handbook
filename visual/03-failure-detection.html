@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Failure detection</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Failure detection and failover</h1>
+  <p class="lede">A Postgres leader stops answering. Its followers cannot tell if it crashed, is slow, or is cut off. Press <b>Next</b> to watch a safe failover, then watch a timeout that is too short create two leaders.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good" id="tab-good">Safe failover</button>
+    <button role="tab" aria-selected="false" data-mode="short" id="tab-short">Timeout too short</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A leader, two followers and the failover states</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-failure-detection/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">leader, or the current state</span>
+    <span style="--c:var(--svc)">follower</span>
+    <span style="--c:var(--wait)">suspected, or paused</span>
+    <span style="--c:var(--fail)">dead, fenced, or a second leader</span>
+    <span style="--c:var(--line)">silent</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Patroni for Postgres keeps the leader key in etcd with a time to live and fences through a watchdog. Kubernetes uses node leases and evicts pods after a grace period. A graph database cluster uses Raft heartbeats and has a new leader within seconds.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Make a wrong guess safe first: fence the old leader with STONITH (Shoot The Other Node In The Head) or a storage check. Then tune the timeout for speed. Let a majority, never one node, declare a leader dead.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Short timeout</th><th>Long timeout</th></tr>
+      <tr><td>Failover speed</td><td>Seconds</td><td>Minutes without writes</td></tr>
+      <tr><td>False alarms</td><td>A long pause looks like a crash</td><td>Rare</td></tr>
+      <tr><td>Risk without a fence</td><td>Two leaders</td><td>Long outage</td></tr>
+      <tr><td>Risk with a fence</td><td>Needless failovers, but safe</td><td>Long outage, but safe</td></tr>
+      <tr><td>Better detector</td><td>Phi accrual: a suspicion level from the history of heartbeat gaps</td><td>Phi accrual</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A missing heartbeat means 'I do not know', so I make the failover safe with a fence first, and fast with the timeout second."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const ST=["Healthy","Suspected","Dead","Fenced","Promoted"];
+const AR={hb1:[240,82,620,66,430,62],hb2:[240,112,620,204,430,176],vote:[740,112,740,168,750,144,"start"],ston:[620,90,240,100,430,112],app1:[240,232,620,92,430,170],app0:[140,200,140,142,150,176,"start"]};
+function scene(s){
+  let b="";const msgs=[];
+  b+=BOX(40,60,200,80,s.L[0],"Leader",s.L[1]);
+  b+=BOX(40,200,200,60,"var(--svc)","App","sends writes");
+  b+=BOX(620,30,240,80,s.F1[0],"Follower 1",s.F1[1]);
+  b+=BOX(620,170,240,80,s.F2[0],"Follower 2",s.F2[1]);
+  b+=T(620,276,"silence since last heartbeat",{a:"start",s:12,w:400,c:"var(--muted)"});
+  b+=R(620,284,240,12,"var(--line)",{rx:6})+R(620,284,Math.max(0,240*s.sil),12,s.sil>=1?"var(--fail)":"var(--muted)",{rx:6});
+  ST.forEach((n,k)=>{const on=s.st===n;b+=R(20+k*176,330,160,40,on?(n==="Promoted"||n==="Healthy"?"var(--coord)":n==="Suspected"?"var(--wait)":"var(--fail)"):"var(--line)",{rx:20})+T(100+k*176,355,n,{c:on?"#fff":"var(--muted)",s:15});
+    if(k<4)b+=T(188+k*176,355,"›",{s:18,c:"var(--muted)"});});
+  (s.m||[]).forEach(([k,l,kd])=>{const a=AR[k];msgs.push(ARROW(a[0],a[1],a[2],a[3],l,KC[kd||"n"],{lx:a[4],ly:a[5],a:a[6],dash:kd==="lost"}))});
+  if(s.ban)msgs.push(BANNER(312,s.ban));
+  return{base:b,msgs};
+}
+const C="var(--coord)",S="var(--svc)",W="var(--wait)",F="var(--fail)",G="var(--line)";
+const steps={
+good:[
+ {t:"Healthy: heartbeats arrive",b:"The leader sends a heartbeat every second (lines 1 and 2). Each one runs line 4 on the followers: lastSeen becomes now, so the silence drops back to 0. The timeout is 5 seconds.",w:"While heartbeats arrive, line 6 is never true, so nobody does anything.",st:"Healthy",L:[C,"log position 120"],F1:[S,"log position 120"],F2:[S,"log position 118"],sil:.1,m:[["hb1","heartbeat"],["hb2","heartbeat"]],pc:[1,2,3,4]},
+ {t:"The leader goes silent",b:"No heartbeat since second 0. At second 3, line 6 checks: is the silence, 3 seconds, more than 5? No. The followers stay Healthy.",w:"A crash, a slow leader and a broken cable all look the same from here. Only the silence is measured.",st:"Healthy",L:[G,"crashed? slow? cut off?"],F1:[S,"log position 120"],F2:[S,"log position 118"],sil:.6,pc:[5,6]},
+ {t:"Suspected",b:"At second 6, line 6 checks again: 6 seconds of silence is more than 5. Line 7 sets both followers to Suspected. A late heartbeat would still reset them through line 4.",w:"A phi accrual detector replaces line 6 with a suspicion level built from past heartbeat gaps, instead of one fixed timeout.",st:"Suspected",L:[G,"no heartbeat"],F1:[W,"suspects the leader"],F2:[W,"suspects the leader"],sil:1,pc:[5,6,7]},
+ {t:"Dead: a majority agrees",b:"Line 9 counts the followers in Suspected: 2. Line 10 asks: is that fewer than 2? No. Two of three nodes is a majority, so the leader is declared dead.",w:"One follower with a bad cable would count only 1 vote, and line 10 would stop the failover.",st:"Dead",L:[F,"declared dead"],F1:[W,"votes: dead"],F2:[W,"votes: dead"],sil:1,m:[["vote","dead? yes, dead"]],pc:[8,9,10]},
+ {t:"Fenced: STONITH",b:"Line 11: the fence is on, so the old leader is fenced before anyone is promoted. STONITH means Shoot The Other Node In The Head: its power is cut.",w:"Line 15 will now refuse any write on the old leader, even if it was only slow.",st:"Fenced",L:[F,"powered off"],F1:[W,"fencing"],F2:[W,"waiting"],sil:1,m:[["ston","STONITH: cut power","fail"]],pc:[11]},
+ {t:"Promoted: the most complete follower leads",b:"Line 12 compares log positions: follower 1 has 120, follower 2 has 118. Follower 1 wins. Line 13 makes it the leader, and the app's writes pass line 15 on it.",w:"Exactly one node accepts writes. Picking the highest position means no confirmed write is lost.",st:"Promoted",L:[F,"powered off"],F1:[C,"new leader, pos 120"],F2:[S,"follows the new leader"],sil:0,m:[["app1","writes resume","ok"]],pc:[12,13,15]}
+],
+short:[
+ {t:"Healthy, with a very short timeout",b:"Same cluster. The timeout is now 1 second, to make failover fast, and the fence on line 11 is switched off.",w:"Fast failover sounds good. Watch what a 3-second pause does to it.",st:"Healthy",L:[C,"log position 120"],F1:[S,"log position 120"],F2:[S,"log position 118"],sil:.2,m:[["hb1","heartbeat"],["hb2","heartbeat"]],pc:[1,2,4]},
+ {t:"The leader pauses",b:"The leader freezes in a 3-second garbage-collection pause. At second 2, line 6 checks: 2 seconds of silence is more than 1. Line 7 sets both followers to Suspected.",w:"The leader is not dead. It will wake up at second 3. From outside, a pause looks exactly like a crash.",st:"Suspected",L:[W,"frozen, garbage collection"],F1:[W,"suspects the leader"],F2:[W,"suspects the leader"],sil:1,pc:[6,7]},
+ {t:"Promoted without a fence",b:"Line 10 sees 2 votes, a majority. Line 11 is switched off, so the old leader is not fenced. Line 12 picks follower 1 (120 beats 118) and line 13 promotes it.",w:"The guess was wrong, and nothing makes a wrong guess safe.",st:"Promoted",L:[W,"still frozen"],F1:[C,"new leader"],F2:[S,"follows follower 1"],sil:0,m:[["app1","writes","ok"]],pc:[9,10,12,13]},
+ {t:"The failure: two leaders",b:"At second 3 the old leader wakes up. It still has leader = true and fenced = false, so line 15 accepts its writes. Follower 1 also passes line 15. Two nodes accept writes for the same rows.",w:"Split brain: a timeout shorter than a pause, and line 11 switched off.",st:"Promoted",L:[F,"thinks it is leader"],F1:[F,"also leader"],F2:[S,"follows follower 1"],sil:0,m:[["app0","writes","fail"],["app1","writes","fail"]],ban:"Two leaders accept writes for the same rows.",pc:[11,15]},
+ {t:"The fix: fence first, then tune",b:"Switch line 11 back on. The same 1-second timeout still promotes follower 1, but first the old leader is fenced. When it wakes, line 15 sees fenced = true and refuses its writes. One node accepts writes.",w:"A detector cannot be both fast and never wrong. The fence makes a wrong guess cost only a needless failover, so the timeout can be tuned for speed.",st:"Fenced",L:[F,"fenced, writes refused"],F1:[C,"new leader"],F2:[S,"follows follower 1"],sil:0,m:[["ston","fence: power off","fail"],["app1","writes","ok"]],pc:[11,15]}
+]};
+const code={"*": {"label": "Go", "pc": ["leader, every second:", "  send a heartbeat to each follower", "follower, on a heartbeat:", "  lastSeen = now; state = Healthy        # silence back to 0", "follower, every tick:", "  if now - lastSeen > timeout:", "    state = Suspected                    # crashed, slow or cut off?", "decide:", "  votes = followers in state Suspected", "  if votes < 2: return                   # 2 of 3 nodes is a majority", "  if fenceEnabled: fence(oldLeader)      # STONITH before promotion", "  best = follower with the highest log position", "  best.leader = true                     # the app writes to best", "on a write at node n:", "  accept only if n.leader and not n.fenced"], "real": ["// Heartbeat: the leader resets every follower's silence timer.", "func (c *Cluster) Heartbeat(now int) {", "\tfor _, f := range c.followers {", "\t\tf.lastSeen = now // silence goes back to 0", "\t\tf.state = \"Healthy\"", "\t}", "}", "", "// Tick runs on each follower: too much silence means Suspected.", "func (c *Cluster) Tick(now int) {", "\tfor _, f := range c.followers {", "\t\tif now-f.lastSeen > c.timeout {", "\t\t\tf.state = \"Suspected\"", "\t\t}", "\t}", "}", "", "// Decide counts the suspicions. A majority of the 3 nodes declares the", "// leader dead, then the cluster fences it and promotes the best follower.", "func (c *Cluster) Decide() *Node {", "\tvotes := 0", "\tfor _, f := range c.followers {", "\t\tif f.state == \"Suspected\" {", "\t\t\tvotes++", "\t\t}", "\t}", "\tif votes < 2 { // 2 of 3 nodes is a majority", "\t\treturn nil", "\t}", "\tif c.fence {", "\t\tc.old.fenced = true // STONITH: cut the old leader's power", "\t}", "\tbest := c.followers[0]", "\tfor _, f := range c.followers[1:] {", "\t\tif f.pos > best.pos {", "\t\t\tbest = f // the highest log position loses no confirmed write", "\t\t}", "\t}", "\tbest.leader = true", "\treturn best", "}", "", "// Write: a node accepts a write only if it is a leader and not fenced.", "func (n *Node) Write() bool {", "\treturn n.leader && !n.fenced", "}"], "map": {"1": [2], "2": [3], "3": [2], "4": [4, 5], "5": [10], "6": [12], "7": [13], "8": [20], "9": [24], "10": [27], "11": [30, 31], "12": [35, 36], "13": [39], "14": [44], "15": [45]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

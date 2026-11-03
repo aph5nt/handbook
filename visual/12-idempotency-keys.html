@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotency keys</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Idempotency keys: a retried charge is one charge</h1>
+  <p class="lede">An agent tops up its subscription with 10 USD. The payment succeeds, but the reply is lost on the way back, so the agent retries. Watch an idempotency key turn the retry into the same answer, and watch a retry without one charge twice. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="key">With an idempotency key</button>
+    <button role="tab" aria-selected="false" data-mode="nokey">No key, or a key done wrong</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">An agent, a payment API, the idempotency store and the payments ledger</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-ag" class="box" x="20" y="150" width="170" height="62" rx="8"/><text id="b-ag-t" x="105" y="178">Agent</text><text id="b-ag-l" x="105" y="198" class="sm"></text>
+        <rect id="b-api" class="box" x="290" y="150" width="180" height="62" rx="8"/><text id="b-api-t" x="380" y="178">Payment API</text><text id="b-api-l" x="380" y="198" class="sm"></text>
+        <rect id="b-ks" class="box" x="620" y="40" width="260" height="62" rx="8"/><text id="b-ks-t" x="750" y="68">Idempotency store</text><text id="b-ks-l" x="750" y="88" class="sm"></text>
+        <rect id="b-lg" class="box" x="620" y="260" width="260" height="62" rx="8"/><text id="b-lg-t" x="750" y="288">Payments ledger</text><text id="b-lg-l" x="750" y="308" class="sm"></text>
+        <text id="cap" x="450" y="372" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-idempotency-keys/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">the agent and the API</span>
+    <span style="--c:var(--wait)">in progress</span>
+    <span style="--c:var(--ok)">done, stored</span>
+    <span style="--c:var(--fail)">lost reply, or a double charge</span>
+    <span style="--c:var(--undo)">the ledger</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Stripe and most payment APIs take an <code>Idempotency-Key</code> header and keep keys for about a day. A topup command in a CLI that retries on timeout. An indexer insert keyed by transaction hash and log index is idempotent by its natural key, so it needs no extra key.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>The client makes the key, one per logical action, and reuses it on every retry. The server inserts the key first, in the same transaction as the effect, and stores the response. A repeat returns the stored response. A key with a different request body is refused. Keep keys longer than the longest retry window.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>With a key</th><th>Without a key</th></tr>
+      <tr><td>Reply lost, agent retries</td><td>The stored receipt comes back</td><td>A second charge</td></tr>
+      <tr><td>Two retries at once</td><td>One runs, the other is told it is in progress</td><td>Both charge</td></tr>
+      <tr><td>What the server keeps</td><td>Key, body hash, status, response</td><td>Nothing</td></tr>
+      <tr><td>Fits</td><td>Payments, orders, anything with side effects</td><td>Only calls that are naturally idempotent</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The client sends one idempotency key per action and reuses it on retries, the server records the key with the effect in one transaction and returns the stored response for a repeat, so a retried charge is one charge."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SEND=[190,170,288,170],BACK=[288,196,192,196],KS=[470,162,618,80],LG=[470,200,618,284];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const D={key:{f:{"b-ag":C,"b-api":C,"b-ks":N,"b-lg":U},x:{"b-ag-l":"","b-api-l":"","b-ks-l":"empty","b-lg-l":"charges: 0","cap":""}},
+ nokey:{f:{"b-ag":C,"b-api":C,"b-ks":N,"b-lg":U},x:{"b-ag-l":"","b-api-l":"","b-ks-l":"not used","b-lg-l":"charges: 0","cap":""}}};
+const steps={
+key:[
+ {t:"The agent makes a key",b:"Before it calls, the agent creates a random key, K-7f3, for this one top-up. It sends \"top up 10 USD\" with the key.",w:"One key per logical action. Every retry of this action will carry the same key.",x:{"b-ag-l":"key K-7f3"},m:[a(SEND,"top up, K-7f3",C,0,240,160)]},
+ {t:"The API records the key first",b:"The API inserts K-7f3 into the idempotency store as \"in progress\", with a hash of the request body.",w:"The insert is unique. If the key is already there, this is a repeat, and the API will not charge again.",f:{"b-ks":Y},x:{"b-ag-l":"key K-7f3","b-ks-l":"K-7f3: in progress"},m:[a(KS,"insert key",Y,0,505,110)]},
+ {t:"The charge happens",b:"The API charges 10 USD and writes it to the ledger, in the same transaction as the key.",w:"Key and effect commit together. Either both exist or neither does.",f:{"b-ks":Y},x:{"b-ag-l":"key K-7f3","b-ks-l":"K-7f3: in progress","b-lg-l":"charges: 1"},m:[a(LG,"charge 10",U,0,540,262)]},
+ {t:"The response is stored, then lost",b:"The API stores the receipt under the key: done, receipt 881. It replies, but the network drops the reply.",w:"The agent cannot tell a lost reply from a failed charge. All it sees is a timeout.",f:{"b-ks":G},x:{"b-ag-l":"timeout","b-ks-l":"K-7f3: done, receipt 881","b-lg-l":"charges: 1"},m:[a(BACK,"receipt 881: lost",R,1,240,222)]},
+ {t:"The agent retries with the same key",b:"The agent waits with backoff and sends the same request with the same key, K-7f3.",w:"Retrying is safe because the key makes the call idempotent: twice has the same effect as once.",f:{"b-ks":G},x:{"b-ag-l":"retry, key K-7f3","b-ks-l":"K-7f3: done, receipt 881","b-lg-l":"charges: 1"},m:[a(SEND,"top up, K-7f3",C,0,240,160)]},
+ {t:"The stored answer comes back",b:"The unique insert fails: K-7f3 is already there. The API checks the entry in order: same body hash? Yes. Done? Yes. So it returns the stored receipt 881 and skips the charge.",w:"The ledger still shows one charge. The agent gets the answer it missed.",f:{"b-ks":G},x:{"b-ag-l":"got receipt 881","b-ks-l":"K-7f3: done, receipt 881","b-lg-l":"charges: 1"},m:[a(KS,"look up key",G,0,505,110),a(BACK,"receipt 881",G,0,240,222)]},
+ {t:"Two retries at the same moment",b:"If a second retry arrives while the first is still in progress, the entry has the same body hash but is not done. The API answers 409, try again shortly.",w:"The unique key turns a race into one winner. The other caller waits and then reads the stored result.",f:{"b-ks":Y},x:{"b-ag-l":"two retries","b-ks-l":"K-7f3: in progress","b-lg-l":"charges: 1"},m:[a(SEND,"retry, K-7f3",C,0,240,160),a(BACK,"409: in progress",Y,0,240,222)]}
+],
+nokey:[
+ {t:"No key: the first call",b:"The agent sends \"top up 10 USD\" with no key. The API charges. The reply is lost.",w:"Same lost reply as before. Nothing ties a retry to this call.",x:{"b-ag-l":"timeout","b-lg-l":"charges: 1"},m:[a(LG,"charge 10",U,0,540,262),a(BACK,"receipt: lost",R,1,240,222)]},
+ {t:"The failure that matters: charged twice",b:"The agent retries. The API sees a fresh request and charges again. The customer paid 20 USD for a 10 USD top-up.",w:"A timeout does not prove the call failed. Retrying a call with side effects needs a key, or it doubles the effect.",f:{"b-lg":R},x:{"b-ag-l":"got a receipt","b-lg-l":"charges: 2 (double)"},m:[a(SEND,"top up 10, again",C,0,240,160),a(LG,"charge 10 again",R,0,540,262)]},
+ {t:"A key saved in the wrong order",b:"Another API charges first and saves the key afterwards, in a separate step. It crashes between the two.",w:"The charge happened, the key did not. The retry finds no key and charges again.",f:{"b-lg":R,"b-api":R},x:{"b-api-l":"crashed after charge","b-ks-l":"no key saved","b-lg-l":"charges: 2 (double)"},m:[a(LG,"charge",U,0,540,262)]},
+ {t:"A key reused for a different action",b:"A buggy client reuses K-7f3 for a 50 USD top-up. A careless API would return the old 10 USD receipt. This API compares the body hash first: it differs, so it answers 422.",w:"Store a hash of the request body with the key. Same key, different body: refuse with an error.",f:{"b-ks":Y},x:{"b-ag-l":"K-7f3, 50 USD","b-ks-l":"K-7f3: body was 10 USD","b-lg-l":"charges: 1"},m:[a(SEND,"top up 50, K-7f3",C,0,240,160),a(BACK,"422: key reused",Y,0,240,222)]},
+ {t:"The fix",b:"Client: one key per action, reused on every retry. Server: insert the key and do the effect in one transaction, store the response and the body hash, keep keys longer than the retry window.",w:"Then a retry is always safe, and the ledger shows exactly one charge per action.",f:{"b-ks":G},x:{"b-ks-l":"key, body hash, receipt","b-lg-l":"charges: 1"},m:[]}
+]};
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["client: key = random()            # one key per action, reused on every retry", "", "topUp(key, body):                  # all of it is one transaction", "  e = store.insert(key)            # unique: finds the key if it is there", "  if e exists:", "    if e.bodyHash != hash(body): return 422 \"key reused\"", "    if not e.done: return 409 \"in progress\"", "    return e.receipt               # the stored answer, no new charge", "  e = {in progress, hash(body)}", "  ledger.charge(10 USD)", "  e.done, e.receipt = true, receipt", "  return receipt", "", "# BUG no key: every retry charges again", "# BUG wrong order: charge, then save the key in a second step", "", "client retry: topUp(key, body)     # same key, same body"], "real": ["func (a *API) TopUp(key, body string) (int, string) {", "\th := sha256.Sum256([]byte(body))", "\tif key != \"\" {", "\t\tif e, ok := a.Keys[key]; ok { // the unique insert finds the key", "\t\t\tswitch {", "\t\t\tcase e.BodyHash != h:", "\t\t\t\treturn 0, \"422: key reused for a different body\"", "\t\t\tcase !e.Done:", "\t\t\t\treturn 0, \"409: in progress, try again shortly\"", "\t\t\tdefault:", "\t\t\t\treturn e.Receipt, \"stored receipt, no new charge\"", "\t\t\t}", "\t\t}", "\t\ta.Keys[key] = &Entry{BodyHash: h} // in progress", "\t}", "\ta.Charges++ // write the charge to the ledger", "\ta.next++", "\treceipt := 880 + a.next", "\tif key != \"\" {", "\t\ta.Keys[key].Done, a.Keys[key].Receipt = true, receipt", "\t}", "\treturn receipt, \"charged\"", "}", "", "func (a *API) TopUpWrongOrder(key, body string, crash bool) {", "\tif _, ok := a.Keys[key]; ok {", "\t\treturn", "\t}", "\ta.Charges++", "\tif crash {", "\t\treturn // crashed between the charge and the key", "\t}", "\ta.Keys[key] = &Entry{Done: true, BodyHash: sha256.Sum256([]byte(body))}", "}", "", "r, why := a.TopUp(\"K-7f3\", \"top up 10 USD\")", "r, why = a.TopUp(\"K-7f3\", \"top up 10 USD\") // the retry, same key"], "map": {"1": [36], "3": [1, 2], "4": [3, 4], "5": [4], "6": [6, 7], "7": [8, 9], "8": [10, 11], "9": [14], "10": [16], "11": [17, 18, 19, 20, 21], "12": [22], "14": [3, 16], "15": [25, 29, 30, 31, 33], "17": [37]}}},PCS={"key": [[1], [3, 4, 9], [10], [11, 12], [17, 3], [4, 5, 6, 7, 8], [4, 5, 7]], "nokey": [[14], [14], [15], [6], [1, 4, 5, 6, 7, 8, 9, 10, 11]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Intent locks and escalation</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Intent locks and lock escalation</h1>
+  <p class="lede">A nightly job wants to lock the whole swaps table while writers hold row locks. Watch the intent flag on the table save it from checking millions of row locks. Then open the second tab: a bulk update holds so many row locks that the engine swaps them for one table lock, and every other writer stalls.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="intent">Intent locks</button>
+    <button role="tab" aria-selected="false" data-mode="esc">Lock escalation</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Intent locks and escalation: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a writer or job</span>
+    <span style="--c:var(--wait)">lock held</span>
+    <span style="--c:var(--coord)">waiting for a lock</span>
+    <span style="--c:var(--ok)">done, or free to go</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>SQL Server escalates row locks to a table lock at about 5,000 locks held by one statement. MySQL InnoDB uses intention locks to guard table locks and DDL (Data Definition Language, such as <code>ALTER TABLE</code>). PostgreSQL never escalates, because row locks live in the rows themselves.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Split a bulk update or delete into batches below the escalation size, each its own short transaction. Where the engine allows, turn escalation off for one hot table. In PostgreSQL, watch <code>ALTER TABLE</code> instead: it waits for every open reader of the table.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Row locks only</th><th>With intent locks</th><th>After escalation</th></tr>
+      <tr><td>Table lock check</td><td>Inspect every row lock</td><td>Read one flag on the table</td><td>The table is already locked</td></tr>
+      <tr><td>Other writers</td><td>Work on other rows</td><td>Work on other rows</td><td>All wait</td></tr>
+      <tr><td>Memory</td><td>One entry per row lock</td><td>Plus one flag per table</td><td>One entry, saved memory</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"An intent lock is a flag on the table saying row locks exist below, and escalation swaps many row locks for one table lock, which stalls everyone else."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const tb=(lab,k,rk)=>[F(200,130,500,160,"table swaps"),B(300,50,300,lab,k,44),...["row 7","row 9","row 12"].map((r,j)=>B(220+160*j,200,140,r,(rk||[])[j]||"n",40))];
+const job=(k)=>[B(30,50,200,"nightly job",k||"s",44)];
+const wr=(k1,k2)=>[B(220,320,140,"writer 1",k1||"s",44),B(380,320,140,"writer 2",k2||"s",44)];
+const up=(j,k)=>A(290+160*j,318,290+160*j,242,"",k||"w");
+const cells=(n,k)=>Array.from({length:n},(_,j)=>B(220+24*(j%20),150+24*Math.floor(j/20),20,"",k,20));
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-lock-escalation/main.go</code> keeps the lock state of the swaps table: intent flags, row locks and one optional table lock. It replays the nightly job, the bulk update on pool 42 and the batched fix, and prints every value quoted here (<code>go run .</code>).";
+const CODE={
+intent:{pc:["swaps table: 1,000,000 rows · the job wants X on the table",
+"lock_row(writer, row):",
+"  put IX on the table        # the flag: some row below is locked",
+"  put X on the row",
+"writer 1: lock_row(7)",
+"writer 2: lock_row(9)",
+"without flags: check every row's lock, 1,000,000 checks",
+"lock_table(job): read the IX flags once",
+"  any IX from another writer: wait",
+"commit: drop the row locks and IX · then the job gets X"],
+ views:[{v:"real",label:"Go",lines:[].concat(["const tableRows = 1_000_000 // rows in the swaps table"],[""],["// LockRow puts IX on the table, then X on the row.", "// It returns false when another writer owns the whole table: the caller waits.", "func (t *Table) LockRow(w string, row int) bool {", "\tif t.owner != \"\" && t.owner != w {", "\t\treturn false // the table lock conflicts with IX", "\t}", "\tif t.owner == w {", "\t\treturn true // the table lock already covers the row", "\t}", "\tt.intent[w] = true // the flag: some row below is locked", "\tt.rows[row] = w", "\tt.held[w]++", "\tif t.escalate && t.held[w] >= escalateAt {", "\t\tt.Escalate(w)", "\t}", "\treturn true", "}"],[""],["// LockTable asks for an exclusive table lock. It reads the intent flags once:", "// any IX held by another writer conflicts, so the caller waits.", "func (t *Table) LockTable(w string) (ok bool, checks int) {", "\tchecks = 1", "\tfor other := range t.intent {", "\t\tif other != w {", "\t\t\treturn false, checks", "\t\t}", "\t}", "\tt.owner = w", "\treturn true, checks", "}"],[""],["// LockTableByScan is the same question without intent flags:", "// it must look at the lock state of every row.", "func (t *Table) LockTableByScan(w string) (ok bool, checks int) {", "\tok = true", "\tfor row := 0; row < tableRows; row++ {", "\t\tchecks++", "\t\tif h, locked := t.rows[row]; locked && h != w {", "\t\t\tok = false", "\t\t}", "\t}", "\treturn ok, checks", "}"],[""],["// Commit frees every lock of w.", "func (t *Table) Commit(w string) {", "\tfor row, h := range t.rows {", "\t\tif h == w {", "\t\t\tdelete(t.rows, row)", "\t\t}", "\t}", "\tt.held[w] = 0", "\tdelete(t.intent, w)", "\tif t.owner == w {", "\t\tt.owner = \"\"", "\t}", "}"],[""],["func intentLocks() {", "\tfmt.Println(\"== intent locks: a nightly job wants the whole table\")", "\tt := NewTable(false)", "\tt.LockRow(\"writer 1\", 7)", "\tt.LockRow(\"writer 2\", 9)", "\tfmt.Printf(\"writer 1 locks row 7, writer 2 locks row 9: IX flags on the table %d\\n\", len(t.intent))", "\t_, scanChecks := t.LockTableByScan(\"job\")", "\tfmt.Printf(\"without the flag: the job checks %d rows\\n\", scanChecks)", "\tok, checks := t.LockTable(\"job\")", "\tfmt.Printf(\"with the flag: %d check, table lock granted %v, the job waits\\n\", checks, ok)", "\tt.Commit(\"writer 1\")", "\tt.Commit(\"writer 2\")", "\tok, _ = t.LockTable(\"job\")", "\tfmt.Printf(\"writers commit, IX flags %d, table lock granted %v\\n\", len(t.intent), ok)", "}"]),
+  map:[["swaps table: 1,000,000","const tableRows","t := NewTable(false)"],["lock_row(writer, row):","func (t *Table) LockRow("],["put IX on the table","t.intent[w] = true"],["put X on the row","t.rows[row] = w..t.held[w]++"],
+   ["writer 1: lock_row(7)","t.LockRow(\"writer 1\", 7)"],["writer 2: lock_row(9)","t.LockRow(\"writer 2\", 9)","IX flags on the table %d"],
+   ["without flags","LockTableByScan(w string)..return ok, checks","_, scanChecks..without the flag"],
+   ["lock_table(job)","LockTable(w string) (ok bool, checks int) {","checks = 1","ok, checks := t.LockTable"],
+   ["any IX from another writer","for other := range t.intent {..return false, checks","with the flag:"],
+   ["commit: drop the row locks","func (t *Table) Commit(..t.owner = \"\"","t.Commit(\"writer 1\")..writers commit, IX flags"]]}]},
+esc:{pc:["update every swap of pool 42: rows 0 to 5,999",
+"  lock_row(bulk, row)        # one X row lock each, the count climbs",
+"  if row locks held >= 5,000: escalate",
+"escalate: drop the row locks, take X on the whole table",
+"app: lock_row(900000) for pool 77 -> the table is owned: wait",
+"fix: batches of 1,000 rows, commit after each",
+"  at most 1,000 locks held: no escalation, the app never waits",
+"PostgreSQL: the lock is stored in the row itself",
+"  no lock table entry per row, so nothing to escalate"],
+ views:[{v:"real",label:"Go",lines:[].concat(["const escalateAt = 5_000    // SQL Server swaps row locks for a table lock near here"],[""],["// LockRow puts IX on the table, then X on the row.", "// It returns false when another writer owns the whole table: the caller waits.", "func (t *Table) LockRow(w string, row int) bool {", "\tif t.owner != \"\" && t.owner != w {", "\t\treturn false // the table lock conflicts with IX", "\t}", "\tif t.owner == w {", "\t\treturn true // the table lock already covers the row", "\t}", "\tt.intent[w] = true // the flag: some row below is locked", "\tt.rows[row] = w", "\tt.held[w]++", "\tif t.escalate && t.held[w] >= escalateAt {", "\t\tt.Escalate(w)", "\t}", "\treturn true", "}"],[""],["// Escalate swaps every row lock of w for one exclusive table lock.", "func (t *Table) Escalate(w string) {", "\tfor row, h := range t.rows {", "\t\tif h == w {", "\t\t\tdelete(t.rows, row)", "\t\t}", "\t}", "\tt.held[w] = 0", "\tdelete(t.intent, w)", "\tt.owner = w", "}"],[""],["func bulkUpdate() {", "\tfmt.Println(\"== bulk update: every swap of pool 42, rows 0 to 5,999\")", "\tt := NewTable(true)", "\tescalatedAt := 0", "\tfor row := 0; row < 6_000; row++ {", "\t\tbefore := t.held[\"bulk\"]", "\t\tt.LockRow(\"bulk\", row)", "\t\tif escalatedAt == 0 && t.owner == \"bulk\" {", "\t\t\tescalatedAt = before + 1", "\t\t}", "\t}", "\tfmt.Printf(\"escalated at %d row locks: row locks now %d, table owner %s\\n\", escalatedAt, len(t.rows), t.owner)", "\tok := t.LockRow(\"app\", 900_000) // a swap of pool 77, a row the bulk update never touches", "\tfmt.Printf(\"app inserts row 900000 for pool 77: granted %v, it waits for the bulk commit\\n\", ok)", "\tt.Commit(\"bulk\")", "\tok = t.LockRow(\"app\", 900_000)", "\tfmt.Printf(\"after the bulk commit: granted %v\\n\", ok)", "}"],[""],["func batched() {", "\tfmt.Println(\"== fix: batches of 1,000 rows, each its own transaction\")", "\tt := NewTable(true)", "\tmost, escalations, appOK := 0, 0, true", "\tfor start := 0; start < 6_000; start += 1_000 {", "\t\tfor row := start; row < start+1_000; row++ {", "\t\t\tt.LockRow(\"bulk\", row)", "\t\t}", "\t\tmost = max(most, t.held[\"bulk\"])", "\t\tif t.owner == \"bulk\" {", "\t\t\tescalations++", "\t\t}", "\t\tappOK = appOK && t.LockRow(\"app\", 900_000+start) // the app runs between and during batches", "\t\tt.Commit(\"bulk\")", "\t\tt.Commit(\"app\")", "\t}", "\tfmt.Printf(\"batches 6, most row locks held at once %d, escalations %d, app never waits %v\\n\", most, escalations, appOK)", "}"],[""],["func postgres() {", "\tfmt.Println(\"== PostgreSQL: the row lock lives in the row\")", "\tlockedBy := make([]string, 6_000) // each row's own header holds its locker", "\tfor row := range lockedBy {", "\t\tlockedBy[row] = \"bulk\"", "\t}", "\tlockTableEntries := 0 // nothing is added to a shared lock table per row", "\tfmt.Printf(\"rows locked %d, lock table entries %d, escalations 0\\n\", len(lockedBy), lockTableEntries)", "}"]),
+  map:[["update every swap of pool 42","t := NewTable(true)#1","for row := 0; row < 6_000; row++ {"],["lock_row(bulk, row)","t.LockRow(\"bulk\", row)#1","t.intent[w] = true..t.held[w]++"],
+   ["if row locks held >= 5,000","const escalateAt","if t.escalate && t.held[w] >= escalateAt {..t.Escalate(w)","escalated at %d row locks"],
+   ["escalate: drop the row locks","func (t *Table) Escalate(..t.owner = w","if escalatedAt == 0..escalatedAt = before + 1"],
+   ["app: lock_row(900000)","if t.owner != \"\" && t.owner != w {..return false","ok := t.LockRow(\"app\", 900_000)","app inserts row 900000"],
+   ["fix: batches of 1,000","func batched()","for start := 0","t.Commit(\"bulk\")#2"],
+   ["at most 1,000 locks held","most = max(","if t.owner == \"bulk\" {..escalations++","appOK = appOK &&","batches 6, most row"],
+   ["PostgreSQL: the lock is stored","lockedBy := make(..lockedBy[row] = \"bulk\""],["no lock table entry","lockTableEntries := 0","rows locked %d"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- one statement: 6,000 row locks in one transaction",
+"UPDATE swaps SET usd_value = usd_value * 1.0 WHERE pool_id = 42;",
+"",
+"-- meanwhile the app inserts a swap for pool 77",
+"INSERT INTO swaps (id, pool_id, usd_value) VALUES (900000, 77, 12.5);",
+"",
+"-- the fix: batches of 1,000, each its own transaction",
+"UPDATE swaps SET usd_value = usd_value * 1.0",
+"WHERE id IN (SELECT id FROM swaps WHERE pool_id = 42",
+"             ORDER BY id LIMIT 1000 OFFSET 0);   -- then OFFSET 1000, 2000 ...",
+"COMMIT;"],
+  map:[["update every swap of pool 42","WHERE pool_id = 42;"],["lock_row(bulk, row)","WHERE pool_id = 42;"],["if row locks held >= 5,000","-- one statement..WHERE pool_id = 42;"],["app: lock_row(900000)","-- meanwhile..INSERT INTO swaps"],["fix: batches of 1,000","-- the fix..COMMIT;"],["at most 1,000 locks held","LIMIT 1000"],["PostgreSQL: the lock is stored","WHERE pool_id = 42;"]]}]}};
+// CODE PANEL END
+const S={
+intent:{name:"table swaps, three writers",st:[
+ {t:"Start: a table with no locks",pc:["swaps table: 1,000,000 rows \u00b7 the job wants X on the table"],b:"The swaps table has 1,000,000 rows; three are drawn. A nightly job wants an exclusive lock on the whole table to rebuild it.",w:"Before it can lock the table, it must know that nobody holds a lock on any row.",d:job().concat(tb("table flag: none","n"),wr())},
+ {t:"Writer 1 locks row 7",pc:["lock_row(writer, row):", "  put IX on the table        # the flag: some row below is locked", "  put X on the row", "writer 1: lock_row(7)"],b:"Before it locks row 7, writer 1 puts an intent-exclusive (IX) lock on the table. Then it takes the exclusive lock on the row.",w:"The flag says: some row below is locked. It does not say which.",d:job().concat(tb("table flag: IX x1","w",["w"]),wr(),[up(0)])},
+ {t:"Writer 2 locks row 9",pc:["  put IX on the table        # the flag: some row below is locked", "  put X on the row", "writer 2: lock_row(9)"],b:"Writer 2 also puts IX on the table, then locks row 9. Two IX locks sit on the table at once.",w:"Intent locks do not conflict with each other. Writers on different rows go on in parallel.",d:job().concat(tb("table flag: IX x2","w",["w","w"]),wr(),[up(0),up(1)])},
+ {t:"The failure without the flag",pc:["without flags: check every row's lock, 1,000,000 checks"],b:"Imagine no intent locks. To lock the table, the job must inspect the lock state of every row: 1,000,000 checks while writers keep adding more.",w:"That check is slow and races with new row locks. The flag turns it into one read.",d:job("x").concat(tb("table flag: none","n",["w","w"]),wr(),[up(0),up(1),T(30,130,"check row 1, row 2,","x"),T(30,150,"... millions","x"),A(232,72,298,72,"","x",1)])},
+ {t:"With the flag: one check, then wait",pc:["lock_table(job): read the IX flags once", "  any IX from another writer: wait"],b:"The job asks for an exclusive table lock. That conflicts with IX. It reads the flags in 1 check, finds 2 IX locks from other writers, and waits.",w:"One read tells the job the answer: not yet.",d:job("r").concat(tb("table flag: IX x2","w",["w","w"]),wr(),[up(0),up(1),A(232,72,298,72,"waits","r",1)])},
+ {t:"Writers commit, the job gets the table",pc:["commit: drop the row locks and IX \u00b7 then the job gets X"],b:"Both writers commit. Their row locks go, and the IX flags drop to 0. The job takes its exclusive table lock and rebuilds.",w:"The job waited only for the writers that were really there.",d:job("c").concat(tb("table lock: nightly job","c"),wr("c","c"),[A(232,72,298,72,"locks","c")])}
+]},
+esc:{name:"bulk update on swaps",st:[
+ {t:"A bulk update locks rows one by one",pc:["update every swap of pool 42: rows 0 to 5,999", "  lock_row(bulk, row)        # one X row lock each, the count climbs"],b:"One UPDATE changes every swap of pool 42: rows 0 to 5,999. Each lock_row puts IX on the table and an exclusive lock on the row. The count of row locks climbs.",w:"Each row lock costs memory in the lock manager.",d:[B(30,50,300,"bulk update: 1,000 locks","w",44),F(200,130,500,160,"table swaps")].concat(cells(40,"w"),[B(720,200,150,"app writer","s",40)])},
+ {t:"5,000 locks: the engine escalates",pc:["  if row locks held >= 5,000: escalate", "escalate: drop the row locks, take X on the whole table"],b:"In SQL Server, at about 5,000 locks held by one statement, the engine swaps all the row locks for one exclusive table lock. In the program the swap happens at lock 5,000: row locks drop to 0 and the bulk update owns the table.",w:"Memory is saved. The price: the whole table now belongs to one statement.",d:[B(30,50,300,"bulk update: table lock","w",44),F(200,130,500,160,"table swaps: locked by bulk update","w"),B(220,165,460,"one exclusive lock on the whole table","w",100),B(750,200,130,"app writer","s",40)]},
+ {t:"The failure: every other writer stalls",pc:["app: lock_row(900000) for pool 77 -> the table is owned: wait"],b:"The app tries to lock row 900000, a swap for pool 77. It touches no row the bulk update needs. lock_row finds the table owned by the bulk update and returns false. It waits anyway, because the whole table is locked.",w:"One bulk statement stalls every writer of a busy table until it commits.",d:[B(30,50,300,"bulk update: table lock","w",44),F(200,130,500,160,"table swaps: locked by bulk update","x"),B(220,165,460,"one exclusive lock on the whole table","w",100),B(750,170,130,"app writer","x",40),A(748,190,704,200,"","x",1),B(750,250,130,"app writer 2","x",40),A(748,270,704,250,"","x",1),T(750,320,"both waiting","x"),T(200,330,"every writer waits for one statement","x","start",16)]},
+ {t:"Fix: batches below the threshold",pc:["fix: batches of 1,000 rows, commit after each", "  at most 1,000 locks held: no escalation, the app never waits"],b:"Split the update into 6 batches of 1,000 rows, each its own short transaction. At most 1,000 locks are held at once, below 5,000, so escalations stay at 0. Every app lock between and during batches is granted.",w:"Smaller, shorter transactions keep row locks as row locks.",d:[B(30,50,300,"batch 1 of 20: 1,000 locks","w",44),F(200,130,500,160,"table swaps")].concat(cells(40,"w"),[B(720,200,150,"app writer","c",40),T(720,270,"writes go on","c")])},
+ {t:"PostgreSQL: no escalation",pc:["PostgreSQL: the lock is stored in the row itself", "  no lock table entry per row, so nothing to escalate"],b:"PostgreSQL keeps a row lock inside the row itself, not in a lock table. The program locks 6,000 rows with 0 lock table entries. Nothing runs out of lock memory, so it never escalates.",w:"Know your engine. In PostgreSQL the stall to watch is ALTER TABLE, which waits for every reader.",d:[B(30,50,300,"bulk update: 50,000 row locks","w",44),F(200,130,500,160,"table swaps: row locks only")].concat(cells(80,"w"),[B(720,200,150,"app writer","c",40),T(720,270,"writes go on","c")])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

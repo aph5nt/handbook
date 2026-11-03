@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Threat Model</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Threat modelling and audit logs</h1>
+  <p class="lede">A team draws the path from an agent host to a tool proxy to the lanes, and walks STRIDE at each boundary before it ships. Press <b>Next</b> to walk it, then open the second tab to see what the audit log must and must not hold.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="stride">STRIDE walk</button>
+    <button role="tab" aria-selected="false" data-mode="audit">Audit log</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated STRIDE walk at a trust boundary, and an audit log recording calls</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-threat-model-audit-log/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">boundary not walked yet</span>
+    <span style="--c:var(--ok)">question answered, or recorded</span>
+    <span style="--c:var(--fail)">finding, or a hole</span>
+    <span style="--c:var(--line)">not touched</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a threat model</h2>
+      <p>Agent tool servers: host, proxy, lanes, with the boundaries marked. Run STRIDE at each boundary on design, and again for every new integration or credential.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet an audit log</h2>
+      <p>Every privileged call. Production changes as merged pull requests, so git history is the log. Under GDPR (General Data Protection Regulation), a label naming a person turns an address into PII (Personally Identifiable Information).</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Threat model</th><th>Audit log</th></tr>
+      <tr><td>When</td><td>Before it ships, and at every new boundary</td><td>Every privileged call, always</td></tr>
+      <tr><td>Answers</td><td>What could go wrong here?</td><td>What did happen?</td></tr>
+      <tr><td>Output</td><td>Tickets with owners, accepted risks with dates</td><td>Caller, action, target, result</td></tr>
+      <tr><td>Classic failure</td><td>Done once, never again</td><td>Secrets or personal data in the log</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I draw the boundaries, ask the six STRIDE questions at each, and keep an audit log that proves what happened."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"stride":[["w", "Web pages", "fail"], ["h", "Agent host", "coord"], ["p", "Tool proxy", "svc"], ["l", "Lanes", "svc"]],
+"audit":[["a", "Agent", "coord"], ["p", "Tool proxy", "svc"], ["s", "Staging lane", "svc"], ["l", "Audit log", "svc"]]
+};
+const code={
+"stride": {
+"label": "Go",
+"pc": [
+"draw the flows; each step into more trust is a boundary",
+"walk(boundary, controls): for each letter S T R I D E",
+"  ask its question: who calls? what signs? what is logged?",
+"                    what leaves? what limits? what can a lower identity reach?",
+"  if no control answers it: finding with an owner",
+"I fix: fetch tool refuses private, loopback, link-local addresses",
+"D fix: rate limit per host;  E fix: production is read only",
+"each finding: a ticket with an owner, or an accepted risk with a review date",
+"unwalked(boundaries): every boundary created after its last walk",
+"  -> walk it again before it ships"
+],
+"real": [
+"type boundary struct {",
+"\tfrom, to   string",
+"\tcreatedDay int",
+"\twalkedDay  int // 0 means never walked",
+"}",
+"",
+"// walk asks the six STRIDE questions for one boundary. Every answer that is",
+"// not yet a control becomes a finding with an owner or a review date.",
+"func walk(b boundary, controls map[string]string) []finding {",
+"\tquestions := map[string]string{\"S\": \"who is calling?\", \"T\": \"what signs the data?\",",
+"\t\t\"R\": \"what is logged?\", \"I\": \"what leaves, and to whom?\",",
+"\t\t\"D\": \"what limits exist?\", \"E\": \"what can a lower identity reach?\"}",
+"\tvar out []finding",
+"\tfor _, l := range []string{\"S\", \"T\", \"R\", \"I\", \"D\", \"E\"} {",
+"\t\tif controls[l] == \"\" {",
+"\t\t\tout = append(out, finding{l, questions[l], \"owner: proxy team\", \"\"})",
+"\t\t}",
+"\t}",
+"\treturn out",
+"}",
+"",
+"// fetchAllowed is the I fix: the read-only fetch tool refuses private ranges.",
+"func fetchAllowed(ip string) bool {",
+"\ta := netip.MustParseAddr(ip)",
+"\treturn !(a.IsPrivate() || a.IsLoopback() || a.IsLinkLocalUnicast())",
+"}",
+"",
+"// unwalked is the failure check: a boundary created after its last walk.",
+"func unwalked(bs []boundary) []string {",
+"\tvar out []string",
+"\tfor _, b := range bs {",
+"\t\tif b.walkedDay < b.createdDay {",
+"\t\t\tout = append(out, b.from+\" -> \"+b.to)",
+"\t\t}",
+"\t}",
+"\treturn out",
+"}"
+],
+"map": {
+"1": [
+1,
+2
+],
+"2": [
+9,
+14
+],
+"3": [
+10,
+11
+],
+"4": [
+11,
+12
+],
+"5": [
+15,
+16
+],
+"6": [
+23,
+25
+],
+"7": [
+15
+],
+"8": [
+16
+],
+"9": [
+29,
+32
+],
+"10": [
+33
+]
+}
+},
+"audit": {
+"label": "Go",
+"pc": [
+"on every privileged call, allowed or denied:",
+"  id = first 4 hex of sha256(token)          # an id, never the token",
+"  append 'caller token:id action target result'",
+"the log has append only: no edit, no delete",
+"search the log for a target: who changed staging?",
+"# careless: append 'token=<full token> owner=<a name>'",
+"keep it longer than debug logs; for production, git history is the log",
+"# fixed: the same line holds the 4-character id and the case id only"
+],
+"real": [
+"type auditLog struct{ lines []string } // append only: there is no delete",
+"",
+"// record writes caller, action, target, result. Secrets are reduced to an id.",
+"func (l *auditLog) record(caller, action, target, result, token string) {",
+"\tid := fmt.Sprintf(\"%x\", sha256.Sum256([]byte(token)))[:4]",
+"\tl.lines = append(l.lines, fmt.Sprintf(\"%s token:%s %s %s %s\", caller, id, action, target, result))",
+"}",
+"",
+"// recordCareless is the failure: the full token and a person's name.",
+"func (l *auditLog) recordCareless(caller, action, token, ownerName string) {",
+"\tl.lines = append(l.lines, fmt.Sprintf(\"%s %s token=%s owner=%s\", caller, action, token, ownerName))",
+"}",
+"",
+"func (l *auditLog) find(word string) []string {",
+"\tvar out []string",
+"\tfor _, s := range l.lines {",
+"\t\tif strings.Contains(s, word) {",
+"\t\t\tout = append(out, s)",
+"\t\t}",
+"\t}",
+"\treturn out",
+"}"
+],
+"map": {
+"1": [
+4
+],
+"2": [
+5
+],
+"3": [
+6
+],
+"4": [
+1
+],
+"5": [
+14,
+17
+],
+"6": [
+10,
+11
+],
+"7": [
+1
+],
+"8": [
+5,
+6
+]
+}
+}
+};
+const steps={
+"stride":[
+ {"t": "Draw the flows", "b": "Web pages feed the agent host. The host calls the tool proxy. The proxy calls the lanes. Each arrow that crosses into more trust is a boundary.", "w": "You cannot defend a boundary you never drew.", "m": [["w", "h", 120, "untrusted text"], ["h", "p", 155, "tool calls"], ["p", "l", 190, "reads, staging writes"], ["band", 0, 235, "trust boundary one: host to proxy", "wait"]], "st": {"h": ["untrusted input", "wait"], "p": ["boundary one", "wait"]}, "pc": [1]},
+ {"t": "S, T, R", "b": "walk asks the S, T and R questions for the host to proxy boundary. Each has a control: a token per host, signed releases, the audit log. No finding.", "w": "Three of the six STRIDE questions, asked at this one boundary.", "m": [["band", 0, 120, "Spoofing: token per host. Tampering: signed releases", "ok"], ["band", 0, 165, "Repudiation: every call goes to the audit log", "ok"]], "st": {"h": ["untrusted input", "wait"], "p": ["S T R answered", "ok"]}, "pc": [2, 3, 5]},
+ {"t": "I: information disclosure", "b": "The I question has no control yet. The team tries the read-only fetch tool with http://10.0.0.5/admin and the internal page comes back. That is a finding with an owner, the proxy team.", "w": "A finding. A read-only tool can still leak the inside of the network.", "m": [["h", "p", 130, "fetch http://10.0.0.5/admin", "fail"], ["p", "l", 165, "internal page", "fail"]], "st": {"h": ["untrusted input", "wait"], "p": ["finding!", "fail"], "l": ["inside exposed", "fail"]}, "ac": {"p": "fail"}, "pc": [4, 5]},
+ {"t": "Fix before it ships", "b": "The proxy now resolves the address and refuses private ranges. 10.0.0.5 is private, so fetchAllowed is false. A public address such as 93.184.215.14 still passes.", "w": "The finding cost an afternoon. After launch it would have been an incident.", "m": [["h", "p", 130, "fetch http://10.0.0.5/admin", "fail"], ["p", "h", 165, "refused: private range"]], "st": {"p": ["allow-list", "ok"], "l": ["untouched", "ok"]}, "pc": [6]},
+ {"t": "D and E", "b": "D gets a rate limit per host and E gets production read only. With all six letters answered, walk returns 0 open findings.", "w": "The last two questions. Each answer is a rule in code.", "m": [["band", 0, 120, "Denial of service: rate limit per host", "ok"], ["p", "l", 165, "production write?", "fail"], ["band", 0, 210, "Elevation: never. Production is read only", "ok"]], "st": {"p": ["S T R I D E done", "ok"], "l": ["prod read only", "ok"]}, "pc": [4, 7]},
+ {"t": "Every finding has an owner", "b": "Each finding becomes a ticket with an owner, or an accepted risk with a review date.", "w": "A finding with no owner is a note, not a fix.", "m": [["band", 0, 130, "ticket with an owner, or accepted risk with a review date", "ok"]], "st": {"p": ["tickets filed", "ok"]}, "pc": [8]},
+ {"t": "The failure: done once", "b": "On day 30 a payments integration adds the boundary proxy to payments API. Its last walk is day 0, before day 30, so unwalked lists it. It is walked before it ships.", "w": "A threat model done once at design goes stale with the first new arrow.", "m": [["h", "p", 120, "new integration", "fail"], ["band", 0, 165, "new boundary, never walked", "fail"], ["band", 0, 215, "fix: repeat the walk on every new boundary", "ok"]], "st": {"p": ["stale model", "fail"]}, "pc": [9, 10]}
+],
+"audit":[
+ {"t": "A privileged call", "b": "The agent changes a staging setting through the proxy. The proxy applies it.", "w": "This is a privileged call. It must be provable later.", "m": [["a", "p", 120, "write staging config"], ["p", "s", 155, "apply"], ["s", "p", 185, "ok"]], "st": {"a": ["done", "ok"], "s": ["changed", "ok"]}, "pc": [1]},
+ {"t": "Log caller, action, target, result", "b": "record hashes the token with SHA-256 and keeps the first 4 hex characters, 8d20. The line is agent-7 token:8d20 write staging/config ok.", "w": "Four fields answer the question an auditor asks: who did what to what, and did it work.", "m": [["p", "l", 130, "agent-7, write, staging, ok"]], "st": {"s": ["changed", "ok"], "l": ["1 entry", "ok"]}, "pc": [1, 2, 3]},
+ {"t": "Denied calls too", "b": "The write to production is refused, and record runs for the refusal too: agent-7 token:8d20 write production/config denied.", "w": "A refusal is evidence too: it shows the wall held, and who pushed on it.", "m": [["a", "p", 120, "write production", "fail"], ["p", "a", 150, "denied"], ["p", "l", 185, "agent-7, write, prod, denied"]], "st": {"a": ["refused", "fail"], "l": ["2 entries", "ok"]}, "pc": [1, 3]},
+ {"t": "A week later", "b": "A week later someone searches the log for staging. One line comes back: agent-7 wrote staging/config, ok.", "w": "Without it, nobody can say what happened. That is the R in STRIDE: repudiation.", "m": [["band", 0, 130, "who changed staging? agent-7, write, ok", "ok"]], "st": {"l": ["answers", "ok"]}, "pc": [5]},
+ {"t": "The failure: values in the log", "b": "The careless version writes token= and the full token, and owner= and a person's name. Anyone who reads the log can now replay the token.", "w": "The audit trail is now a secret store and a personal data store, kept for years.", "m": [["p", "l", 130, "token=eyJh..., owner: a name", "fail"]], "st": {"l": ["secret + PII", "fail"]}, "ac": {"l": "fail"}, "pc": [6]},
+ {"t": "Log identifiers, not values", "b": "The fix keeps only the 4-character token id and the case id. That is enough to investigate, and useless to a thief.", "w": "An id is enough to investigate. The value is never needed in the log.", "m": [["p", "l", 130, "token id 8d20, case 202"]], "st": {"l": ["ids only", "ok"]}, "pc": [8, 2]},
+ {"t": "Append-only, kept longer", "b": "The log is append-only and kept longer than debug logs. For production changes, the merged pull request is the audit log.", "w": "A log anyone can edit proves nothing.", "m": [["band", 0, 130, "append-only, long retention, git history for prod", "ok"]], "st": {"l": ["append-only", "ok"]}, "pc": [4, 7]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

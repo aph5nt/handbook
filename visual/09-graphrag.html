@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GraphRAG walk</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>GraphRAG: answer by walking real links</h1>
+  <p class="lede">An investigator asks who is behind a wallet that created 3,000 agent tokens. No text chunk holds that answer. The answer is a walk: the creator, its funders, the exchange both funders used. Watch the walk collect rows on the right. Then switch tabs to see a walk follow a link that a model guessed.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Walk the chain facts</button>
+    <button role="tab" aria-selected="false" data-mode="bad">A graph built from guesses</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">A creator wallet, two funders and an exchange hot wallet, with a panel of rows for the model</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g fill="none" stroke-width="3" marker-end="url(#arr)">
+        <path id="e-tok" class="edge" stroke="var(--line)" d="M115 216 L115 296"/>
+        <path id="e-cfa" class="edge" stroke="var(--line)" d="M190 180 L256 112"/>
+        <path id="e-cfb" class="edge" stroke="var(--line)" d="M190 204 L256 272"/>
+        <path id="e-fax" class="edge" stroke="var(--line)" d="M410 112 L470 176"/>
+        <path id="e-fbx" class="edge" stroke="var(--line)" d="M410 272 L470 210"/>
+      </g>
+      <g id="dist" class="msg" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 5">
+        <path d="M410 88 L456 50"/><path d="M410 296 L456 338"/>
+      </g>
+      <g id="guess" class="msg" fill="none" stroke-width="3" stroke-dasharray="8 5" marker-end="url(#arr)">
+        <path id="e-cz" class="edge" stroke="var(--line)" d="M192 192 L256 192"/>
+        <path id="e-zy" class="edge" stroke="var(--line)" d="M372 214 L470 322"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="12" fill="var(--muted)">
+        <text x="214" y="132" text-anchor="end">funded by</text><text x="252" y="296" text-anchor="end">funded by</text>
+        <text x="446" y="130">withdrew from</text><text x="446" y="262">withdrew from</text>
+        <text x="123" y="262">created</text>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="g-cre" class="box" x="40" y="170" width="150" height="44" rx="10" fill="var(--line)"/><text x="115" y="197" fill="var(--fg)">Creator wallet</text>
+        <rect id="g-tok" class="box" x="40" y="300" width="150" height="44" rx="10" fill="var(--line)"/><text x="115" y="327" fill="var(--fg)" font-size="14">3,000 agent tokens</text>
+        <rect id="g-fa" class="box" x="260" y="80" width="150" height="44" rx="10" fill="var(--line)"/><text x="335" y="107" fill="var(--fg)">Funder A</text>
+        <rect id="g-fb" class="box" x="260" y="260" width="150" height="44" rx="10" fill="var(--line)"/><text x="335" y="287" fill="var(--fg)">Funder B</text>
+        <rect id="g-ex" class="box" x="460" y="170" width="140" height="44" rx="10" fill="var(--line)"/><text x="530" y="190" fill="var(--fg)" font-size="13">Exchange</text>
+        <text x="530" y="206" font-size="13" fill="var(--fg)" id="ex-sub">hot wallet</text>
+        <rect id="g-mod" class="box" x="630" y="336" width="250" height="44" rx="22" fill="var(--line)"/><text x="755" y="363" fill="var(--fg)">Model writes the answer</text>
+      </g>
+      <g id="distn" class="msg" font-family="Atkinson Hyperlegible,system-ui" font-size="13" text-anchor="middle">
+        <rect x="460" y="14" width="140" height="36" rx="8" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 5"/><text x="530" y="37" fill="var(--muted)">DEX pool</text>
+        <rect x="460" y="330" width="140" height="36" rx="8" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 5"/><text x="530" y="353" fill="var(--muted)">other wallet</text>
+        <text id="nf" x="530" y="66" fill="var(--muted)" font-size="12"></text>
+      </g>
+      <g id="guessn" class="msg" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="g-z" class="box" x="260" y="170" width="112" height="44" rx="10" fill="var(--line)" stroke="var(--fail)" stroke-dasharray="5 4" stroke-width="2"/><text x="316" y="197" fill="var(--fg)">Wallet Z</text>
+        <rect id="g-y" class="box" x="460" y="326" width="140" height="44" rx="10" fill="var(--line)" stroke="var(--fail)" stroke-dasharray="5 4" stroke-width="2"/><text x="530" y="353" fill="var(--fg)">Exchange Y</text>
+        <text x="224" y="160" font-size="12" font-weight="400" fill="var(--fail)">owned by?</text>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14">
+        <text x="630" y="30" font-weight="700" fill="var(--fg)">Rows for the model</text>
+        <rect x="630" y="40" width="250" height="280" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <g id="rows"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-graphrag/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">anchor: the one known entity</span>
+    <span style="--c:var(--wait)">link being walked now</span>
+    <span style="--c:var(--ok)">a chain fact collected</span>
+    <span style="--c:var(--fail)">a guessed link, or a wrong answer</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A graph sync copies chain facts from StarRocks (a columnar warehouse) into DozerDB (a Neo4j-compatible graph database). An agent walks it through <code>graph_query</code>, anchored on one address. Questions that are walks, "who is connected to whom, through what", belong here.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Build the graph from records, not from a model reading text. Anchor every walk, cap the hops and the time. Combine with text chunks when the answer also needs free-text detail. If you must extract a graph from text, give the extraction its own eval before anyone walks it.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>GraphRAG</th><th>Vector RAG (text chunks)</th></tr>
+      <tr><td>Finds</td><td>Connected facts, hop by hop</td><td>Chunks that sound like the question</td></tr>
+      <tr><td>Good at</td><td>Multi-hop questions: who is behind, who is linked</td><td>One-chunk questions: what does the policy say</td></tr>
+      <tr><td>Main failure</td><td>Walking links that a model guessed</td><td>The answer spread over chunks that never meet</td></tr>
+      <tr><td>Limit you set</td><td>An anchor, a hop cap, a time limit</td><td>Top k chunks, chunk size</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"GraphRAG answers multi-hop questions by walking real relations, and the graph is only as true as what built it."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const T0={nf:""};
+const steps={
+"ok":[
+ {t:"The question, and a text search that fails",b:"Who is behind the wallet that made 3,000 agent tokens? A search over text chunks returns five chunks about agent tokens. None names a funder.",w:"The answer is not written anywhere. It is spread across links between wallets.",box:{},ed:{},show:["dist","distn"],rows:[["text search: 5 chunks, no funder named","fail"]]},
+ {t:"Anchor on the one known entity",b:"The walk starts from the creator wallet, the only thing the question names. Its 3,000 token creations hang off it.",w:"An anchor keeps the search small. A walk from everywhere is a scan of the whole graph.",box:{"g-cre":"coord","g-tok":"svc"},ed:{"e-tok":"svc"},show:["dist","distn"],rows:[["anchor: creator wallet","coord"]]},
+ {t:"Hop 1: who funded it",b:"The walk follows the funded-by links. Two wallets sent the creator its first money: Funder A and Funder B.",w:"Each link is a real transfer on chain, with a block and a time.",box:{"g-cre":"coord","g-fa":"ok","g-fb":"ok"},ed:{"e-cfa":"wait","e-cfb":"wait"},show:["dist","distn"],rows:[["Funder A funded the creator","ok"],["Funder B funded the creator","ok"]]},
+ {t:"Hop 2: where the funders got it",b:"From each funder, the walk follows withdrew-from. Both funders withdrew from the same exchange hot wallet.",w:"Two separate paths meet at one node. That meeting is the answer no chunk held.",box:{"g-cre":"coord","g-fa":"ok","g-fb":"ok","g-ex":"ok"},ed:{"e-cfa":"ok","e-cfb":"ok","e-fax":"wait","e-fbx":"wait"},show:["dist","distn"],rows:[["Funder A withdrew from the hot wallet","ok"],["Funder B withdrew from the same one","ok"]]},
+ {t:"The walk stops at its limits",b:"The funders also touched a DEX pool and other wallets. The walk keeps only the link kinds that answer the question, its hop cap is 2, and it has a 10 second limit, so it does not wander out to them.",w:"A hop cap and a time limit are what keep a graph search from becoming a full scan.",box:{"g-cre":"coord","g-fa":"ok","g-fb":"ok","g-ex":"ok"},ed:{"e-cfa":"ok","e-cfb":"ok","e-fax":"ok","e-fbx":"ok"},show:["dist","distn"],txt:{nf:"not followed: wrong link kind"},rows:[["stopped: 2 hops, inside 10 s","muted"]]},
+ {t:"The rows go to the model",b:"The connected facts, 5 rows (1 created, 2 funded by, 2 withdrew from), are pasted into the model's context with the question.",w:"The model reads facts, not guesses. Its job is now only to write them up.",box:{"g-mod":"coord","g-ex":"ok"},ed:{"e-cfa":"ok","e-cfb":"ok","e-fax":"ok","e-fbx":"ok"},show:["dist","distn"],rows:[]},
+ {t:"The answer",b:"The model writes: both funders of the creator wallet withdrew from one exchange hot wallet. That exchange can name its customer.",w:"Retrieval found the path. The model only put it into words.",box:{"g-mod":"ok","g-ex":"ok","g-cre":"coord"},ed:{"e-cfa":"ok","e-cfb":"ok","e-fax":"ok","e-fbx":"ok"},show:["dist","distn"],rows:[["answer: both funders, one exchange","ok"]]}
+],
+"bad":[
+ {t:"A graph built by a model",b:"This time the graph was built by a model reading forum posts. It turned sentences into links, with no check.",w:"Every link it wrote is a guess that looks exactly like a fact.",box:{},ed:{},show:["guess","guessn"],rows:[["graph source: forum text, model extracted","wait"]]},
+ {t:"A guessed link",b:"One post said the creator 'looks like Wallet Z'. The model stored it as a link: creator owned by Wallet Z.",w:"'Looks like' became 'owned by'. The doubt was lost in extraction.",box:{"g-cre":"coord","g-z":"wait"},ed:{"e-cz":"fail"},show:["guess","guessn"],rows:[["creator owned by Wallet Z (guessed)","fail"]]},
+ {t:"The walk follows the guess",b:"The walk goes creator, Wallet Z, then another extracted link to Exchange Y. Every hop is a guess built on a guess.",w:"A walk multiplies errors. Two guessed hops are less likely to be true than one.",box:{"g-cre":"coord","g-z":"fail","g-y":"wait"},ed:{"e-cz":"fail","e-zy":"fail"},show:["guess","guessn"],rows:[["Wallet Z used Exchange Y (guessed)","fail"]]},
+ {t:"A confident wrong answer",b:"The model writes: 'Behind the creator is Exchange Y.' It reads well. It is wrong, and the investigator cannot tell.",w:"The model was honest about its rows. The rows were not honest.",box:{"g-mod":"fail","g-y":"fail"},ed:{"e-cz":"fail","e-zy":"fail"},show:["guess","guessn"],rows:[["answer: Exchange Y (wrong)","fail"]]},
+ {t:"The fix: build from records",b:"Rebuild the graph from chain records. Every link is a transfer with a block and a time. The guessed links are gone and the real walk finds Funder A, Funder B and the hot wallet.",w:"In a blockchain system the graph is true by construction.",box:{"g-cre":"coord","g-fa":"ok","g-fb":"ok","g-ex":"ok","g-mod":"ok"},ed:{"e-cfa":"ok","e-cfb":"ok","e-fax":"ok","e-fbx":"ok"},show:[],rows:[["graph source: chain records","ok"],["answer: both funders, one exchange","ok"]]},
+ {t:"When you must extract: eval it first",b:"Some graphs can only come from text: contracts, reports, news. Then the extraction gets its own golden set of known links, and you score it before anyone walks it.",w:"An extracted graph is a set of guesses until an eval says how many are right.",box:{"g-mod":"ok"},ed:{"e-cfa":"ok","e-cfb":"ok","e-fax":"ok","e-fbx":"ok"},show:[],rows:[["golden set: known links, checked","coord"],["score the extraction, then walk","coord"]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  const g=$("rows");g.innerHTML="";let n=0;
+  for(let k=0;k<=i;k++)for(const r of list[k].rows){
+    const y=48+n*30;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="636" y="${y}" width="238" height="26" rx="4" fill="${col}" opacity=".18"/><rect x="636" y="${y}" width="5" height="26" fill="${col}"/><text x="648" y="${y+18}" font-size="12" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");r.nextElementSibling.setAttribute("fill","var(--fg)");});
+  $("ex-sub").setAttribute("fill","var(--fg)");
+  for(const k in s.box||{}){const r=$(k);r.setAttribute("fill",`var(--${s.box[k]})`);r.nextElementSibling.setAttribute("fill","#fff");if(k==="g-ex")$("ex-sub").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  document.querySelectorAll("#stage-title ~ g.msg, svg > g.msg").forEach(m=>m.classList.toggle("on",(s.show||[]).includes(m.id)));
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});for(const k in tx)$(k).textContent=tx[k];
+  paintRows(list);
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+
+const CODE={"label": "Python", "pc": ["text search: chunks hold words, no links", "start from the one entity the question names", "for each hop: follow links out of the frontier", "keep only the link kinds that answer the question", "stop at the hop cap (2) and the time limit", "give the connected rows to the model", "every link must be a record with a source    # never a guess", "links from text: score the extraction on a golden set first"], "real": ["HOP_CAP = 2", "TIME_LIMIT_S = 10", "", "", "def text_search(question):  # chunks hold words, no links", "    return [c for c in TEXT_CHUNKS if \"agent tokens\" in question][:5]", "", "", "def walk(graph, anchor, trusted=(\"chain\",)):  # start from the known entity", "    rows, frontier = [], {anchor}", "    deadline = time.monotonic() + TIME_LIMIT_S", "    for hop in range(HOP_CAP):  # stops at the hop cap", "        if time.monotonic() > deadline:  # the time limit", "            break", "        next_frontier = set()", "        for src, kind, dst, source in graph:", "            if src in frontier and kind in FOLLOW:  # only the links that answer", "                if source not in trusted:  # a link must be a record", "                    continue", "                rows.append((src, kind, dst))", "                next_frontier.add(dst)", "        frontier = next_frontier", "    return rows", "", "", "def graph_answer(graph, anchor, **kw):", "    rows = walk(graph, anchor, **kw)  # connected facts, not chunks", "    return rows, fake_model(rows)", "", "", "def score_extraction(extracted, golden):", "    hits = sum(1 for l in extracted if l[:3] in golden)", "    return hits / len(extracted)  # score before anyone walks it"], "map": {"5": [1, 2, 11, 12, 13, 14, 23], "1": [5, 6], "2": [9, 10], "3": [12, 15, 16, 21, 22], "4": [17, 20], "7": [18, 19], "6": [27, 28], "8": [31, 32, 33]}, "path": "handbook/code/09-graphrag/main.py", "cmd": "python3 main.py", "note": ""},PCS={"ok": [[1], [2], [3, 4], [3, 4], [5], [6], [6]], "bad": [[7], [7], [3, 4], [6], [7], [8]]};
+for(const t in PCS)PCS[t].forEach((p,k)=>{steps[t][k].pc=p;});
+let codeView="pc";
+function cesc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE,pc=(steps[mode][i].pc)||[];
+  const v=(codeView==="alt"&&!c.alt)?"real":codeView;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=cesc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const __render=render;render=function(){__render();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{codeView=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

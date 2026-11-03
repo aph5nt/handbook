@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UUID or sequential keys</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>UUID or sequential keys: where a new key lands</h1>
+  <p class="lede">An order service in PostgreSQL inserts orders. Each new key must go into the B-tree index, a row of sorted pages. Watch where a sequential key lands, then where a random UUIDv4 (Universally Unique Identifier, version 4) lands once the index no longer fits in memory.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="seq">Sequential BIGINT</button>
+    <button role="tab" aria-selected="false" data-mode="v4">Random UUIDv4, then UUIDv7</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">UUID or sequential keys: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">index page in memory</span>
+    <span style="--c:var(--line)">index page on disk only</span>
+    <span style="--c:var(--ok)">the new key lands here</span>
+    <span style="--c:var(--wait)">page read from disk</span>
+    <span style="--c:var(--fail)">page split or the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>App tables in PostgreSQL keep a <code>BIGINT</code> identity as the key inside and show a UUID in URLs. Event ids made before the insert, for idempotency or on a phone that is offline, use UUIDv7. Chain data already has a unique natural key, <code>tx_hash</code>.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>If the database can hand out ids, use a <code>BIGINT</code>. If ids must be made outside the database, use UUIDv7: it starts with a millisecond timestamp, so new keys land at the end of the index like a counter. Avoid UUIDv4 as the primary key of a big B-tree table.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>BIGINT identity</th><th>UUIDv4</th><th>UUIDv7</th></tr>
+      <tr><td>Size</td><td>8 bytes</td><td>16 bytes</td><td>16 bytes</td></tr>
+      <tr><td>Made by</td><td>The database</td><td>Anyone, anywhere</td><td>Anyone, anywhere</td></tr>
+      <tr><td>Where a new key lands</td><td>The last index page</td><td>A random index page</td><td>Near the last index page</td></tr>
+      <tr><td>Leaks a count</td><td>Yes: order 1005 means about a thousand orders</td><td>No</td><td>Only the creation time</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Sequential keys append and random keys scatter, so when ids must be made outside the database I use UUIDv7: unique, and still sorted by time."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const pg=(labs,ks,notes,extra)=>{const o=[T(20,190,"B-tree index: leaf pages in key order","f","start",15)];labs.forEach((l,j)=>{o.push(B(20+110*j,205,100,l,ks[j]||"n",44));if(notes&&notes[j])o.push(T(70+110*j,272,notes[j],notes[j]==="split"||notes[j]==="half"?"x":"m","middle"));});return o.concat(extra||[]);};
+const SL=["1-100","101-200","201-300","301-400","401-500","501-600","601-660"];
+const VL=["00-1f","20-3f","40-5f","60-7f","80-9f","a0-bf","c0-df","e0-ff"];
+const mem=T(20,320,"memory holds 2 pages: the index is bigger than memory","m","start",14);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-uuid-vs-sequential-keys/main.go</code> keeps the leaf pages of one B-tree index, 100 keys a page, with room for 2 pages in memory. It inserts counter, UUIDv4 and UUIDv7 keys and prints every disk read, split and fill quoted here (<code>go run .</code>).";
+const CODE={
+seq:{pc:["index: leaf pages of 100 keys in key order, memory holds 2 pages", "insert(key):", "  page = the page whose range holds key", "  not in memory: read it from disk         # the oldest cached page goes", "  full, key past its end: a new page at the right edge", "  full, key in the middle: split into two half-empty pages", "  put key on the page in sorted order", "start: 7 pages, last page 601-660 not full", "counter: 661 lands on the last page, in memory", "662 to 700: the same last page, now 100 keys", "701: a new page 701, nothing split", "phone, offline: make a UUID, no database needed", "/orders/1005 and /orders/1405: about 400 a week"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Index is the leaf level of a B-tree plus the pages cached in memory.", "type Index struct {", "\tpages     []*Page // in key order", "\tcapacity  int     // keys per page", "\tcache     []*Page // most recently used first", "\tcacheSize int", "\talign     int // a split boundary is rounded down to this", "\tdiskReads int", "\tsplits    int", "}"],[""],["// touch brings a page into memory. A page not in memory is a disk read,", "// and the least recently used page is pushed out.", "func (ix *Index) touch(p *Page) (diskRead bool) {", "\tfor i, c := range ix.cache {", "\t\tif c == p {", "\t\t\tix.cache = append([]*Page{p}, append(ix.cache[:i:i], ix.cache[i+1:]...)...)", "\t\t\treturn false", "\t\t}", "\t}", "\tix.diskReads++", "\tix.cache = append([]*Page{p}, ix.cache...)", "\tif len(ix.cache) > ix.cacheSize {", "\t\tix.cache = ix.cache[:ix.cacheSize]", "\t}", "\treturn true", "}"],[""],["func (ix *Index) remember(p *Page) {", "\tix.cache = append([]*Page{p}, ix.cache...)", "\tif len(ix.cache) > ix.cacheSize {", "\t\tix.cache = ix.cache[:ix.cacheSize]", "\t}", "}"],[""],["// Insert puts a key on the page where it belongs in key order.", "func (ix *Index) Insert(key int) (p *Page, diskRead, split bool) {", "\ti, p := ix.find(key)", "\tdiskRead = ix.touch(p)", "\tif len(p.keys) == ix.capacity {", "\t\tlast := i == len(ix.pages)-1 && key > p.keys[len(p.keys)-1]", "\t\tif last {", "\t\t\t// Right edge: start a new page. The full page stays full.", "\t\t\tnp := &Page{lo: key, hi: p.hi}", "\t\t\tp.hi = key - 1", "\t\t\tix.pages = append(ix.pages, np)", "\t\t\tix.remember(np)", "\t\t\tp = np", "\t\t} else {", "\t\t\t// Middle: split the full page into two half-empty pages.", "\t\t\tmid := p.keys[len(p.keys)/2] / ix.align * ix.align", "\t\t\tcut := sort.SearchInts(p.keys, mid)", "\t\t\tright := &Page{lo: mid, hi: p.hi, keys: append([]int{}, p.keys[cut:]...)}", "\t\t\tp.hi, p.keys = mid-1, p.keys[:cut]", "\t\t\tix.pages = append(ix.pages[:i+1], append([]*Page{right}, ix.pages[i+1:]...)...)", "\t\t\tix.splits++", "\t\t\tsplit = true", "\t\t\tif key >= mid {", "\t\t\t\tp = right", "\t\t\t}", "\t\t}", "\t}", "\tat := sort.SearchInts(p.keys, key)", "\tp.keys = append(p.keys[:at], append([]int{key}, p.keys[at:]...)...)", "\treturn p, diskRead, split", "}"],[""],["// newUUIDv4 is 122 random bits: no database needed, unique anyway.", "func newUUIDv4(r io.Reader) [16]byte {", "\tvar u [16]byte", "\tio.ReadFull(r, u[:])", "\tu[6] = u[6]&0x0f | 0x40 // version 4", "\tu[8] = u[8]&0x3f | 0x80", "\treturn u", "}"],[""],["func sequential() {", "\tfmt.Println(\"== key = BIGINT identity\")", "\tix := &Index{capacity: 100, cacheSize: 2, align: 1}", "\tfor lo := 1; lo <= 601; lo += 100 {", "\t\tp := &Page{lo: lo, hi: lo + 99}", "\t\tfor k := lo; k <= lo+99 && k <= 660; k++ {", "\t\t\tp.keys = append(p.keys, k)", "\t\t}", "\t\tix.pages = append(ix.pages, p)", "\t}", "\tlast := ix.pages[len(ix.pages)-1]", "\tlast.hi = math.MaxInt", "\tix.cache = []*Page{last, ix.pages[len(ix.pages)-2]}", "\tlastLabel := seqLabel(last)", "\tfmt.Printf(\"start: %d pages, last page %s holds %d keys\\n\", len(ix.pages), lastLabel, len(last.keys))", "", "\tp, read, _ := ix.Insert(661) // the next number from the counter", "\tfmt.Printf(\"insert 661: page %s, disk read %v\\n\", seqLabel(p), read)", "", "\tfor k := 662; k <= 700; k++ {", "\t\tix.Insert(k)", "\t}", "\tlabel := seqLabel(p)", "\tfmt.Printf(\"inserts 662-700: page %s holds %d keys, disk reads %d\\n\", label, len(p.keys), ix.diskReads)", "", "\tnp, read, split := ix.Insert(701)", "\tfmt.Printf(\"insert 701: page %s is full, new page %s at the right edge, disk read %v, split %v\\n\", seqLabel(p), seqLabel(np), read, split)", "", "\tfirst, later := 1005, 1405 // two order ids a customer sees a week apart", "\tfmt.Printf(\"/orders/%d on 1 March, /orders/%d on 8 March: about %d orders a week\\n\", first, later, later-first)", "}"]),
+  map:[["index: leaf pages","// Index is the leaf level..splits    int"],["insert(key):","func (ix *Index) Insert("],["page = the page whose range","i, p := ix.find(key)"],
+   ["not in memory: read it","diskRead = ix.touch(p)","// touch brings..return true"],["key past its end","last := i == len(ix.pages)-1..p = np"],["key in the middle: split","// Middle: split..split = true"],
+   ["put key on the page","at := sort.SearchInts(p.keys, key)..p.keys = append(p.keys[:at]"],["start: 7 pages","for lo := 1; lo <= 601..start: %d pages, last page"],["counter: 661","p, read, _ := ix.Insert(661)..insert 661"],["662 to 700","for k := 662..inserts 662-700"],
+   ["701: a new page","np, read, split := ix.Insert(701)..insert 701"],["phone, offline","// newUUIDv4 is 122..return u"],["/orders/1005","first, later := 1005..about %d orders"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["CREATE TABLE orders (",
+"  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,     -- the counter, kept inside",
+"  public_id UUID NOT NULL UNIQUE DEFAULT gen_random_uuid() -- made anywhere, shown in URLs",
+");",
+"INSERT INTO orders DEFAULT VALUES RETURNING id;           -- 661, 662, ..."],
+  map:[["index: leaf pages","CREATE TABLE orders (..);"],["insert(key):","INSERT INTO orders"],["counter: 661","INSERT INTO orders"],["662 to 700","INSERT INTO orders"],["701: a new page","INSERT INTO orders"],["start: 7 pages","id BIGINT GENERATED"],
+   ["phone, offline","public_id UUID"],["/orders/1005","public_id UUID"]]}]},
+v4:{pc:["index: leaf pages of 100 keys in key order, memory holds 2 pages", "insert(key):", "  page = the page whose range holds key", "  not in memory: read it from disk         # the oldest cached page goes", "  full, key past its end: a new page at the right edge", "  full, key in the middle: split into two half-empty pages", "  put key on the page in sorted order", "key = random UUIDv4                        # anywhere in the key range", "start: 8 pages, 40-5f and c0-df in memory", "insert 9f..: page 80-9f, a disk read", "insert 1c..: page 00-1f, a disk read", "insert e4..: page e0-ff is full: split", "10,000 v4 inserts: 9258 disk reads, pages 68% full", "UUIDv7 = millisecond time first, then random bits", "10,000 v7 inserts: 0 disk reads, pages 100% full"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// touch brings a page into memory. A page not in memory is a disk read,", "// and the least recently used page is pushed out.", "func (ix *Index) touch(p *Page) (diskRead bool) {", "\tfor i, c := range ix.cache {", "\t\tif c == p {", "\t\t\tix.cache = append([]*Page{p}, append(ix.cache[:i:i], ix.cache[i+1:]...)...)", "\t\t\treturn false", "\t\t}", "\t}", "\tix.diskReads++", "\tix.cache = append([]*Page{p}, ix.cache...)", "\tif len(ix.cache) > ix.cacheSize {", "\t\tix.cache = ix.cache[:ix.cacheSize]", "\t}", "\treturn true", "}"],[""],["// Insert puts a key on the page where it belongs in key order.", "func (ix *Index) Insert(key int) (p *Page, diskRead, split bool) {", "\ti, p := ix.find(key)", "\tdiskRead = ix.touch(p)", "\tif len(p.keys) == ix.capacity {", "\t\tlast := i == len(ix.pages)-1 && key > p.keys[len(p.keys)-1]", "\t\tif last {", "\t\t\t// Right edge: start a new page. The full page stays full.", "\t\t\tnp := &Page{lo: key, hi: p.hi}", "\t\t\tp.hi = key - 1", "\t\t\tix.pages = append(ix.pages, np)", "\t\t\tix.remember(np)", "\t\t\tp = np", "\t\t} else {", "\t\t\t// Middle: split the full page into two half-empty pages.", "\t\t\tmid := p.keys[len(p.keys)/2] / ix.align * ix.align", "\t\t\tcut := sort.SearchInts(p.keys, mid)", "\t\t\tright := &Page{lo: mid, hi: p.hi, keys: append([]int{}, p.keys[cut:]...)}", "\t\t\tp.hi, p.keys = mid-1, p.keys[:cut]", "\t\t\tix.pages = append(ix.pages[:i+1], append([]*Page{right}, ix.pages[i+1:]...)...)", "\t\t\tix.splits++", "\t\t\tsplit = true", "\t\t\tif key >= mid {", "\t\t\t\tp = right", "\t\t\t}", "\t\t}", "\t}", "\tat := sort.SearchInts(p.keys, key)", "\tp.keys = append(p.keys[:at], append([]int{key}, p.keys[at:]...)...)", "\treturn p, diskRead, split", "}"],[""],["// newUUIDv4 is 122 random bits: no database needed, unique anyway.", "func newUUIDv4(r io.Reader) [16]byte {", "\tvar u [16]byte", "\tio.ReadFull(r, u[:])", "\tu[6] = u[6]&0x0f | 0x40 // version 4", "\tu[8] = u[8]&0x3f | 0x80", "\treturn u", "}"],[""],["// newUUIDv7 starts with a 48-bit millisecond timestamp, then random bits.", "func newUUIDv7(ms int64, r io.Reader) [16]byte {", "\tvar u [16]byte", "\tio.ReadFull(r, u[6:])", "\tvar t [8]byte", "\tbinary.BigEndian.PutUint64(t[:], uint64(ms))", "\tcopy(u[:6], t[2:])", "\tu[6] = u[6]&0x0f | 0x70 // version 7", "\tu[8] = u[8]&0x3f | 0x80", "\treturn u", "}"],[""],["func random() {", "\tfmt.Println(\"== key = random UUIDv4, shown by the first two hex digits\")", "\trnd := rand.New(rand.NewSource(7))", "\tfmt.Printf(\"phone, offline, makes its own id: %s\\n\", uuidString(newUUIDv4(rnd)))", "", "\t// Eight pages of 32 first-byte values each. Page e0-ff is full.", "\tix := &Index{capacity: 100, cacheSize: 2, align: 256}", "\tfor lo := 0; lo < 0x10000; lo += 0x2000 {", "\t\tp := &Page{lo: lo, hi: lo + 0x1fff}", "\t\tn := 60", "\t\tif lo == 0xe000 {", "\t\t\tn = 100", "\t\t}", "\t\tfor i := 0; i < n; i++ {", "\t\t\tp.keys = append(p.keys, lo+i*82)", "\t\t}", "\t\tix.pages = append(ix.pages, p)", "\t}", "\tix.cache = []*Page{ix.pages[2], ix.pages[6]} // 40-5f and c0-df", "\ta, b := hexLabel(ix.cache[0]), hexLabel(ix.cache[1])", "\tfmt.Printf(\"start: %d pages, 2 in memory: %s and %s\\n\", len(ix.pages), a, b)", "", "\tfor _, k := range []int{0x9f12, 0x1c34} {", "\t\tp, read, _ := ix.Insert(k)", "\t\tlabel, a, b := hexLabel(p), hexLabel(ix.cache[0]), hexLabel(ix.cache[1])", "\t\tfmt.Printf(\"insert %02x..: page %s, disk read %v, now in memory %s and %s\\n\", k>>8, label, read, a, b)", "\t}", "", "\tfull := ix.pages[7]", "\tn := len(full.keys)", "\tp, read, split := ix.Insert(0xe4a0)", "\tright := ix.pages[8]", "\tleft, rightLabel := hexLabel(p), hexLabel(right)", "\tfmt.Printf(\"insert e4..: page e0-ff held %d keys, disk read %v, split %v: %s holds %d, %s holds %d\\n\", n, read, split, left, len(p.keys), rightLabel, len(right.keys))", "}"],[""],["// bulk inserts 10,000 keys into an empty index and counts the cost.", "func bulk(name string, next func(i int) int) {", "\tix := &Index{pages: []*Page{{lo: math.MinInt, hi: math.MaxInt}}, capacity: 100, cacheSize: 2, align: 1}", "\tix.cache = []*Page{ix.pages[0]}", "\tfor i := 0; i < 10000; i++ {", "\t\tix.Insert(next(i))", "\t}", "\tfill := ix.Fill()", "\tfmt.Printf(\"%s: 10000 inserts, %d disk reads, %d splits, %d pages, %d%% full\\n\", name, ix.diskReads, ix.splits, len(ix.pages), fill)", "}"],[""],["func main() {", "\tsequential()", "\tfmt.Println()", "\trandom()", "\tfmt.Println()", "\tfmt.Println(\"== the same 10,000 inserts, 2 pages in memory\")", "\tbulk(\"BIGINT counter\", func(i int) int { return i + 1 })", "\tr4 := rand.New(rand.NewSource(4))", "\tbulk(\"UUIDv4\", func(int) int { return key(newUUIDv4(r4)) })", "\tr7 := rand.New(rand.NewSource(7))", "\tstart := int64(1730600000000) // a millisecond clock", "\tbulk(\"UUIDv7\", func(i int) int { return key(newUUIDv7(start+int64(i), r7)) })", "\ta, b := newUUIDv7(start, r7), newUUIDv7(start+1, r7)", "\tsa, sb, less := uuidString(a), uuidString(b), key(a) < key(b)", "\tfmt.Printf(\"UUIDv7 %s < %s: %v\\n\", sa, sb, less)", "}"]),
+  map:[["index: leaf pages","// Eight pages of 32..ix.cache = []*Page{ix.pages[2]"],["insert(key):","func (ix *Index) Insert("],["page = the page whose range","i, p := ix.find(key)"],
+   ["not in memory: read it","diskRead = ix.touch(p)","// touch brings..return true"],["key past its end","last := i == len(ix.pages)-1..p = np"],["key in the middle: split","// Middle: split..split = true"],
+   ["put key on the page","at := sort.SearchInts(p.keys, key)..p.keys = append(p.keys[:at]"],["key = random UUIDv4","// newUUIDv4 is 122..return u"],["start: 8 pages","// Eight pages of 32..start: %d pages, 2 in memory"],
+   ["insert 9f..","for _, k := range []int{0x9f12, 0x1c34}..insert %02x..: page"],["insert 1c..","for _, k := range []int{0x9f12, 0x1c34}..insert %02x..: page"],["insert e4..","full := ix.pages[7]..insert e4..: page e0-ff held"],
+   ["10,000 v4 inserts","// bulk inserts..%d%% full","r4 := rand.New..bulk(\"UUIDv4\""],["UUIDv7 = millisecond","// newUUIDv7 starts..return u"],["10,000 v7 inserts","r7 := rand.New..UUIDv7 %s < %s"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- the trap: random UUIDv4 as the primary key",
+"CREATE TABLE orders (id UUID PRIMARY KEY DEFAULT gen_random_uuid());",
+"",
+"-- the fix: UUIDv7, time first (uuidv7() is built in from PostgreSQL 18)",
+"CREATE TABLE orders (id UUID PRIMARY KEY DEFAULT uuidv7());"],
+  map:[["index: leaf pages","-- the trap..gen_random_uuid"],["key = random UUIDv4","gen_random_uuid"],["insert 9f..","gen_random_uuid"],["insert 1c..","gen_random_uuid"],["insert e4..","gen_random_uuid"],["start: 8 pages","gen_random_uuid"],["10,000 v4 inserts","-- the trap..gen_random_uuid"],
+   ["UUIDv7 = millisecond","-- the fix..DEFAULT uuidv7()"],["10,000 v7 inserts","DEFAULT uuidv7()"]]}]}};
+// CODE PANEL END
+const S={
+seq:{name:"orders, key = BIGINT identity",st:[
+ {t:"Start: a sorted index",pc:["index: leaf pages", "start: 7 pages"],b:"The orders index holds keys 1 to 660 on seven pages. The last page, 601-660, is not full yet. The pages used most stay in memory.",w:"A B-tree keeps keys sorted. A new key must go on the page where it belongs in that order.",d:pg(SL,["n","n","n","n","n","r","r"],[,,,,,,"not full"])},
+ {t:"Insert order 661",pc:["insert(key):", "page = the page whose range", "not in memory: read it", "counter: 661"],b:"The database hands out the next number, 661. The index finds the page whose range holds it: the last page. Is that page in memory? Yes, so there is no disk read.",w:"No disk read. The page was hot because the previous insert used it too.",d:pg(SL,["n","n","n","n","n","r","c"],[,,,,,,"not full"],[B(380,60,160,"insert 661","c",44),A(460,106,700,201,"","c")])},
+ {t:"Inserts 662 to 700",pc:["put key on the page", "662 to 700"],b:"Every new order gets a higher number, and every one lands on the same last page. After 700 it holds 100 keys, and there were 0 disk reads.",w:"All writes touch one page at the right edge. It stays in memory, and earlier pages are never touched again.",d:pg(["1-100","101-200","201-300","301-400","401-500","501-600","601-700"],["n","n","n","n","n","r","c"],[,,,,,,"full"],[B(380,60,160,"insert 662-700","c",44),A(460,106,700,201,"","c")])},
+ {t:"The page fills: a new page at the end",pc:["key past its end", "701: a new page"],b:"Order 701 belongs on the last page, but it is full. The key is past the end of that page, so the database starts a new page, 701, at the right edge. No split, no disk read. The full pages behind it stay full.",w:"Appending never splits old pages, so the index stays dense.",d:pg(["1-100","101-200","201-300","301-400","401-500","501-600","601-700","701"],["n","n","n","n","n","n","r","c"],[,,,,,,"full","new"],[B(380,60,160,"insert 701","c",44),A(460,106,810,201,"","c")])},
+ {t:"Ids made outside the database",pc:["phone, offline"],b:"A phone app wants to create an order id while offline. A BIGINT can only come from the database's counter. A UUID can be made anywhere and is still unique.",w:"That is the real reason to pick a UUID: ids made before the database is reached.",d:pg(["1-100","101-200","201-300","301-400","401-500","501-600","601-700","701"],["n","n","n","n","n","n","r","r"],[,,,,,,"full",""],[B(40,60,300,"phone, offline: needs an id","s",44),B(400,60,200,"BIGINT: ask the db","x",44),B(640,60,220,"UUID: make it here","c",44)])},
+ {t:"A sequential id leaks a count",pc:["/orders/1005"],b:"A customer sees order 1005 in a URL. A week later, order 1405. A competitor now knows you take about 400 orders a week.",w:"Keep the BIGINT inside and show a UUID outside if counts are a secret.",d:[B(40,80,360,"/orders/1005  (1 March)","w",44),B(40,150,360,"/orders/1405  (8 March)","w",44),T(440,135,"about 400 orders a week, now public","x","start",16)]}
+]},
+v4:{name:"orders, key = random UUIDv4",st:[
+ {t:"Start: random keys, a big index",pc:["index: leaf pages", "key = random UUIDv4", "start: 8 pages"],b:"The same index, but keys are random UUIDv4 values, shown by their first two hex digits. The index has outgrown memory: only two pages are cached, 40-5f and c0-df.",w:"Random keys belong all over the key range, not at one end.",d:pg(VL,["n","n","r","n","n","n","r","n"]).concat([mem])},
+ {t:"Insert 9f..: a page from disk",pc:["insert(key):", "page = the page whose range", "not in memory: read it", "insert 9f.."],b:"The new key starts with 9f, so it belongs on page 80-9f. Is that page in memory? No. The database reads it from disk first and pushes out the oldest cached page, c0-df.",w:"With a sequential key the target page was always hot. With a random key it usually is not.",d:pg(VL,["n","n","r","n","w","n","r","n"],[,,,,"disk read"],[B(380,60,160,"insert 9f..","c",44),A(460,106,470,201,"","c"),mem])},
+ {t:"Insert 1c..: another disk read",pc:["not in memory: read it", "insert 1c.."],b:"The next key starts with 1c, page 00-1f. Not in memory either: another disk read, and page 40-5f is pushed out.",w:"Each insert pays a random disk read. Throughput falls to the speed of the disk.",d:pg(VL,["w","n","n","n","r","n","n","n"],["disk read"],[B(380,60,160,"insert 1c..","c",44),A(460,106,70,201,"","c"),mem])},
+ {t:"Insert e4..: the page splits",pc:["key in the middle: split", "insert e4.."],b:"The key starts with e4, but page e0-ff is full with 100 keys, and e4 falls in its middle. The database splits it into e0-ef with 51 keys and f0-ff with 50: two half-empty pages.",w:"Random inserts keep splitting full pages in the middle of the index.",d:pg(["20-3f","40-5f","60-7f","80-9f","a0-bf","c0-df","e0-ef","f0-ff"],["n","n","n","r","n","n","x","x"],[,,,,,,"split","half"],[B(380,60,160,"insert e4..","c",44),A(460,106,730,201,"","c"),mem])},
+ {t:"The failure: slow writes, a bloated index",pc:["10,000 v4 inserts"],b:"Over 10,000 random inserts with 2 pages in memory, 9258 read a page from disk, and the pages end up 68% full. A counter does the same 10,000 inserts with 0 disk reads, into 100% full pages.",w:"Random UUIDv4 as the primary key of a big B-tree table is the trap.",d:pg(VL,["w","w","w","w","w","w","w","w"],["half","half","half","half","half","half","half","half"],[T(20,330,"every insert: a disk read, every page: half empty","x","start",16)])},
+ {t:"Fix: UUIDv7 starts with the time",pc:["UUIDv7 = millisecond", "key past its end", "10,000 v7 inserts"],b:"UUIDv7 puts a millisecond timestamp first, then random bits. Each new id is larger than the last, so it lands past the end of the last page, like a counter: 10,000 inserts, 0 disk reads, 100% full pages.",w:"Unique without asking the database, and sorted by time. The index behaves like a counter again.",d:pg(["0190a..","0190b..","0190c..","0190d..","0190e..","0190f..","01910.."],["n","n","n","n","n","r","c"],[,,,,,,"newest"],[B(380,60,200,"insert 01910..","c",44),A(480,106,700,201,"","c")])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

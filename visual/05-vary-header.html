@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vary Header</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Vary: one URL, several answers</h1>
+  <p class="lede">The export endpoint returns JSON or CSV, chosen by the Accept header. Press <b>Next</b> and watch the CDN edge give a spreadsheet user JSON. Then switch tabs and watch the opposite mistake split one page into thousands of copies.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="missing">Vary missing</button>
+    <button role="tab" aria-selected="false" data-mode="many">Vary on too much</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A client, a CDN edge and an origin, with the variants the edge keeps</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="a-x" class="box" x="15" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-x" data-on="a-x" x="110" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Client</text>
+        <line x1="110" y1="68" x2="110" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-x" class="box" x="5.0" y="324" width="210" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-x" data-on="c-x" x="110.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-e" class="box" x="355" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-e" data-on="a-e" x="450" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">CDN edge</text>
+        <line x1="450" y1="68" x2="450" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-e" class="box" x="345.0" y="324" width="210" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-e" data-on="c-e" x="450.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-o" class="box" x="695" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-o" data-on="a-o" x="790" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Origin</text>
+        <line x1="790" y1="68" x2="790" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-o" class="box" x="685.0" y="324" width="210" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-o" data-on="c-o" x="790.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-vary-header/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">right variant</span>
+    <span style="--c:var(--fail)">wrong variant, or too many variants</span>
+    <span style="--c:var(--svc)">origin</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p><code>Vary: Accept-Encoding</code> on every compressed text response. <code>Vary: Accept</code> or <code>Accept-Language</code> for content negotiation. CDNs such as Cloudflare and Fastly let you normalise headers at the edge before they reach the key.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Vary on the few headers that really change the answer, normalised to few values. Never vary on User-Agent or Cookie at a shared edge. Per-user answers should be private, not varied on Authorization.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No Vary</th><th>Vary on a few headers</th><th>Vary on User-Agent</th></tr>
+      <tr><td>Copies per URL</td><td>One</td><td>One per value, a handful</td><td>Thousands</td></tr>
+      <tr><td>Wrong variant served</td><td>Yes</td><td>No</td><td>No</td></tr>
+      <tr><td>Hit rate</td><td>High, but wrong</td><td>High</td><td>Near zero</td></tr>
+      <tr><td>Interview line</td><td colspan="3">&quot;Vary adds request headers to the cache key, so each format gets its own copy, and I vary on few normalised headers, never User-Agent.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[160,280,580];
+const X=110,E=450,O=790,URL="GET /facts/day/2026-10-06";
+const steps={
+"missing":[
+ {pc:[6, 7, 8, 9, 10],t:"A script asks for JSON",b:"A script sends Accept: application/json. The edge has nothing, asks the origin, and gets JSON. The origin sends no Vary header, so the edge keeps one copy for the URL.",
+  w2:"The edge's key is only the URL. It does not know the format depended on a header.",fill:{"c-e":OK,"c-o":SVC},text:{"n-x":"Script (JSON)","t-c-x":"","t-c-e":"URL → JSON","t-c-o":"JSON or CSV"},a:[[X,100,E-2,100,URL+", Accept: JSON"],[E,130,O-2,130,"miss: ask origin"],[O,160,E+2,160,"200 JSON, no Vary",OK],[E,190,X+2,190,"JSON",OK]]},
+ {pc:[2, 6],t:"The failure that matters: CSV user gets JSON",b:"A spreadsheet user asks for the same URL with Accept: text/csv. Line 2 finds no Vary names for the URL, so the key on line 3 is the URL alone. The check on line 6 finds that key and returns the copy: JSON.",w2:"A missing Vary serves the wrong variant. With Authorization, the wrong variant is someone else's data.",
+  fill:{"c-e":FAIL,"c-x":FAIL},text:{"n-x":"Spreadsheet (CSV)","t-c-x":"got JSON"},a:[[X,100,E-2,100,URL+", Accept: CSV"],[E,130,X+2,130,"hit: JSON",FAIL]],ban:["CSV asked, JSON served",260]},
+ {pc:[4, 5, 9, 12],t:"Fix: Vary: Accept",b:"The origin now sends Vary: Accept. Line 5 adds the Accept value to the key: /facts|Accept=text/csv. The check on line 6 misses once, and the CSV request gets CSV. The edge now keeps 2 copies.",
+  w2:"Vary names the request headers that change the answer.",fill:{"c-e":OK,"c-x":OK},text:{"t-c-e":"URL+JSON, URL+CSV","t-c-x":"got CSV"},a:[[X,100,E-2,100,URL+", Accept: CSV"],[E,130,O-2,130,"miss for URL+CSV"],[O,160,E+2,160,"200 CSV, Vary: Accept",OK],[E,190,X+2,190,"CSV",OK]]},
+ {pc:[4, 5, 12],t:"The everyday case: compression",b:"Text responses come gzipped or Brotli-compressed, chosen by Accept-Encoding. Vary: Accept-Encoding keeps those copies apart too.",w2:"Most servers add it for you. Check that they do.",text:{"t-c-e":"variants: JSON, CSV x br, gzip"}}
+],
+"many":[
+ {pc:[13],t:"The opposite failure: Vary: User-Agent",b:"A developer wants a mobile layout, so the origin sends Vary: User-Agent. Every browser version on every device sends a different User-Agent. Line 5 makes a new key for each. In the program, 500 User-Agent strings make 500 copies, and the hit rate falls to 75 percent.",
+  w2:"Each one becomes its own variant. The edge keeps thousands of copies of one page.",fill:{"c-e":FAIL,"c-o":SVC},text:{"n-x":"Many browsers","t-c-x":"thousands of User-Agents","t-c-e":"thousands of variants","t-c-o":"busy"},
+  a:[[X,100,E-2,100,"Chrome 131 on Android"],[E,125,O-2,125,"miss"],[X,160,E-2,160,"Safari 18 on iPhone"],[E,185,O-2,185,"miss"],[X,220,E-2,220,"Firefox 133 on Linux"],[E,245,O-2,245,"miss",FAIL]],ban:["almost every request misses",280]},
+ {pc:[14, 15],t:"Fix: normalise at the edge first",b:"An edge rule turns the User-Agent into one header with two values: mobile or desktop. The origin varies on that header instead. The program now makes 2 copies, and the hit rate is 100 percent.",w2:"Vary on few values. Two variants hit as well as one.",
+  fill:{"c-e":OK,"c-o":SVC},text:{"t-c-e":"2 variants: mobile, desktop","t-c-o":"calm"},a:[[X,100,E-2,100,"Chrome 131 on Android"],[E,125,X+2,125,"hit: mobile",OK],[X,160,E-2,160,"Safari 18 on iPhone"],[E,185,X+2,185,"hit: mobile",OK]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"missing": {
+"label": "Go",
+"pc": [
+"edge, on a request for url:",
+"  names = the Vary header the origin last sent for url",
+"  k = url",
+"  for each name in names:",
+"    k = k + name + \"=\" + request[name]  # the key grows per named header",
+"  if k in store: return store[k]        # hit",
+"  resp = ask the origin",
+"  remember resp.Vary for url",
+"  store[key(url, resp.Vary)] = resp     # one copy per value",
+"  return resp",
+"",
+"origin sends:  Vary: Accept             # the fix for JSON and CSV",
+"never:         Vary: User-Agent         # 500 values, 500 copies",
+"instead: edge turns User-Agent into X-Device: mobile or desktop",
+"         origin sends Vary: X-Device    # 2 values, 2 copies"
+],
+"real": [
+"func key(url, vary string, h http.Header) string {",
+"\tk := url",
+"\tfor _, name := range strings.Split(vary, \",\") {",
+"\t\tif name = strings.TrimSpace(name); name != \"\" {",
+"\t\t\tk += \"|\" + name + \"=\" + h.Get(name)",
+"\t\t}",
+"\t}",
+"\treturn k",
+"}",
+"",
+"func (e *Edge) Get(url string, h http.Header) string {",
+"\tif c, ok := e.store[key(url, e.seenVary[url], h)]; ok {",
+"\t\te.hits++",
+"\t\treturn c.body",
+"\t}",
+"\te.misses++",
+"\tresp := e.askOrigin(url, h)",
+"\tv := resp.Header.Get(\"Vary\")",
+"\te.seenVary[url] = v",
+"\te.store[key(url, v, h)] = copyOf{body(resp), v}",
+"\treturn e.store[key(url, v, h)].body",
+"}",
+"",
+"w.Header().Set(\"Vary\", vary) // vary is \"Accept\": the origin names the input",
+"",
+"// normalised at the edge: two values, not five hundred",
+"device := \"desktop\"",
+"if isMobile(r.Header.Get(\"User-Agent\")) {",
+"\tdevice = \"mobile\"",
+"}",
+"r.Header.Set(\"X-Device\", device)",
+"srv := origin(\"X-Device\") // the origin answers with Vary: X-Device",
+"",
+"run(\"Vary: User-Agent\", func(ua string) string { return ua }) // never: 500 values make 500 copies"
+],
+"map": {
+"1": [
+11
+],
+"2": [
+12
+],
+"3": [
+2
+],
+"4": [
+3
+],
+"5": [
+5
+],
+"6": [
+12,
+13,
+14
+],
+"7": [
+17
+],
+"8": [
+18,
+19
+],
+"9": [
+20
+],
+"10": [
+21
+],
+"12": [
+24
+],
+"13": [
+34
+],
+"14": [
+27,
+28,
+29,
+30,
+31
+],
+"15": [
+32
+]
+}
+},
+"many": {
+"label": "Go",
+"pc": [
+"edge, on a request for url:",
+"  names = the Vary header the origin last sent for url",
+"  k = url",
+"  for each name in names:",
+"    k = k + name + \"=\" + request[name]  # the key grows per named header",
+"  if k in store: return store[k]        # hit",
+"  resp = ask the origin",
+"  remember resp.Vary for url",
+"  store[key(url, resp.Vary)] = resp     # one copy per value",
+"  return resp",
+"",
+"origin sends:  Vary: Accept             # the fix for JSON and CSV",
+"never:         Vary: User-Agent         # 500 values, 500 copies",
+"instead: edge turns User-Agent into X-Device: mobile or desktop",
+"         origin sends Vary: X-Device    # 2 values, 2 copies"
+],
+"real": [
+"func key(url, vary string, h http.Header) string {",
+"\tk := url",
+"\tfor _, name := range strings.Split(vary, \",\") {",
+"\t\tif name = strings.TrimSpace(name); name != \"\" {",
+"\t\t\tk += \"|\" + name + \"=\" + h.Get(name)",
+"\t\t}",
+"\t}",
+"\treturn k",
+"}",
+"",
+"func (e *Edge) Get(url string, h http.Header) string {",
+"\tif c, ok := e.store[key(url, e.seenVary[url], h)]; ok {",
+"\t\te.hits++",
+"\t\treturn c.body",
+"\t}",
+"\te.misses++",
+"\tresp := e.askOrigin(url, h)",
+"\tv := resp.Header.Get(\"Vary\")",
+"\te.seenVary[url] = v",
+"\te.store[key(url, v, h)] = copyOf{body(resp), v}",
+"\treturn e.store[key(url, v, h)].body",
+"}",
+"",
+"w.Header().Set(\"Vary\", vary) // vary is \"Accept\": the origin names the input",
+"",
+"// normalised at the edge: two values, not five hundred",
+"device := \"desktop\"",
+"if isMobile(r.Header.Get(\"User-Agent\")) {",
+"\tdevice = \"mobile\"",
+"}",
+"r.Header.Set(\"X-Device\", device)",
+"srv := origin(\"X-Device\") // the origin answers with Vary: X-Device",
+"",
+"run(\"Vary: User-Agent\", func(ua string) string { return ua }) // never: 500 values make 500 copies"
+],
+"map": {
+"1": [
+11
+],
+"2": [
+12
+],
+"3": [
+2
+],
+"4": [
+3
+],
+"5": [
+5
+],
+"6": [
+12,
+13,
+14
+],
+"7": [
+17
+],
+"8": [
+18,
+19
+],
+"9": [
+20
+],
+"10": [
+21
+],
+"12": [
+24
+],
+"13": [
+34
+],
+"14": [
+27,
+28,
+29,
+30,
+31
+],
+"15": [
+32
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split Brain</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Split brain: two sides, two copies of device 42</h1>
+  <p class="lede">A three-node Akka.NET cluster runs device actors with cluster sharding. The network between node 3 and the others breaks. Each side thinks the other died. Press <b>Next</b> to see what happens with no resolver, then the second tab, where a split brain resolver keeps the majority.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="none">No resolver</button>
+    <button role="tab" aria-selected="false" data-mode="sbr">Resolver: keep majority</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 350" aria-labelledby="stage-title">
+      <title id="stage-title">Three nodes split by a partition, each able to run device 42, writing one journal</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-n1" class="box" x="20" y="15" width="260" height="200" rx="10" fill="var(--line)" fill-opacity=".35"/><text x="35" y="40" text-anchor="start" fill="var(--fg)" font-size="14">Node 1</text>
+        <rect id="c-n2" class="box" x="300" y="15" width="260" height="200" rx="10" fill="var(--line)" fill-opacity=".35"/><text x="315" y="40" text-anchor="start" fill="var(--fg)" font-size="14">Node 2</text>
+        <rect id="c-n3" class="box" x="620" y="15" width="260" height="200" rx="10" fill="var(--line)" fill-opacity=".35"/><text x="635" y="40" text-anchor="start" fill="var(--fg)" font-size="14">Node 3</text>
+        <rect id="c-v1" class="box" x="40" y="55" width="220" height="40" rx="20" fill="var(--ok)"/><text id="t-v1" x="150" y="80" fill="#fff" font-size="13">sees: 1, 2, 3 up</text>
+        <rect id="c-v2" class="box" x="320" y="55" width="220" height="40" rx="20" fill="var(--ok)"/><text id="t-v2" x="430" y="80" fill="#fff" font-size="13">sees: 1, 2, 3 up</text>
+        <rect id="c-v3" class="box" x="640" y="55" width="220" height="40" rx="20" fill="var(--ok)"/><text id="t-v3" x="750" y="80" fill="#fff" font-size="13">sees: 1, 2, 3 up</text>
+        <rect id="c-d2" class="box" x="330" y="120" width="200" height="70" rx="8" fill="var(--svc)"/><text id="t-d2" x="430" y="148" fill="#fff">device 42</text><text id="s-d2" x="430" y="172" fill="#fff" font-size="13">interval 60 s</text>
+        <rect id="c-d3" class="box" x="650" y="120" width="200" height="70" rx="8" fill="var(--line)"/><text id="t-d3" x="750" y="148" fill="var(--fg)">no copy here</text><text id="s-d3" x="750" y="172" fill="var(--fg)" font-size="13"></text>
+        <rect id="c-d1" class="box" x="50" y="120" width="200" height="70" rx="8" fill="var(--svc)"/><text id="t-d1" x="150" y="148" fill="#fff">devices 1 to 33</text><text id="s-d1" x="150" y="172" fill="#fff" font-size="13">running</text>
+        <g id="g-cut" class="msg"><line x1="590" y1="8" x2="590" y2="225" stroke="var(--fail)" stroke-width="3" stroke-dasharray="8 6"/></g>
+        <rect id="c-j" class="box" x="300" y="290" width="300" height="44" rx="22" fill="var(--undo)"/><text id="t-j" x="450" y="317" fill="#fff" font-size="14">journal of device 42</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--ok)">view: everyone up</span>
+    <span style="--c:var(--wait)">suspects a node, waiting</span>
+    <span style="--c:var(--svc)">actor running</span>
+    <span style="--c:var(--fail)">second copy, forked state, or downed</span>
+    <span style="--c:var(--undo)">journal</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every production Akka or Akka.NET cluster with sharding or singletons. Without a resolver, the same entity runs on both sides and both write one journal. A cluster singleton runs twice the same way.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Always configure a split brain resolver. Keep majority with an odd node count is the default. Never use "auto-down after a timeout": each side downs the other and both keep running.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No resolver, or auto-down</th><th>Split brain resolver</th></tr>
+      <tr><td>After a partition</td><td>Each side downs the other and carries on</td><td>One side lives, the other downs itself</td></tr>
+      <tr><td>Device 42</td><td>Runs on both sides</td><td>Runs on one side only</td></tr>
+      <tr><td>Journal</td><td>Two writers, forked state</td><td>One writer</td></tr>
+      <tr><td>Cost</td><td>Silent data corruption</td><td>The losing side's nodes restart, shards move</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A partition makes each side think the other is dead, so a split brain resolver downs one side, or the same entity runs twice."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-split-brain/main.go";
+const code={_:{pc:`
+every node gossips who is up; shard allocation: one home per entity
+the network cuts: heartbeats stop crossing it
+each side: phi > 8 for the far nodes -> mark them unreachable
+# no resolver: auto-down after a timer
+each side: members = the nodes I can reach        # both sides do it
+on a message for device 42:
+  h = home(device 42, members)                   # node 3 sees only itself
+  if no copy runs on h: start one from the journal
+  apply the command, append the event to the journal   # two writers
+# with a resolver: keep majority
+wait until the view is stable for 20 s
+if my side has more than half of the nodes: down the other side
+else: down myself                                # 1 of 3 is a minority
+shards of downed nodes restart on the majority side
+the healed node rejoins as a fresh node`,go:`
+nodes := map[int]*Node{1: spawn(1), 2: spawn(2), 3: spawn(3)} //@1
+sideA, sideB := []int{1, 2}, []int{3} // the cut //@2,3
+case "auto-down": //@4
+	n.members = s // down everyone unreachable //@5
+var h int //@6
+via.do(func(n *Node) { h = home(append([]int(nil), n.members...)) }) //@6,7,14
+func home(members []int) int { //@7
+	for _, m := range members {
+		if m == 2 { //@7
+			return 2 //@7
+		}
+	}
+	sort.Ints(members) //@7
+	return members[0] //@7
+}
+nodes[h].do(func(n *Node) { //@8
+	if n.device == 0 { //@8
+		n.device = 60 // started from the journal //@8
+	}
+	n.device = s //@9
+	j.Append(Event{n.id, s}) // one journal, both sides //@9
+})
+case "keep-majority": //@10,11
+	if 2*size > 3 { //@12
+		n.members = s // majority: down the other side //@12
+	} else {
+		n.members = nil // minority: down myself //@13
+		n.device = 0 //@13
+	}
+fmt.Printf("  writers of device 42: %d\\n", len(writers)) //@9
+fresh := spawn(4) // node 3 restarts: a new identity, joins again //@15`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+# Akka.NET HOCON: sharding, and the resolver that prevents the split
+akka.cluster.sharding.state-store-mode = ddata //@1
+akka.cluster.failure-detector.threshold = 8.0 //@2,3
+# the bad old setting, never in production:
+akka.cluster.auto-down-unreachable-after = 10s //@4,5
+Sys.ActorOf(ClusterSingletonManager.Props(Props.Create<Scheduler>(), settings), "scheduler"); // one per side now //@5
+region.Tell(new SetInterval(42, 60)); // through node 3: it starts its own device 42 //@6,7,8
+Command<SetInterval>(c => Persist(new IntervalSet(c.Seconds), Apply)); // every running copy writes //@9
+akka.cluster.downing-provider-class = "Akka.Cluster.SBR.SplitBrainResolverProvider, Akka.Cluster" //@10
+akka.cluster.split-brain-resolver { //@10
+  active-strategy = keep-majority //@12,13
+  stable-after = 20s //@11
+}
+akka.cluster.sharding.rebalance-interval = 10s  # downed members' shards restart on the survivors //@14
+Cluster.Get(newSystem).Join(seedAddress); // a downed node restarts its actor system first //@15`}};
+const GOS=[[260,75,320,75,"gossip","muted",false,[290,68,"middle"]],[540,75,640,75,"gossip","muted",false,[590,68,"middle"]]];
+const both={f:{"c-v1":"wait","c-v2":"wait","c-v3":"wait"},x:{"t-v1":"sees: 3 unreachable","t-v2":"sees: 3 unreachable","t-v3":"sees: 1, 2 unreachable"}};
+const steps={
+none:[
+ {pc:[1],t:"A healthy cluster",b:"Nodes gossip who is up. Device 42 lives on node 2 and writes its events to its journal.",w:"Sharding promises one copy of each entity in the whole cluster.",a:[...GOS,[430,190,430,290,"events","undo"]]},
+ {pc:[2],t:"The network breaks",b:"The link between node 3 and nodes 1 and 2 fails. Each side can still talk inside itself.",w:"A partition looks exactly like a crash from the other side.",on:["g-cut"]},
+ {pc:[3],t:"Each side suspects the other",b:"Heartbeats stop crossing the cut. Nodes 1 and 2 mark node 3 unreachable. Node 3 marks nodes 1 and 2 unreachable.",w:"Neither side can tell a dead node from a cut cable.",...both},
+ {pc:[4,5],t:"Auto-down: each side removes the other",b:"With no resolver, an auto-down timer fires on both sides. Side A downs node 3. Side B downs nodes 1 and 2. Each side now believes it is the whole cluster.",w:"Two clusters now exist, and neither knows about the other.",f:{"c-v1":"fail","c-v2":"fail","c-v3":"fail"},x:{"t-v1":"cluster: 1, 2","t-v2":"cluster: 1, 2","t-v3":"cluster: 3 alone"}},
+ {pc:[6,7,8],t:"Side B starts device 42 too",b:"A message for device 42 arrives at node 3. Allocation looks for node 2 in node 3's members: [3]. It is not there, so the home is the lowest member, node 3. No copy runs there, so node 3 starts its own device 42 from the journal.",w:"The same entity now runs twice, once on each side.",f:{"c-d3":"fail"},x:{"t-d3":"device 42, copy 2","s-d3":"interval 60 s"}},
+ {pc:[9],t:"The failure that matters: two writers",b:"An operator sets device 42 to 30 s through side A, so node 2 appends 30 s. A device report through side B sets 60 s, so node 3 appends 60 s. The program counts 2 writers for one journal.",w:"The journal now holds two conflicting histories. The device's state has forked.",a:[[430,190,400,290,"set 30 s","fail"],[750,190,560,290,"set 60 s","fail",false,[680,268,"start"]]],f:{"c-d2":"fail","c-j":"fail"},x:{"s-d2":"interval 30 s","t-j":"forked: two writers","s-d3":"interval 60 s"}},
+ {pc:[5],t:"Singletons double too",b:"Any cluster singleton, such as the maintenance scheduler, now runs once on each side as well.",w:"Split brain breaks every \"exactly one\" promise at once. The fix is always a resolver."}
+],
+sbr:[
+ {pc:[2,10],t:"The same partition",b:"The link to node 3 breaks again. This time a split brain resolver is configured: keep majority.",w:"Both sides run the same rule, without talking to each other.",on:["g-cut"]},
+ {pc:[3,11],t:"Wait until it is stable",b:"Both sides see the other as unreachable. The resolver waits a stable time, such as 20 seconds, so a short blip downs nobody.",w:"Unreachable is a suspicion. Down is a decision.",...both},
+ {pc:[12,13],t:"Keep majority",b:"Each side checks: do I have more than half of 3 nodes? Side A has 2, and 2 times 2 is more than 3, so it keeps running. Side B has 1, a minority, so it downs itself.",w:"An odd node count means there is always a majority side.",f:{"c-v3":"fail","c-n3":"fail","c-v1":"ok","c-v2":"ok"},x:{"t-v3":"minority: downs itself","t-v1":"majority: keeps running","t-v2":"majority: keeps running"}},
+ {pc:[14],t:"Node 3's shards move",b:"Shards that lived on node 3 restart on nodes 1 and 2. Their entities replay their events there.",w:"Persistence makes the move safe: each entity rebuilds itself.",f:{"c-d3":"line"},x:{"t-d3":"node 3 stopped","s-d3":""},a:[[740,245,160,245,"shards move to side A","coord",false,[450,267,"middle"]]]},
+ {pc:[9],t:"One writer",b:"Device 42 runs only on node 2. It is the only writer of its journal.",w:"One side, one copy, one history.",a:[[430,190,430,290,"events","undo"]],f:{"c-j":"undo"},x:{"t-j":"journal: one writer"}},
+ {pc:[15],t:"The network heals",b:"Node 3 restarts as a fresh node and joins the cluster again. Rebalancing gives it shards back.",w:"The losing side paid with a restart. Nobody paid with corrupt data.",off:["g-cut"],f:{"c-n3":"line","c-v1":"ok","c-v2":"ok","c-v3":"ok"},x:{"t-v1":"sees: 1, 2, 3 up","t-v2":"sees: 1, 2, 3 up","t-v3":"rejoined: 1, 2, 3 up","t-d3":"shards rebalanced back"},a:GOS}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

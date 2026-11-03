@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dead-letter exchange and redrive</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+svg text{paint-order:stroke}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:8px 0}
+#codetabs button[aria-pressed="true"]{background:var(--coord);color:#fff;border-color:var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Dead-letter exchange and redrive</h1>
+  <p class="lede">A decode job fails on a RabbitMQ queue and on an Amazon SQS queue. Neither broker has a built-in delayed retry topic. Press <b>Next</b> to see RabbitMQ build one from a time to live and a dead-letter exchange, and SQS move a message aside and back again.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="rabbit">RabbitMQ: TTL plus dead-letter exchange</button>
+    <button role="tab" aria-selected="false" data-mode="sqs">SQS: redrive</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story: <code>handbook/code/04-dead-letter-exchange-redrive/main.go</code> (<code>go run .</code>). <span id="codenote"></span></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">consumer</span>
+    <span style="--c:var(--svc)">queue</span>
+    <span style="--c:var(--undo)">waiting for its delay</span>
+    <span style="--c:var(--wait)">failing, counted</span>
+    <span style="--c:var(--ok)">processed</span>
+    <span style="--c:var(--fail)">stuck or flooded</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet the dead-letter exchange</h2>
+      <p>RabbitMQ queues set <code>x-dead-letter-exchange</code>. A rejected or expired message is re-published there with an <code>x-death</code> header that counts its trips. One retry queue per delay, each with its own <code>x-message-ttl</code>, gives you backoff.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet redrive</h2>
+      <p>An SQS redrive policy names a DLQ and a <code>maxReceiveCount</code>. SQS moves the message after that many failed receives. A DLQ redrive moves it back to the source queue after the fix ships.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>RabbitMQ dead-letter exchange</th><th>SQS redrive</th></tr>
+      <tr><td>Moves the message aside</td><td>On reject or TTL expiry</td><td>After maxReceiveCount failed receives</td></tr>
+      <tr><td>Delay between tries</td><td>A retry queue with a TTL</td><td>The visibility timeout</td></tr>
+      <tr><td>Counting tries</td><td>x-death header</td><td>ApproximateReceiveCount</td></tr>
+      <tr><td>Moving it back</td><td>Shovel or a replay script</td><td>DLQ redrive to the source queue</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"RabbitMQ gets delayed retries from a TTL queue and a dead-letter exchange, SQS from the visibility timeout and a redrive policy. In both I cap the tries, park the message, and redrive only after the fix."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const C={idle:["var(--line)","var(--fg)"],busy:["var(--wait)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],main:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],undo:["var(--undo)","#fff"],off:["none","var(--muted)"]};
+const col=st=>st==="idle"?"var(--muted)":(C[st]||[ "var(--fg)"])[0];
+function box(x,y,w,h,st,label,sub){const [f,t]=C[st]||C.idle;const cx=x+w/2,cy=y+h/2;
+  return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="5 4"/><text x="${cx}" y="${sub?cy-3:cy+6}" font-size="16" font-weight="700" fill="${t}">${label}</text>`+(sub?`<text x="${cx}" y="${cy+17}" font-size="13" fill="${t}">${sub}</text>`:"");}
+function arrow(x1,y1,x2,y2,label,st,dash){const c=st?col(st):"var(--fg)";
+  return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`+(label?`<rect x="${(x1+x2)/2-String(label).length*4.1-6}" y="${(y1+y2)/2-11}" width="${String(label).length*8.2+12}" height="22" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="1"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+5}" font-size="14" font-weight="700" fill="${c}">${label}</text>`:"")+`</g>`;}
+function chip(x,y,w,label,st){const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="${x}" y="${y}" width="${w}" height="26" rx="13" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="4 3"/><text x="${x+w/2}" y="${y+18}" font-size="13" font-weight="700" fill="${t}">${label}</text></g>`;}
+function note(y,txt,st){if(!txt)return"";const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="60" y="${y}" width="780" height="32" rx="16" fill="${f}"/><text x="450" y="${y+22}" font-size="15" font-weight="700" fill="${t}">${txt}</text></g>`;}
+function gdraw(s,base){let h="";const N=Object.assign({},base||{},s.nd||{});
+  for(const k in N){const n=N[k];if(n)h+=box(n[0],n[1],n[2],n[3],n[4],n[5],n[6]);}
+  (s.ar||[]).forEach(a=>h+=arrow(...a));(s.ch||[]).forEach(c=>h+=chip(...c));
+  if(s.n)h+=note(s.n[2]||352,s.n[0],s.n[1]);return h;}
+function seq(A,s){const n=A.length,gap=860/n,X={};A.forEach((a,k)=>X[a[0]]=20+gap*k+gap/2);
+  const w=Math.min(gap-14,180);let h="";
+  A.forEach(a=>{const x=X[a[0]];h+=box(x-w/2,14,w,52,(s.ac&&s.ac[a[0]])||a[2]||"main",a[1],a[3]);
+    h+=`<line x1="${x}" y1="66" x2="${x}" y2="330" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  let y=98;(s.m||[]).forEach(m=>{
+    if(m[0]==="x"){h+=`<g class="msg"><rect x="20" y="${y-15}" width="860" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${y+4}" fill="var(--fail)" font-weight="700" font-size="14">${m[1]}</text></g>`;y+=34;return;}
+    const [f,t,l,st,d]=m;
+    if(f===t)h+=chip(X[f]-Math.min(gap/2-4,110),y-13,Math.min(gap-8,220),l,st||"idle");
+    else{const x1=X[f],x2=X[t],dir=x2>x1?1:-1;h+=arrow(x1+4*dir,y,x2-6*dir,y,l,st||"main",d);}
+    y+=34;});
+  for(const k in (s.st||{})){const [st,txt]=s.st[k];h+=chip(X[k]-w/2,340,w,txt,st);}
+  if(s.n)h+=note(380,s.n[0],s.n[1]);return h;}
+
+const RB={c:[660,150,220,70,"main","Decoder","consumer"],q:[300,40,240,60,"svc","decode","main queue"],r:[300,160,240,70,"undo","decode.retry.10s","TTL 10 s"],d:[300,280,240,60,"svc","decode.dead","parking queue"]};
+const SQ={c:[660,150,220,70,"main","Decoder","consumer"],q:[300,40,240,70,"svc","decode","SQS queue"],d:[300,260,240,70,"svc","decode-dlq","maxReceiveCount 4"]};
+const code={"rabbit": {"label": "Go", "pc": ["queue decode has x-dead-letter-exchange -> decode.retry.10s", "on failure: reject(msg, requeue=false)     # the broker dead-letters it", "  x-death count = x-death count + 1", "  if x-death count >= 3: publish to decode.dead; ack; stop", "queue decode.retry.10s: no consumer, x-message-ttl 10 s", "  when the HEAD is past its TTL:", "    dead-letter it back to decode", "a message expires only at the head         # use one queue per delay"], "real": ["const maxDeaths = 3", "", "for {", "\treject(m, false) // requeue=false: the broker dead-letters it", "\tm.Death++ // x-death count", "\tif m.Death >= maxDeaths {", "\t\tpublish(\"decode.dead\", m)", "\t\treturn", "\t}", "\tnow += 10 // nobody reads the retry queue: it waits for its TTL", "\t// expired: its dead-letter exchange routes it back to decode", "}", "", "// RabbitMQ only checks the head of a queue for expiry", "for _, m := range q {", "\tdue := m.PutAt + m.TTL", "\tif due > now {", "\t\tnow = due // the head blocks everything behind it", "\t}", "\tout[m.ID] = now", "}"], "map": {"1": [4], "2": [4], "3": [5], "4": [6, 7, 8], "5": [10], "6": [15, 16], "7": [11], "8": [18]}}, "sqs": {"label": "Go", "pc": ["queue decode: redrive policy", "  maxReceiveCount 4, target decode-dlq", "worker: receive(msg)                  # receive count + 1, hidden", "  on failure: do not delete           # visible again after the timeout", "  on success: delete(msg)", "SQS: if receive count reaches 4:", "  move msg to decode-dlq              # the main queue flows", "redrive decode-dlq to decode:", "  only after the fix, with a rate limit"], "real": ["const maxReceive = 4", "", "for {", "\treceives++ // received, failed, not deleted: visible again later", "\tif receives >= maxReceive {", "\t\treturn receives // SQS moves it to decode-dlq", "\t}", "}", "", "// redrive before the fix: every message fails 4 more times", "wasted := parked * maxReceive // 5,000 x 4 = 20,000", "", "// after the fix: redrive with a rate limit", "seconds := parked / rate // 5,000 at 100 a second = 50 s"], "map": {"1": [1], "2": [1], "3": [4], "4": [4], "5": [4], "6": [5], "7": [6], "8": [11], "9": [14]}}};
+const steps={
+"rabbit":[
+ {pc:[1, 2],t:"Reject without requeue",b:"The decoder fails on m3 and rejects it with requeue set to false. The broker's rule: a rejected message goes to the queue's dead-letter exchange. Here that leads to decode.retry.10s. Its x-death count becomes 1.",w:"Requeue true would put m3 straight back at the head: a hot loop.",nd:{c:[660,150,220,70,"busy","Decoder","m3 failed"]},ar:[[540,70,660,170,"m3","main"],[660,200,540,195,"reject m3","busy"]],ch:[[310,240,220,"m3 x-death: 1","undo"]]},
+ {pc:[5],t:"Wait in the retry queue",b:"m3 sits in decode.retry.10s. Nobody consumes that queue. It only waits for its time to live, 10 seconds.",w:"The delay is the TTL. No sleep in the consumer, no blocked line.",nd:{},ch:[[310,240,220,"m3 x-death: 1, waiting","undo"]]},
+ {pc:[6, 7],t:"Expire and come back",b:"At second 10 m3 is at the head and past its time to live. Its own dead-letter exchange routes it back to the decode queue.",w:"The x-death header now says it has made the trip once.",nd:{},ar:[[420,160,420,100,"expired, back","undo"],[540,70,660,170,"m3 again","main"]]},
+ {pc:[3, 4],t:"Three trips, then park",b:"m3 fails again at second 10 and at second 20. Each failure raises x-death. The check: is the count at least 3? On the third failure it is, so the decoder publishes m3 to decode.dead instead.",w:"The consumer decides when to stop, from the count the broker keeps for it.",nd:{c:[660,150,220,70,"busy","Decoder","x-death 3: park"],d:[300,280,240,60,"busy","decode.dead","1 message"]},ar:[[660,210,540,300,"park m3","busy"]],ch:[[310,240,220,"x-death: 3","busy"]]},
+ {pc:[8],t:"The trap: mixed TTLs in one queue",b:"Someone puts a 60-second and a 5-second message in one retry queue. RabbitMQ checks expiry only at the head. The 60-second message is at the head, so the 5-second message leaves at second 60.",w:"One queue per delay. Never mix delays in one TTL queue.",nd:{r:[300,160,240,70,"fail","decode.retry","mixed TTLs"]},ch:[[310,240,105,"m9: 60 s","undo"],[425,240,105,"m3: 5 s","fail"]],n:["The 5 second retry waits 60 seconds","fail"]}
+],
+"sqs":[
+ {pc:[1, 2],t:"A queue with a redrive policy",b:"The SQS queue decode has a redrive policy: maxReceiveCount 4, target decode-dlq.",w:"SQS counts the tries. The consumer does not have to.",nd:{},ar:[[540,75,660,170,"m3, receive 1","main"]]},
+ {pc:[3, 4],t:"Fail and become visible again",b:"The decoder fails on m3 and does not delete it. When the visibility timeout ends, m3 is visible again. The next receive sets the receive count to 2.",w:"The visibility timeout is the delay between tries.",nd:{c:[660,150,220,70,"busy","Decoder","m3 failed"]},ar:[[540,75,660,170,"m3, receive 2","busy"]]},
+ {pc:[6, 7],t:"Moved to the DLQ",b:"The check runs on each receive: has the count reached 4? After the fourth failed receive SQS moves m3 to decode-dlq. The main queue flows.",w:"An alarm on the DLQ's message count tells the team.",nd:{c:[660,150,220,70,"ok","Decoder","rest flowing"],d:[300,260,240,70,"busy","decode-dlq","1 message: alarm"]},ar:[[420,110,420,260,"after 4 receives","busy"]]},
+ {pc:[8],t:"The trap: redrive before the fix",b:"Someone starts a DLQ redrive before the decoder is fixed. 5,000 parked messages flood back, each fails 4 more times, 20,000 failed receives, and they all land in the DLQ again.",w:"Redrive is a replay. Replaying into the same bug only adds load.",nd:{c:[660,150,220,70,"fail","Decoder","same bug"],d:[300,260,240,70,"fail","decode-dlq","5,000 back again"]},ar:[[420,260,420,110,"redrive 5,000","fail"],[540,90,660,190,"5,000 fail","fail"]],n:["Redrive before the fix: same failure, more load","fail"]},
+ {pc:[9],t:"Fix, then redrive slowly",b:"The fix ships. The team redrives the DLQ to the source queue with a rate limit. At 100 a second, 5,000 messages take 50 seconds, and m3 and the others are processed.",w:"Fix first, check one message, then redrive at a pace the consumer can take.",nd:{c:[660,150,220,70,"ok","Decoder","fixed"],d:[300,260,240,70,"ok","decode-dlq","empty"]},ar:[[420,260,420,110,"redrive, rate limited","ok"],[540,90,660,190,"processed","ok"]]}
+]};
+function draw(s,m){return gdraw(s,m==="rabbit"?RB:SQ);}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+function render(){
+  const L=steps[mode],s=L[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${L.length}`;
+  $("scene").innerHTML=draw(s,mode);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("scene").querySelectorAll(".msg")].forEach((el,k)=>reduce?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),70*k+30));
+  $("prev").disabled=i===0;$("next").disabled=i===L.length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"){$("codecard").style.display="none";return;}
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codenote").textContent=c.note||"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

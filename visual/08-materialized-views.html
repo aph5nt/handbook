@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Materialized views</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Materialized views and query rewrite</h1>
+  <p class="lede">A <b>dashboard</b> asks for daily volume per pool over <b>swaps</b>. A materialized view holds the answer, and the rewriter decides which one to read. Watch the arrows.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="rw">Rewrite onto the view</button>
+    <button role="tab" aria-selected="false" data-mode="stale">Stale view fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 370" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">A dashboard sends a query to a rewriter, which reads either a small view or the big base table</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="dash" class="box" data-f="var(--line)" x="30" y="140" width="180" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="dash-t" data-t="dashboard" x="120" y="167" text-anchor="middle" font-size="13" fill="var(--fg)">dashboard</text>
+<text id="dash-u" data-t="SUM per day and pool" x="120" y="187" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">SUM per day and pool</text>
+<rect id="rw" class="box" data-f="var(--line)" x="290" y="140" width="180" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="rw-t" data-t="query rewriter" x="380" y="167" text-anchor="middle" font-size="13" fill="var(--fg)">query rewriter</text>
+<text id="rw-u" data-t="" x="380" y="187" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="mv" class="box" data-f="var(--line)" x="560" y="40" width="310" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="mv-t" data-t="mv_daily_pool_volume" x="715" y="67" text-anchor="middle" font-size="13" fill="var(--fg)">mv_daily_pool_volume</text>
+<text id="mv-u" data-t="one row per day and pool" x="715" y="87" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">one row per day and pool</text>
+<rect id="base" class="box" data-f="var(--line)" x="560" y="240" width="310" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="base-t" data-t="swaps" x="715" y="267" text-anchor="middle" font-size="13" fill="var(--fg)">swaps</text>
+<text id="base-u" data-t="billions of rows" x="715" y="287" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">billions of rows</text>
+<path id="q1" class="msg" d="M210 172 L286 172" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="q2" class="msg" d="M470 160 L556 82" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="q3" class="msg" d="M470 186 L556 262" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="rf" class="msg" d="M715 238 L715 108" stroke="var(--undo)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="fr" data-t="" x="728" y="178" text-anchor="start" font-size="12" font-weight="400" fill="var(--undo)"></text>
+<text id="note" data-t="" x="30" y="262" text-anchor="start" font-size="14" font-weight="400" fill="var(--fg)"></text>
+<rect x="20" y="320" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="346" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="345" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-materialized-views/main.go</code> (<code>go run .</code>). The program models the base table, the view and the rewriter in memory, and counts the rows read.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">query or source</span>
+    <span style="--c:var(--ok)">answer from the view</span>
+    <span style="--c:var(--wait)">behind or no match</span>
+    <span style="--c:var(--fail)">expensive or wrong</span>
+    <span style="--c:var(--undo)">refresh</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>StarRocks async materialized views with automatic rewrite for dashboards over <code>swaps</code>. PostgreSQL <code>REFRESH MATERIALIZED VIEW CONCURRENTLY</code>, with no automatic rewrite. BigQuery materialized views, which cut bytes scanned and the bill.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Build a view for a hot, repeated aggregate. Refresh it per partition, set a staleness limit, store bitmaps or HLL for distinct counts, and confirm the rewrite in <code>EXPLAIN</code>.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Plain view</th><th>Materialized view</th></tr>
+      <tr><td>Stores data</td><td>no, a saved query</td><td>yes, the result</td></tr>
+      <tr><td>Read cost</td><td>the full query each time</td><td>a small table</td></tr>
+      <tr><td>Freshness</td><td>always current</td><td>as of the last refresh</td></tr>
+      <tr><td>Extra cost</td><td>none</td><td>refresh and storage</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"A materialized view stores a query's answer and the rewriter reads it instead of the base table, at the price of refresh cost and staleness."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+rw:[
+ {"t": "Before the view", "b": "The dashboard asks for daily volume per pool. In the program, every load reads all 700,000 rows of swaps. On the real table it is billions.", "w": "The same expensive answer is computed again on every refresh of the page.", "f": {"dash": "c", "base": "f"}, "on": ["q1", "q3"], "x": {"big": "every load scans swaps", "sql": "SUM(amount) GROUP BY day, pool"}, "pc": [1, 8]},
+ {"t": "Create a materialized view", "b": "The view stores the answer as a table: one row per day and pool. 7 days × 30 pools is 210 rows in the program.", "w": "A materialized view is a stored query result.", "f": {"mv": "ok", "base": "c"}, "on": ["rf"], "x": {"fr": "refresh", "big": "answer stored once", "sql": "CREATE MATERIALIZED VIEW …"}, "pc": [9, 10], "rl": [1, 2, 3, 4, 5, 6, 7, 8]},
+ {"t": "The rewriter matches the shape", "b": "The dashboard query is unchanged. The rewriter checks: are the query's group keys inside the view's, and can its aggregates be read from it? day and pool: yes. SUM(amount): yes. It reads 210 rows instead of 700,000.", "w": "The dashboard never names the view. StarRocks rewrites the query by itself.", "f": {"dash": "c", "rw": "ok", "mv": "ok"}, "on": ["q1", "q2"], "x": {"rw-u": "match: read the view", "big": "small read instead of billions of rows"}, "pc": [1, 2, 3, 4], "rl": [10, 11, 12]},
+ {"t": "A coarser question rolls up", "b": "Another panel asks for total volume per day. The same check passes: day is inside (day, pool), and a sum of sums is right. For day 7 it adds 30 view rows.", "w": "Same or coarser group keys can be answered from the view.", "f": {"dash": "c", "rw": "ok", "mv": "ok"}, "on": ["q1", "q2"], "x": {"dash-u": "SUM per day", "rw-u": "roll up from the view", "big": "per day from per day and pool", "sql": "SUM(amount) GROUP BY day"}, "pc": [2, 3, 5], "rl": [12, 14, 15]},
+ {"t": "Refresh per partition", "b": "When day 8 lands, the refresh finds the base partitions that changed since its last run: only day 8. It reads 100,000 of the 800,000 rows, and rewrites only that partition of the view.", "w": "Refresh cost follows the new data, not the whole history.", "f": {"mv": "ok", "base": "c"}, "on": ["rf"], "x": {"fr": "refresh today only", "big": "refresh one partition", "sql": "PARTITION BY day"}, "pc": [11, 12], "rl": [3, 4]}
+],
+stale:[
+ {"t": "The refresh falls behind", "b": "One week the refresh job was slow. Day 8 landed in the base table with 100,000 rows. The view is still through day 7.", "w": "A view is only as fresh as its last refresh.", "f": {"mv": "w", "base": "c"}, "x": {"fr": "last refresh: yesterday", "big": "view behind the base table"}, "pc": [11], "rl": [5, 6, 7]},
+ {"t": "Stale numbers, shown as current", "b": "The rewriter checks only the shape, and the shape still matches. No staleness check runs. In the program the view answers 0 for day 8, and the truth is 100,000.", "w": "Nothing failed loudly. The answer was simply old.", "f": {"dash": "f", "rw": "c", "mv": "f"}, "on": ["q1", "q2"], "x": {"fr": "last refresh: yesterday", "rw-u": "match: read the view", "dash-u": "today shows yesterday", "big": "wrong numbers, no error"}, "pc": [1, 2, 3, 4], "rl": [5, 6, 7]},
+ {"t": "Fix: a staleness limit", "b": "Set how stale a view may be, here 0 days. Now the rewriter also checks: is the view through the asked day? It is 1 day behind, over the limit, so it reads swaps for day 8 and gets 100,000.", "w": "Slower for a while, but never wrong.", "f": {"dash": "ok", "rw": "ok", "mv": "w", "base": "c"}, "on": ["q1", "q2", "q3"], "x": {"fr": "last refresh: yesterday", "rw-u": "too stale: read swaps for today", "big": "fresh again, at base-table cost"}, "pc": [6, 7, 8], "rl": [1, 2, 3]},
+ {"t": "A distinct count does not roll up", "b": "A panel asks for distinct senders per day. The check on aggregates fails: a distinct count per pool cannot be summed. In the program the sum of the 30 per-pool counts is 3,000, and the true count for the day is 1,000, because the same sender trades in many pools.", "w": "The rewriter cannot use the view and falls back to swaps.", "f": {"dash": "c", "rw": "w", "base": "f"}, "on": ["q1", "q3"], "x": {"dash-u": "COUNT(DISTINCT sender) per day", "rw-u": "no match: does not roll up", "big": "back to billions of rows", "sql": "COUNT(DISTINCT sender)"}, "pc": [3, 8], "rl": [9, 10]},
+ {"t": "Fix: store a mergeable set", "b": "Store a bitmap or HLL (HyperLogLog) of senders per day and pool in the view. Sets merge: merging the 30 sets gives 1,000, the true count, so the per day answer rolls up.", "w": "Check every rewrite in EXPLAIN, and drop views nobody reads: their refresh still costs.", "f": {"dash": "ok", "rw": "ok", "mv": "ok"}, "on": ["q1", "q2"], "x": {"dash-u": "COUNT(DISTINCT sender) per day", "rw-u": "match: merge the sets", "mv-u": "bitmap of senders per day and pool", "big": "distinct count from the view"}, "pc": [3, 13], "rl": [12, 13, 14, 15, 16]}
+]
+};
+const base={};
+const code={
+"rw":{
+ label:"SQL",
+ pc:["rewrite(query):", "  for each view:", "    if query group keys are inside the view's, and the aggregates can roll up:", "      if view.through >= the day the query asks for:   # the staleness check", "        answer from the view; sum its rows when the keys are coarser", "      else if behind by more than the limit:", "        read swaps for the missing days", "  no view matches: read swaps", "create view:", "  store one row per (day, pool)", "refresh:", "  for each base partition changed since the last run: rewrite that view partition", "distinct counts: store a mergeable set, then merge, never sum"],
+ real:["-- StarRocks: stored, refreshed per partition", "CREATE MATERIALIZED VIEW mv_daily_pool_volume", "PARTITION BY day", "REFRESH ASYNC EVERY (INTERVAL 10 MINUTE)", "AS", "SELECT day, pool, sum(amount) AS volume", "FROM   swaps", "GROUP  BY day, pool;", "", "-- the dashboard is unchanged. It never names the view", "SELECT day, pool, sum(amount) FROM swaps GROUP BY day, pool;", "-- EXPLAIN: TABLE: mv_daily_pool_volume   MaterializedView: true", "", "-- a coarser question rolls up", "SELECT day, sum(amount) FROM swaps GROUP BY day;"],
+ map:{"1": [11], "2": [12], "3": [11, 12], "4": [12], "5": [15], "8": [11], "9": [2, 3], "10": [6, 7, 8], "11": [3, 4], "12": [3, 4]}},
+"stale":{
+ label:"SQL",
+ pc:["rewrite(query):", "  for each view:", "    if query group keys are inside the view's, and the aggregates can roll up:", "      if view.through >= the day the query asks for:   # the staleness check", "        answer from the view; sum its rows when the keys are coarser", "      else if behind by more than the limit:", "        read swaps for the missing days", "  no view matches: read swaps", "create view:", "  store one row per (day, pool)", "refresh:", "  for each base partition changed since the last run: rewrite that view partition", "distinct counts: store a mergeable set, then merge, never sum"],
+ real:["-- a limit: how far behind the view may answer", "ALTER MATERIALIZED VIEW mv_daily_pool_volume", "  SET (\"mv_rewrite_staleness_second\" = \"0\");", "", "-- read the refresh state", "SELECT TABLE_NAME, LAST_REFRESH_FINISHED_TIME", "FROM   information_schema.materialized_views;", "", "-- does not roll up", "SELECT day, count(DISTINCT sender) FROM swaps GROUP BY day;", "", "-- rolls up: a bitmap of senders per day and pool", "CREATE MATERIALIZED VIEW mv_daily_pool_senders", "PARTITION BY day REFRESH ASYNC AS", "SELECT day, pool, bitmap_union(to_bitmap(sender)) AS senders", "FROM   swaps GROUP BY day, pool;"],
+ map:{"1": [10], "2": [10], "3": [10, 15], "4": [2, 3], "5": [10], "6": [2, 3], "7": [10], "8": [10], "11": [6, 7], "13": [13, 14, 15, 16]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zero Trust</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Zero trust and least privilege</h1>
+  <p class="lede">An attacker gets a shell in one web pod. What they can reach next decides how bad the day is. Press <b>Next</b> on the flat network, then switch to zero trust and replay the same attack.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="flat">Flat network</button>
+    <button role="tab" aria-selected="false" data-mode="zt">Zero trust</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">An attacker with a shell in one pod, on a flat network and under zero trust</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-zero-trust-least-privilege/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">a wall that held</span>
+    <span style="--c:var(--wait)">allowed, but small</span>
+    <span style="--c:var(--fail)">attacker, or a hole</span>
+    <span style="--c:var(--undo)">expired on its own</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: Kubernetes</h2>
+      <p>One service account per workload. A Role lists verbs on resources. A NetworkPolicy allow-list per namespace, so a pod reaches only what it names.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: agents</h2>
+      <p>A short-lived token with write on the staging namespace only. Production reads use a read-only context. Production writes go through a reviewed workflow.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Flat network</th><th>Zero trust</th></tr>
+      <tr><td>Trusts</td><td>Anything inside the network</td><td>Nothing, by position</td></tr>
+      <tr><td>One pod lost</td><td>Reaches every database</td><td>Reaches what its policy and token allow</td></tr>
+      <tr><td>Rights</td><td>Broad, granted once, kept</td><td>Smallest set, per task, with an end time</td></tr>
+      <tr><td>After the fact</td><td>Guesswork</td><td>Audit log of every call</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Nothing is trusted for where it sits, and every identity holds only what this one job needs, with an end time."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"flat":[["w", "Web pod", "svc"], ["d", "Database", "svc"], ["s", "Production API", "svc"], ["l", "Audit log", "svc"]],
+"zt":[["w", "Web pod", "svc"], ["d", "Database", "svc"], ["s", "Staging API", "svc"], ["l", "Audit log", "svc"]]
+};
+const code={
+"flat": {
+"label": "Go",
+"pc": [
+"connect(from, to):",
+"  if no network policy: allow             # flat: any pod reaches any port",
+"  allow only if from is listed for to",
+"call(token, action, env, now):",
+"  ok = token.until is 0 or now < until     # grants end by themselves",
+"  ok = ok and token.env is '*' or env",
+"  ok = ok and token holds action or '*'",
+"  code = 200 if ok else 403",
+"  if there is an audit log: append caller, action, env, code",
+"  return code",
+"abac(analyst, case): allow if analyst.region == case.region"
+],
+"real": [
+"type token struct {",
+"\tsubject string",
+"\tactions []string // e.g. \"read\"",
+"\tenv     string   // \"staging\", or \"*\" for every environment",
+"\tuntil   int      // minute the grant ends; 0 means never",
+"}",
+"",
+"// connect is the network check: on a flat network every caller gets in.",
+"func (c *cluster) connect(from, to string) bool {",
+"\tif c.netAllow == nil {",
+"\t\treturn true // flat network: no rule between pods",
+"\t}",
+"\tfor _, f := range c.netAllow[to] {",
+"\t\tif f == from {",
+"\t\t\treturn true",
+"\t\t}",
+"\t}",
+"\treturn false",
+"}",
+"",
+"// call is the API check: the token must hold the action, the environment",
+"// and an unexpired grant. Every answer is written to the audit log.",
+"func (c *cluster) call(t token, action, env string, now int) int {",
+"\tcode := 403",
+"\tif (t.until == 0 || now < t.until) && (t.env == \"*\" || t.env == env) && holds(t.actions, action) {",
+"\t\tcode = 200",
+"\t}",
+"\tif c.audit != nil {",
+"\t\tc.audit = append(c.audit, fmt.Sprintf(\"%s %s %s -> %d\", t.subject, action, env, code))",
+"\t}",
+"\treturn code",
+"}",
+"",
+"// abacAllows is one attribute rule instead of a role per region per team.",
+"func abacAllows(analystRegion, caseRegion string) bool { return analystRegion == caseRegion }"
+],
+"map": {
+"1": [
+9
+],
+"2": [
+10,
+11
+],
+"3": [
+13,
+14,
+18
+],
+"4": [
+23
+],
+"5": [
+5,
+25
+],
+"6": [
+4,
+25
+],
+"7": [
+3,
+25
+],
+"8": [
+24,
+26
+],
+"9": [
+28,
+29
+],
+"10": [
+31
+],
+"11": [
+35
+]
+}
+},
+"zt": {
+"label": "Go",
+"pc": [
+"connect(from, to):",
+"  if no network policy: allow             # flat: any pod reaches any port",
+"  allow only if from is listed for to",
+"call(token, action, env, now):",
+"  ok = token.until is 0 or now < until     # grants end by themselves",
+"  ok = ok and token.env is '*' or env",
+"  ok = ok and token holds action or '*'",
+"  code = 200 if ok else 403",
+"  if there is an audit log: append caller, action, env, code",
+"  return code",
+"abac(analyst, case): allow if analyst.region == case.region"
+],
+"real": [
+"type token struct {",
+"\tsubject string",
+"\tactions []string // e.g. \"read\"",
+"\tenv     string   // \"staging\", or \"*\" for every environment",
+"\tuntil   int      // minute the grant ends; 0 means never",
+"}",
+"",
+"// connect is the network check: on a flat network every caller gets in.",
+"func (c *cluster) connect(from, to string) bool {",
+"\tif c.netAllow == nil {",
+"\t\treturn true // flat network: no rule between pods",
+"\t}",
+"\tfor _, f := range c.netAllow[to] {",
+"\t\tif f == from {",
+"\t\t\treturn true",
+"\t\t}",
+"\t}",
+"\treturn false",
+"}",
+"",
+"// call is the API check: the token must hold the action, the environment",
+"// and an unexpired grant. Every answer is written to the audit log.",
+"func (c *cluster) call(t token, action, env string, now int) int {",
+"\tcode := 403",
+"\tif (t.until == 0 || now < t.until) && (t.env == \"*\" || t.env == env) && holds(t.actions, action) {",
+"\t\tcode = 200",
+"\t}",
+"\tif c.audit != nil {",
+"\t\tc.audit = append(c.audit, fmt.Sprintf(\"%s %s %s -> %d\", t.subject, action, env, code))",
+"\t}",
+"\treturn code",
+"}",
+"",
+"// abacAllows is one attribute rule instead of a role per region per team.",
+"func abacAllows(analystRegion, caseRegion string) bool { return analystRegion == caseRegion }"
+],
+"map": {
+"1": [
+9
+],
+"2": [
+10,
+11
+],
+"3": [
+13,
+14,
+18
+],
+"4": [
+23
+],
+"5": [
+5,
+25
+],
+"6": [
+4,
+25
+],
+"7": [
+3,
+25
+],
+"8": [
+24,
+26
+],
+"9": [
+28,
+29
+],
+"10": [
+31
+],
+"11": [
+35
+]
+}
+}
+};
+const steps={
+"flat":[
+ {"t": "A shell in one pod", "b": "An attacker exploits a bug in the web pod and gets a shell.", "w": "One pod is lost. That happens. The question is how far it goes.", "m": [], "st": {"w": ["attacker shell", "fail"]}, "ac": {"w": "fail"}, "pc": [1]},
+ {"t": "Inside means trusted", "b": "The web pod connects to the database on port 5432. The cluster has no NetworkPolicy, so connect has no list to check and returns true.", "w": "A VPN (Virtual Private Network) or a firewall at the edge does nothing once the attacker is already inside.", "m": [["w", "d", 120, "connect :5432", "fail"], ["d", "w", 150, "open", "fail"], ["band", 0, 195, "flat network: no rule between pods", "fail"]], "st": {"w": ["attacker shell", "fail"], "d": ["port open", "fail"]}, "ac": {"w": "fail"}, "pc": [1, 2]},
+ {"t": "Admin, for now", "b": "The pod's token holds actions * and environment *, with no end time. Every check in call passes: until is 0, * matches the environment, * matches the action.", "w": "Admin for now becomes admin forever. The next leak inherits it.", "m": [["w", "s", 120, "token: admin", "fail"], ["s", "w", 150, "200, anything", "fail"]], "st": {"w": ["admin token", "fail"], "d": ["port open", "fail"], "s": ["accepts admin", "fail"]}, "ac": {"w": "fail"}, "pc": [4, 5, 6, 7, 8]},
+ {"t": "Production changes", "b": "The attacker sends delete on production. The token passes all three checks, so call answers 200. The database port is open too, so the attacker copies every table.", "w": "The damage is the sum of everything the pod could reach.", "m": [["w", "s", 120, "delete customer data", "fail"], ["w", "d", 160, "copy every table", "fail"]], "st": {"w": ["attacker shell", "fail"], "d": ["copied", "fail"], "s": ["data deleted", "fail"]}, "ac": {"w": "fail"}, "pc": [8, 10]},
+ {"t": "Nothing recorded", "b": "call writes to the audit log only when one exists. This cluster has none, so after the attack the log has 0 lines. Nobody can say what was taken.", "w": "Without an audit log you cannot even tell customers what happened.", "m": [["band", 0, 130, "who called what? no record", "fail"]], "st": {"w": ["gone", "fail"], "d": ["copied", "fail"], "s": ["data deleted", "fail"], "l": ["nothing recorded", "fail"]}, "pc": [9]}
+],
+"zt":[
+ {"t": "The same shell", "b": "Same bug, same attacker, same shell in the web pod.", "w": "Zero trust assumes this already happened, and plans the next wall.", "m": [], "st": {"w": ["attacker shell", "fail"]}, "ac": {"w": "fail"}, "pc": [1]},
+ {"t": "NetworkPolicy: port closed", "b": "Now the policy for db lists only api. connect looks for web in that list, does not find it, and returns false. The connection is dropped.", "w": "No network position is trusted. Inside the cluster is treated like the internet.", "m": [["w", "d", 120, "connect :5432", "fail"], ["band", 0, 165, "NetworkPolicy: web may not reach the database", "ok"]], "st": {"w": ["attacker shell", "fail"], "d": ["port closed", "ok"]}, "ac": {"w": "fail"}, "pc": [1, 3]},
+ {"t": "The token: read only, staging only", "b": "The token holds read and staging only. The attacker asks write on production. production is not staging, so call answers 403.", "w": "Least privilege: each identity holds only what this one job needs.", "m": [["w", "s", 120, "write production", "fail"], ["s", "w", 150, "403: read, staging only"]], "st": {"w": ["read-only token", "wait"], "d": ["port closed", "ok"], "s": ["refused write", "ok"]}, "ac": {"w": "fail"}, "pc": [6, 7, 8]},
+ {"t": "The blast radius", "b": "read on staging passes all three checks, so call answers 200. That is the whole blast radius: what this one token may do.", "w": "The loss is sized by the rights, not by the network.", "m": [["w", "s", 120, "read staging"], ["s", "w", 150, "200, staging rows", "fail"]], "st": {"w": ["read-only token", "wait"], "d": ["port closed", "ok"], "s": ["staging read", "wait"]}, "ac": {"w": "fail"}, "pc": [7, 8, 10]},
+ {"t": "Every call is recorded", "b": "This cluster has an audit log. call appends one line per answer: web write production -> 403, then web read staging -> 200.", "w": "In the morning the team can list every call the attacker made.", "m": [["s", "l", 130, "web, write prod, denied"], ["s", "l", 170, "web, read staging, ok"]], "st": {"w": ["attacker shell", "fail"], "d": ["port closed", "ok"], "s": ["logged", "ok"], "l": ["recorded", "ok"]}, "ac": {"w": "fail"}, "pc": [9]},
+ {"t": "Grants that end by themselves", "b": "Ana gets admin on production with until = minute 60. At minute 30 the check now < until passes: 200. At minute 61 it fails: 403. Nobody had to remove the grant.", "w": "An expiring grant fixes admin for now. Nobody has to come back.", "m": [["band", 0, 130, "admin grant for the migration ends at its end time", "undo"]], "st": {"s": ["grant expired", "undo"], "l": ["grant logged", "ok"]}, "pc": [5]},
+ {"t": "RBAC, then ABAC", "b": "RBAC (Role-Based Access Control) needs a role per region per team. ABAC (Attribute-Based Access Control) is one rule: allow when analyst.region equals case.region. eu with eu is allowed, eu with us is not.", "w": "Move the part that varies into attributes: an analyst may read a case when the case region equals the analyst region.", "m": [["band", 0, 120, "RBAC: role per customer per team: hundreds of roles", "fail"], ["band", 0, 170, "ABAC: case.region equals analyst.region: one rule", "ok"]], "st": {"s": ["one rule", "ok"]}, "pc": [11]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ETL versus ELT</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>ETL versus ELT</h1>
+  <p class="lede">A shop copies its Postgres orders into a warehouse every night. A currency bug hides in the transform. Press <b>Next</b> and see which way can still rebuild history when the bug is found a month later.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="etl" id="tab-etl">ETL: transform before loading</button>
+    <button role="tab" aria-selected="false" data-mode="elt" id="tab-elt">ELT: load raw, transform inside</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Postgres source, an optional transform server, and the warehouse with raw and clean tables</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-etl-vs-elt/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">source data</span>
+    <span style="--c:var(--wait)">working</span>
+    <span style="--c:var(--ok)">stored and correct</span>
+    <span style="--c:var(--coord)">SQL model</span>
+    <span style="--c:var(--line)">empty or idle</span>
+    <span style="--c:var(--fail)">wrong or lost</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet ETL</h2>
+      <p>Older tools such as Informatica and SSIS, and any flow where personal data must be masked before it lands. You keep ETL for that one column and load the rest raw.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet ELT</h2>
+      <p>dbt models over Snowflake, BigQuery or StarRocks. Raw tables stay restricted to the pipeline. A chain indexer is ELT in spirit: raw blocks are kept, decoded facts are rebuilt from them.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>ETL</th><th>ELT</th></tr>
+      <tr><td>Where the transform runs</td><td>A separate server</td><td>Inside the warehouse, in SQL</td></tr>
+      <tr><td>Raw input kept</td><td>No</td><td>Yes, in raw tables</td></tr>
+      <tr><td>A rule changes</td><td>Re-extract, if the source still has it</td><td>Rerun the model over raw rows</td></tr>
+      <tr><td>Personal data</td><td>Masked before it lands</td><td>Lands raw: restrict raw tables</td></tr>
+      <tr><td>Fits</td><td>Weak warehouse, strict masking</td><td>Cheap storage, strong SQL engine</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"ETL transforms before loading and loses the raw input, ELT loads raw first and transforms in the warehouse, so a rule change is just a rerun."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"etl": {"label": "Go", "pc": ["every night:", "  rows = extract(postgres, month)       # 10,000 raw orders", "  for each row r in rows:", "    if r.isTest: drop r", "    r.usd = r.amount * rate(r.currency)  # bug: euro rate 1.00, not 1.10", "    revenue[r.day] += r.usd", "  load(warehouse.revenue, revenue)      # only the result lands", "  discard(rows)                         # the raw input is gone", "# a rebuild needs rows, and rows were discarded", "# fix: load raw first (ELT), transform with code you can rerun"], "real": ["const (", "\teurRateWrong = 1.00 // the bug: euros counted as dollars", "\teurRateRight = 1.10", ")", "", "// etlNight transforms outside the warehouse and loads only the result.", "func etlNight(rows []Order, eurRate float64) map[int]float64 {", "\trevenue := map[int]float64{}", "\tfor _, r := range rows {", "\t\tif r.IsTest {", "\t\t\tcontinue // drop test orders", "\t\t}", "\t\tusd := r.Amount", "\t\tif r.Currency == \"EUR\" {", "\t\t\tusd = r.Amount * eurRate // convert currency", "\t\t}", "\t\trevenue[r.Day] += usd // only this sum is loaded", "\t}", "\treturn revenue // raw rows are discarded here", "}", "", "rows := extract() // 10,000 orders from Postgres", "etl := etlNight(rows, eurRateWrong)", "rows = nil // the night job ends, the raw input is gone"], "map": {"1": [22], "2": [22], "3": [9], "4": [10, 11], "5": [2, 13, 14, 15], "6": [17], "7": [19, 23], "8": [24], "9": [24], "10": [3]}}, "elt": {"label": "SQL", "pc": ["every night:", "  rows = extract(postgres, month)", "  load(warehouse.raw_orders, rows)      # unchanged, kept", "model revenue_by_day, SQL in git:", "  for each raw row: usd = amount * rate(currency)", "  skip test orders, sum usd by day", "run model: rebuild revenue_by_day from raw_orders", "fix: model v2 uses rate 1.10, run it again", "grant raw_orders to the pipeline only    # names and emails stay hidden", "clean models drop or mask email and name"], "real": ["-- load: copy the raw rows in, unchanged", "INSERT INTO raw_orders SELECT * FROM postgres_orders_month;", "", "-- model revenue_by_day, v2, kept in git and run in the warehouse", "INSERT OVERWRITE revenue_by_day", "SELECT day,", "       sum(CASE currency WHEN 'EUR' THEN amount * 1.10   -- v1 had 1.00: the bug", "                         ELSE amount END) AS revenue", "FROM   raw_orders", "WHERE  NOT is_test", "GROUP  BY day;", "", "-- raw tables hold personal data: only the pipeline may read them", "REVOKE SELECT ON raw_orders FROM ROLE analyst;", "GRANT  SELECT ON raw_orders TO ROLE pipeline;"], "map": {"1": [1], "2": [2], "3": [2], "4": [4, 5], "5": [6, 7, 8, 9], "6": [10, 11], "7": [5], "8": [7], "9": [13, 14, 15], "10": [13]}}};
+
+const steps={
+"etl":[
+ {pc:[1],t:"Night copy, the old way",b:"Every night the shop copies its Postgres orders into the warehouse. ETL means Extract, Transform, Load: rows are cleaned on a separate server first.",w:"Only the cleaned result will reach the warehouse.",src:["10,000 orders","var(--svc)"],tr:["idle","var(--line)"],raw:null,clean:["empty","var(--line)"]},
+ {pc:[2],t:"Extract",b:"The job reads the day's orders from Postgres: raw rows with every column.",w:"This is the last moment the raw input exists outside the source.",src:["10,000 orders","var(--svc)"],tr:["receives raw rows","var(--wait)"],raw:null,clean:["empty","var(--line)"],ar:["st"]},
+ {pc:[3, 4, 5, 6],t:"Transform outside",b:"The transform server checks each row: is it a test order? Drop it. Is the currency EUR? Multiply by the rate. The bug: the rate is 1.00, not 1.10, so every euro order is counted 10 percent low.",w:"Nobody sees the bug yet. The output looks reasonable.",src:["10,000 orders","var(--svc)"],tr:["clean, convert, join","var(--wait)"],raw:null,clean:["empty","var(--line)"]},
+ {pc:[7, 8],t:"Load only the result",b:"Only the sums per day land in the warehouse: 196,000 USD for the month. The job then ends and its 10,000 raw rows are thrown away.",w:"The warehouse now holds an opinion about the data, not the data.",src:["10,000 orders","var(--svc)"],tr:["done, raw dropped","var(--line)"],raw:null,clean:["revenue by day","var(--ok)"],ar:["tc"]},
+ {pc:[8, 9],t:"The failure that matters",b:"A month later finance finds the euro bug. A rebuild needs last month's 10,000 raw rows, and the job kept 0. Postgres has moved on: orders were edited and some deleted.",w:"ETL lost the raw input, so history cannot be rebuilt. Fix: load raw first, transform with code that can be rerun.",src:["changed since","var(--fail)"],tr:["no raw input","var(--fail)"],raw:null,clean:["wrong revenue","var(--fail)"],fail:true}
+],
+"elt":[
+ {pc:[1, 2, 3],t:"Load raw first",b:"ELT means Extract, Load, Transform. The job copies the raw orders straight into a raw table in StarRocks, unchanged.",w:"The warehouse keeps the input exactly as it arrived.",src:["10,000 orders","var(--svc)"],raw:["raw orders, unchanged","var(--ok)"],clean:["empty","var(--line)"],ar:["sr"]},
+ {pc:[4, 5, 6, 7],t:"Transform inside with SQL",b:"A SQL model, often written with dbt, reads the raw table and builds the clean revenue table inside the warehouse.",w:"The transform is code in version control, run where the data already is.",src:["10,000 orders","var(--svc)"],raw:["raw orders, unchanged","var(--ok)"],clean:["revenue by day","var(--wait)"],ar:["rc"],model:"model v1"},
+ {pc:[5],t:"The same bug appears",b:"The model has the same euro bug. The clean table is wrong for a month.",w:"Bugs still happen. What matters is what you can do after.",src:["10,000 orders","var(--svc)"],raw:["raw orders, unchanged","var(--ok)"],clean:["wrong revenue","var(--fail)"],model:"model v1"},
+ {pc:[8, 7],t:"Fix the model, rerun",b:"The model is fixed to v2: rate 1.10. It reruns over the same 10,000 raw rows and rebuilds the month: 200,800 USD instead of 196,000.",w:"A rule change is just a rerun, because the raw input never left.",src:["10,000 orders","var(--svc)"],raw:["raw orders, unchanged","var(--ok)"],clean:["revenue by day, fixed","var(--ok)"],ar:["rc"],model:"model v2"},
+ {pc:[9, 10],t:"The trap in ELT",b:"The raw table holds names, emails and card hints. If every analyst can read it, personal data leaks inside the company.",w:"Restrict raw tables to the pipeline. Mask or drop personal columns in the clean models, or transform that one column before it lands.",src:["10,000 orders","var(--svc)"],raw:["raw: names, emails","var(--fail)"],clean:["revenue by day","var(--ok)"],model:"model v2",fail:true}
+]};
+function draw(s){
+  let o=chip(20,140,190,60,"var(--svc)","Postgres orders",s.src[0]);
+  if(s.src[1]!=="var(--svc)")o=chip(20,140,190,60,s.src[1],"Postgres orders",s.src[0]);
+  if(s.tr)o+=chip(290,140,200,60,s.tr[1],"Transform server",s.tr[0]);
+  o+=B(560,20,320,320,"none",12,'stroke="var(--line)" stroke-width="2"')+T(580,44,"StarRocks warehouse",{a:"start",c:"var(--muted)"});
+  if(s.raw)o+=chip(580,70,280,60,s.raw[1],"raw table",s.raw[0]);
+  else o+=B(580,70,280,60,"none",30,'stroke="var(--line)" stroke-dasharray="6 4"')+T(720,105,"no raw table",{c:"var(--muted)"});
+  o+=chip(580,240,280,60,s.clean[1],"clean table",s.clean[0]);
+  const A={st:[212,170,288,170],tc:[492,170,578,260],sr:[212,165,578,100],rc:[720,132,720,238]};
+  (s.ar||[]).forEach(k=>o+=L(...A[k],"var(--coord)"));
+  if(s.model)o+=M(chip(640,160,160,40,"var(--coord)","SQL "+s.model));
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

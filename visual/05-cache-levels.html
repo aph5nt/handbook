@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache levels</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box,.bar{transition:fill .35s,stroke .35s,width .5s,opacity .35s}
+.dot{transition:transform .5s}
+@media (prefers-reduced-motion:reduce){.box,.bar,.dot{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache levels: one read, eight places it can be answered</h1>
+  <p class="lede">A service asks for the balance of account 4711. The answer may already sit in one of eight places, from the CPU to the disk. Each level down is about ten to a thousand times slower. Press <b>Next</b> to see the read hit at each level. The bar is the time, on a log scale: each notch is ten times longer.</p>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 440" aria-labelledby="stage-title">
+      <title id="stage-title">A request moving down the cache hierarchy, with a time bar per level</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13" fill="var(--muted)">
+        <text x="330" y="22">1 ns</text><text x="400" y="22">10</text><text x="470" y="22">100</text>
+        <text x="540" y="22">1 µs</text><text x="610" y="22">10</text><text x="680" y="22">100</text><text x="750" y="22">1 ms</text><text x="820" y="22">10 ms</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="1" stroke-dasharray="2 4" id="ticks"></g>
+      <g id="rows" font-family="Atkinson Hyperlegible,system-ui" font-size="15"></g>
+      <g id="req" class="dot"><circle r="10" fill="var(--coord)"/><text x="0" y="4" text-anchor="middle" font-size="11" fill="#fff" font-weight="700" font-family="Atkinson Hyperlegible,system-ui">?</text></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <text x="30" y="428" fill="var(--fg)" id="total"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-levels/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the request</span>
+    <span style="--c:var(--ok)">hit: answered here</span>
+    <span style="--c:var(--fail)">miss: looked and moved on</span>
+    <span style="--c:var(--line)">not reached</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A graph database search that hits the page cache finishes in milliseconds. The same search cold, after a restart, reads every page from disk and takes many times longer. Warming the cache before taking traffic is the difference between a usable and an unusable node. In Go, a <code>map</code> guarded by a mutex in the process is the level above Redis, and it removes a network hop for the hottest keys.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Put a cache one level above where the cost is. Memory to network is about a thousand times, so a process cache in front of Redis wins big for hot keys. Redis in front of a database wins less in time, about ten times, but it is shared by every instance. Do not add a level without a reason for that gap.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Level</th><th>About how long</th><th>Shared by</th><th>Lost when</th></tr>
+      <tr><td>CPU L1, L2, L3</td><td>1 to 10 nanoseconds</td><td>one core, or one socket</td><td>the next context switch</td></tr>
+      <tr><td>Main memory (RAM)</td><td>about 100 nanoseconds</td><td>one machine</td><td>the process exits</td></tr>
+      <tr><td>Process cache</td><td>100 nanoseconds to 1 microsecond</td><td>one process</td><td>a restart or a deploy</td></tr>
+      <tr><td>Redis, Memcached</td><td>100 microseconds to 1 millisecond, a network hop</td><td>every instance</td><td>the key expires or is evicted</td></tr>
+      <tr><td>Database buffer pool</td><td>a network hop plus a memory read</td><td>every client of the database</td><td>the database restarts</td></tr>
+      <tr><td>Disk (SSD)</td><td>1 to 10 milliseconds for the whole read</td><td>the database</td><td>never, it is the source</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Each level down is about a thousand times slower: nanoseconds in the CPU, hundreds of nanoseconds in memory, a millisecond over the network, milliseconds on disk. I put a cache in front of the gap that hurts."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+// Bar length is log10 of the time in nanoseconds. Orders of magnitude, not measurements.
+const L=[
+ {n:"CPU L1 cache",     log:0.0, hint:"about 1 ns"},
+ {n:"CPU L2 cache",     log:0.5, hint:"a few ns"},
+ {n:"CPU L3 cache",     log:1.0, hint:"about 10 ns"},
+ {n:"Main memory (RAM)",log:2.0, hint:"about 100 ns"},
+ {n:"Process cache",    log:2.7, hint:"100 ns to 1 µs"},
+ {n:"Redis, over the network",log:5.3,hint:"100 µs to 1 ms"},
+ {n:"Database buffer pool",   log:5.8,hint:"a network hop plus memory"},
+ {n:"Disk (SSD)",             log:6.7,hint:"1 to 10 ms"}
+];
+const X0=330,PX=70,ROW0=40,RH=46;
+const steps=[
+ {hit:0,pc:[3, 4, 6],t:"Hit in L1",b:"The balance of account 4711 was used a moment ago by this very core. The check on line 4: is the key in L1? Yes, it is still in that cache, a few kilobytes next to the core. The read takes about a nanosecond.",w:"This is the fastest answer a computer gives. Everything below is measured against it."},
+ {hit:1,pc:[3, 4, 6, 7],t:"Hit in L2",b:"The check on line 4 says no for L1, so line 7 goes one level down. L2 is a bigger cache, still on the core, a few hundred kilobytes. A few nanoseconds.",w:"Each CPU level is a few times slower and much larger. The CPU does this with no help from your code."},
+ {hit:2,pc:[3, 4, 6, 7],t:"Hit in L3",b:"L1 and L2 missed. L3 is shared by all cores on the socket, tens of megabytes. About ten nanoseconds.",w:"A tight loop over a small array lives here. A hash map that jumps around memory does not."},
+ {hit:3,pc:[3, 4, 6, 7, 9],t:"Hit in main memory",b:"All CPU caches missed. The value is in RAM. About a hundred nanoseconds, ten times L3.",w:"Memory is where your process cache really lives. From here on, the shape of your code decides the hit rate."},
+ {hit:4,pc:[3, 4, 6, 7],t:"Hit in the process cache",b:"The service keeps a map of recent balances in its own memory. A lookup is a hash, a compare and a read: a few hundred nanoseconds to a microsecond.",w:"Same speed as memory, because it is memory. The catch: every instance has its own copy, and a deploy empties it."},
+ {hit:5,pc:[3, 4, 5, 6, 7],t:"Hit in Redis",b:"The check on line 4 says no for the process cache. The service asks Redis over the network. On the way back, line 5 fills the process cache, so the next read stops there. The bytes travel, Redis looks up the key, the reply travels back and is decoded. About a millisecond.",w:"The jump from memory to Redis is the biggest in the picture: about a thousand times. Redis is fast. The network hop is the cost, not Redis."},
+ {hit:6,pc:[3, 4, 5, 6, 7],t:"Hit in the database buffer pool",b:"Redis had no key. The service queries the database. The database finds the page already in its buffer pool, memory it manages itself, and answers without touching the disk.",w:"A database is also a cache over its own disk. A warm buffer pool is why the same query is fast the second time."},
+ {hit:7,pc:[3, 4, 5, 6, 7],t:"Hit on disk, the source",b:"The buffer pool had no page. The database reads the page from the SSD, then answers. One to ten milliseconds for the whole read.",w:"This is the truth, and the slowest place to find it. Every level above exists to avoid this read."},
+ {hit:7,cold:true,pc:[10, 11, 12],t:"The failure that matters: a cold start",b:"The service was just deployed and Redis was just restarted. The check on line 4 says no at every level. Every single request walks all the way to the disk, and the disk is the one place that cannot serve thousands of reads a second.",w:"A cold cache turns a fast system into a slow one for minutes. Warm the hottest keys before taking traffic, and never restart every cache level at the same time."}
+];
+let i=0,timer=null;const $=id=>document.getElementById(id);
+function build(){
+  const t=$("ticks");for(let k=0;k<8;k++){const x=X0+k*PX;t.innerHTML+=`<line x1="${x}" y1="28" x2="${x}" y2="${ROW0+L.length*RH}"/>`;}
+  const r=$("rows");L.forEach((l,k)=>{const y=ROW0+k*RH;
+    r.innerHTML+=`<text x="30" y="${y+22}" fill="var(--fg)" font-weight="700">${l.n}</text>
+      <rect class="bar" id="bar${k}" x="${X0}" y="${y+6}" height="24" rx="4" width="${12+l.log*PX}" fill="var(--line)"/>
+      <text id="hint${k}" x="${X0+16+l.log*PX}" y="${y+23}" fill="var(--muted)" font-size="13">${l.hint}</text>`;});
+}
+function render(){
+  const s=steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps.length}`;
+  L.forEach((l,k)=>{const b=$("bar"+k);
+    const c=k<s.hit?"var(--fail)":k===s.hit?(s.cold?"var(--fail)":"var(--ok)"):"var(--line)";
+    b.setAttribute("fill",c);b.setAttribute("opacity",k<=s.hit?1:0.6);});
+  const y=ROW0+s.hit*RH+18;$("req").setAttribute("transform",`translate(300 ${y})`);
+  $("total").textContent=s.cold?"Every level missed. Time: the disk, for every request at once.":`Answered at: ${L[s.hit].n}, ${L[s.hit].hint}. Levels checked: ${s.hit+1}.`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps.length-1;
+  drawCode();
+}
+const code={
+"x": {
+"label": "Go",
+"pc": [
+"levels = L1, L2, L3, RAM, process cache, Redis, buffer pool, disk",
+"function read(key):",
+"  for level in levels, fastest first:",
+"    if key in level:                    # hit",
+"      copy key into every faster level  # the next read stops sooner",
+"      return value, time of this level",
+"    # miss: go one level down",
+"",
+"# the CPU walks L1, L2, L3 by itself. Your code asks from RAM on.",
+"cold start: every level is empty",
+"  every request walks all the way to the disk",
+"fix: warm first, restart one instance at a time"
+],
+"real": [
+"type Level struct {",
+"\tname string",
+"\tns   int // about how long an answer from this level takes",
+"\tkeys map[string]bool",
+"}",
+"",
+"func Read(ls []*Level, key string) (name string, ns, checked int) {",
+"\tfor i, l := range ls {",
+"\t\tif l.keys[key] { // hit",
+"\t\t\tfor _, faster := range ls[:i] {",
+"\t\t\t\tfaster.keys[key] = true // the next read stops sooner",
+"\t\t\t}",
+"\t\t\treturn l.name, l.ns, i + 1",
+"\t\t}",
+"\t\t// miss: go one level down",
+"\t}",
+"\treturn \"nowhere\", 0, len(ls)",
+"}",
+"",
+"ls := []*Level{{\"CPU L1 cache\", 1, nil}, {\"CPU L2 cache\", 4, nil},",
+"\t{\"CPU L3 cache\", 10, nil}, {\"Main memory (RAM)\", 100, nil},",
+"\t{\"Process cache\", 500, nil}, {\"Redis\", 500_000, nil},",
+"\t{\"Database buffer pool\", 800_000, nil}, {\"Disk (SSD)\", 5_000_000, nil}}",
+"",
+"// cold start: only the disk has the key",
+"name, ns, _ := Read(ls, key) // the disk, about 5,000,000 ns",
+"name, ns, _ = Read(ls, key) // L1, about 1 ns: the walk filled the levels"
+],
+"map": {
+"1": [
+20,
+21,
+22,
+23
+],
+"2": [
+7
+],
+"3": [
+8
+],
+"4": [
+9
+],
+"5": [
+10,
+11,
+12
+],
+"6": [
+13
+],
+"7": [
+15
+],
+"9": [
+8
+],
+"10": [
+25
+],
+"11": [
+26
+],
+"12": [
+27
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code.x,s=steps[i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps.length-1)return stop();go(i+1)},2600)};
+build();go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

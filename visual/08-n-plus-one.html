@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>N+1 and batched writes</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>N+1 and batched writes: count the round trips</h1>
+  <p class="lede">Every arrow is one <b>round trip</b>: a statement sent, parsed, planned, run and answered. The rows hardly matter. The arrows do. Press <b>Next</b> and watch the counter grow with n, or stay flat.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="n1">N+1 reads</button>
+    <button role="tab" aria-selected="false" data-mode="join">One join or one IN</button>
+    <button role="tab" aria-selected="false" data-mode="write">Per-row or per-page writes</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">An application and a database with round-trip arrows between them</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker><marker id="arrF" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="18" markerHeight="18" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect x="30" y="30" width="170" height="280" rx="10" fill="var(--coord)"/>
+        <text id="app" x="115" y="58" text-anchor="middle" fill="#fff"></text>
+        <rect id="db" class="box" x="700" y="30" width="170" height="280" rx="10" fill="var(--svc)"/>
+        <text id="dbn" x="785" y="58" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g id="segs"></g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700"></g>
+      <rect x="30" y="322" width="840" height="46" rx="8" fill="none" stroke="var(--line)"/>
+      <text id="cnt" x="50" y="351" font-family="Atkinson Hyperlegible,system-ui" font-size="17" font-weight="700"></text>
+      <text id="sub" x="850" y="351" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="15" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-n-plus-one/main.go</code> (<code>go run .</code>). The Go here is copied from the program, which runs it against in-memory stand-ins for the database and the load endpoint, and counts round trips. It opens no connection.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">one round trip</span>
+    <span style="--c:var(--ok)">one batched round trip</span>
+    <span style="--c:var(--wait)">a small column segment</span>
+    <span style="--c:var(--fail)">the cost that grows with n</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>An ORM (Object-Relational Mapper) that loads children lazily: touching <code>order.lines</code> in a loop sends one query per order. A Go indexer writing to StarRocks: one <code>INSERT</code> per row makes one tiny segment per row, and compaction falls behind.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Log the query count per request. A count that grows with the result size is N+1. Fix reads with one join, one <code>IN (...)</code> query or eager loading. Fix writes with one bulk load per table per page, sized under the engine's statement limit, with a page id so a retry replaces instead of duplicating.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>N+1 or per-row</th><th>Join, IN, or per-page batch</th></tr>
+      <tr><td>Round trips for n items</td><td>n + 1, or n</td><td>1 or 2, whatever n is</td></tr>
+      <tr><td>Grows with</td><td>the size of the result</td><td>nothing, until the batch limit</td></tr>
+      <tr><td>Column store segments</td><td>one per row, compaction buried</td><td>one per page</td></tr>
+      <tr><td>Risk</td><td>slow pages, a busy database</td><td>a batch over the size or time limit, so cap it</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"N+1 is a round-trip bug, not a row-count bug. I read with one join or one IN query, and I write one batch per page, never one statement per row."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+// a: thin arrows, l: labels for the first arrows, f: fat arrows [label], c: counter, bad: counter grows with n, sg: segments, sgBad
+const steps={
+n1:[
+ {t:"Start",b:"An order page shows order 1001 and its lines. The code uses an ORM. It looks like plain object code: order, then order.lines.",w:"The ORM hides the SQL, and with it the number of round trips.",a:0,c:"round trips: 0",s:"n = lines on the order"},
+ {t:"Load the order",b:"The ORM sends one query for order 1001 that joins its lines. The counter goes to 1: one request, one wait for the reply.",w:"This is the 1 in N+1.",a:1,l:["orders WHERE id = 1001"],c:"round trips: 1",s:"n = 0 so far"},
+ {t:"Loop over 5 lines",b:"The code loops over the lines. Each time it touches line.product, the ORM checks: is it loaded? No, so it sends one more query. Five lines: 1 + 5 = 6 round trips.",w:"This is the N. Each query is fast. Their sum is not.",a:6,l:["orders WHERE id = 1001","product of line 1","product of line 2","product of line 3"],c:"round trips: 6",s:"n = 5: 1 + 5",bad:1},
+ {t:"A big order: 20 lines",b:"A business customer orders 20 items. The loop runs once per line, so the same page sends 1 + 20 = 21 queries.",w:"The count grows with the data. That is the signature of N+1.",a:21,l:["orders WHERE id = 1001"],c:"round trips: 21",s:"n = 20: 1 + 20",bad:1},
+ {t:"The failure that matters",b:"Now a list page shows 50 orders, each with 20 lines, each line loading its product. The formula is 1 + orders + orders × lines: 1 + 50 + 1,000 = 1,051 round trips for one page view.",w:"Each round trip waits on the network and on the database. A thousand small waits make a page that takes seconds, and a database busy with nothing.",a:21,l:["orders LIMIT 50"],c:"round trips: 1,051",s:"1 + 50 orders + 1,000 lines",bad:1,note:"1,051 round trips, 21 drawn"}
+],
+join:[
+ {t:"Start: the same 20-line order",b:"Same page, same order with 20 lines. This time the code asks for everything it needs up front.",w:"The goal: a number of round trips that does not depend on n.",a:0,c:"round trips: 0",s:"n = 20"},
+ {t:"One join",b:"SELECT ... FROM orders o JOIN order_lines l ON l.order_id = o.id JOIN products p ON p.id = l.product_id WHERE o.id = 1001. The database does the matching, so there is no lazy field left to trigger a query. One round trip returns 20 rows.",w:"The rows still come back. Only the waiting is gone.",a:0,f:["one JOIN, 20 rows back"],c:"round trips: 1",s:"n = 20: 1"},
+ {t:"Or two queries with IN",b:"For a list page: one query for 50 orders, then one query SELECT ... FROM order_lines WHERE order_id IN (the 50 ids).",w:"Two round trips. ORMs call this eager loading. It avoids a join that would repeat each order's columns on every line.",a:0,f:["orders LIMIT 50","lines WHERE order_id IN (50 ids)"],c:"round trips: 2",s:"50 orders, 1,000 lines: 2"},
+ {t:"Grow n: still 2",b:"Double the orders: 100 orders, 2,000 lines. No line of the code runs per order, so the count stays at 2. The second query returns more rows, and that is cheap.",w:"Cost now follows the rows read, not the number of statements.",a:0,f:["orders LIMIT 100","lines WHERE order_id IN (100 ids)"],c:"round trips: 2",s:"100 orders, 2,000 lines: 2"},
+ {t:"How you catch it",b:"Log the number of queries per request, or watch it in a trace. A count that grows with the result size is N+1. A flat count is fine.",w:"Fix it where it starts: the loop that touches a lazy relation.",a:0,f:["one JOIN, or 2 queries with IN"],c:"queries per request: flat",s:"alarm when it grows with n"}
+],
+write:[
+ {t:"Start: a page of 10,000 rows",b:"A Go indexer has read a page of blocks from the chain. It holds 10,000 transfer rows to write into StarRocks, a column store.",w:"Writes have the same shape as N+1: per row, or per page.",a:0,c:"statements: 0",s:"segments: 0",app:"Go indexer",db:"StarRocks"},
+ {t:"One INSERT per row",b:"The first version sends INSERT INTO transfers VALUES (...) once per row. Each one is parsed, planned, committed and synced.",w:"The fixed cost of a statement is paid 10,000 times.",a:21,l:["INSERT row 1","INSERT row 2","INSERT row 3"],c:"statements: 10,000",s:"segments: 10,000",bad:1,sg:40,app:"Go indexer",db:"StarRocks"},
+ {t:"Compaction falls behind",b:"In a column store each insert makes a new tiny segment of column files. The compactor must merge them, and cannot keep up. Every read now merges hundreds of segments.",w:"The per-row write path slows down the reads too. This is write amplification: the same bytes are rewritten again and again.",a:21,c:"statements: 10,000",s:"segments waiting: hundreds",bad:1,sg:80,sgBad:1,app:"Go indexer",db:"StarRocks"},
+ {t:"One Stream Load per page",b:"The fix: the indexer sends the whole page as one bulk load per table. The program counts 1 statement and 1 segment for 10,000 rows.",w:"Ten thousand rows in one load cost about the same as one row. The compactor has almost nothing to do.",a:0,f:["Stream Load: 10,000 rows"],c:"statements: 1",s:"segments: 1",sg:1,app:"Go indexer",db:"StarRocks"},
+ {t:"Cap it, and make it safe to retry",b:"A batch too large hits the statement size limit or the transaction timeout, so size it by rows and bytes. If the load times out, the indexer sends the same page again. The label, one per page, makes StarRocks refuse a page it already committed, and the table's key would replace the rows anyway: the program holds 10,000 rows after the retry, not 20,000.",w:"A writer's per-page cost must depend on the page, never on the size of the table it writes into.",a:0,f:["page 9,506: timed out","page 9,506 again: replaced"],c:"statements: 1 per page",s:"retry is idempotent",sg:1,retry:1,app:"Go indexer",db:"StarRocks"}
+]};
+let mode="n1",i=0,timer=null;
+function arrow(y,col,w,label,dash){
+  const g=document.createElementNS(NS,"g");g.setAttribute("class","msg");
+  g.innerHTML=`<line x1="204" y1="${y}" x2="696" y2="${y}" stroke="${col}" stroke-width="${w}" ${dash?'stroke-dasharray="8 6"':""} marker-start="url(#${w>4?"arrF":"arr"})" marker-end="url(#${w>4?"arrF":"arr"})"/>`+(label?`<text x="450" y="${y-7}" text-anchor="middle" fill="${col}">${label}</text>`:"");
+  return g;}
+const code={
+"n1":{
+ label:"Go",
+ pc:["load_page(order_id):", "  order = query(order and its lines)        # the 1", "  lines = order.lines                       # already loaded: no query", "  for each line in lines:", "    show(line.product)                      # the ORM queries here: the N", "round trips = 1 + n, so they grow with the data", "list page = 1 + orders + orders x lines"],
+ real:["// each call looks like a field read. Each one is a round trip", "func orderPage(ctx context.Context, db *fakeDB, id int64) error {", "\t// the order and its lines, in one query", "\trows, err := db.QueryContext(ctx,", "\t\t\"SELECT l.product_id FROM orders o JOIN order_lines l ON l.order_id = o.id WHERE o.id = $1\", id)", "\tif err != nil {", "\t\treturn err", "\t}", "\tfor rows.Next() {", "\t\tvar pid int64", "\t\trows.Scan(&pid)", "\t\t// inside the loop: the bug", "\t\tvar name string", "\t\tdb.QueryRowContext(ctx,", "\t\t\t\"SELECT name FROM products WHERE id = $1\", pid).Scan(&name)", "\t}", "\treturn nil", "}", "", "// a list page: one query for the orders, then the order page for each", "func listPage(ctx context.Context, db *fakeDB, n int) error {", "\trows, err := db.QueryContext(ctx, \"SELECT id FROM orders ORDER BY id LIMIT $1\", n)", "\tif err != nil {", "\t\treturn err", "\t}", "\tfor rows.Next() {", "\t\tvar id int64", "\t\trows.Scan(&id)", "\t\torderPage(ctx, db, id)", "\t}", "\treturn nil", "}"],
+ map:{"1": [1, 2], "2": [3, 4, 5], "3": [9, 11], "4": [9], "5": [12, 14, 15], "6": [14, 15], "7": [21, 22, 26, 29]}},
+"join":{
+ label:"SQL",
+ pc:["load_page(order_id):", "  rows = one query that joins orders, lines and products", "  show(rows)                                # round trips = 1", "load_list(page of orders):", "  orders = query(page of orders)", "  lines = query(lines where order_id in orders)   # round trips = 2", "catch it:", "  count queries per request; alarm when the count grows with n"],
+ real:["-- one order: one join", "SELECT o.id, l.qty, p.name", "FROM   orders o", "JOIN   order_lines l ON l.order_id = o.id", "JOIN   products p    ON p.id = l.product_id", "WHERE  o.id = 1001;", "", "-- a list page: two queries, with IN", "SELECT id, buyer FROM orders ORDER BY id LIMIT 50;", "", "SELECT l.order_id, l.qty, p.name", "FROM   order_lines l", "JOIN   products p ON p.id = l.product_id", "WHERE  l.order_id = ANY($1);   -- the 50 ids", "", "-- find the statement shapes called most", "SELECT calls, mean_exec_time, query", "FROM   pg_stat_statements ORDER BY calls DESC LIMIT 10;"],
+ map:{"1": [2, 3, 4, 5, 6], "2": [2, 3, 4, 5, 6], "3": [6], "4": [9], "5": [9], "6": [11, 12, 13, 14], "7": [16], "8": [17, 18]}},
+"write":{
+ label:"Go",
+ pc:["write_page(rows):", "  for each row: INSERT                      # the fixed cost, 10,000 times", "  each INSERT makes a segment               # compaction falls behind", "fix:", "  send the page as one bulk load, per table # 1 statement, 1 segment", "  size it by rows and bytes under the limit", "  on a timeout, send the same page again", "  the table key replaces the rows           # nothing doubles"],
+ real:["// the bug: one statement per row", "func writePerRow(ctx context.Context, db *fakeDB, page Page) {", "\tfor _, r := range page.Rows {", "\t\tdb.ExecContext(ctx, \"INSERT INTO transfers VALUES (?, ?, ?)\", r.Tx, r.To, r.Amount)", "\t}", "}", "", "// the fix: one load per table per page", "func writePage(ctx context.Context, page Page) error {", "\tbody := encodeCSV(page.Rows) // sized under the load limit", "\treq, _ := http.NewRequestWithContext(ctx, http.MethodPut, loadURL, body)", "\treq.Header.Set(\"label\", fmt.Sprintf(\"transfers-page-%d\", page.ID))", "\tresp, err := client.Do(req)", "\tif err != nil {", "\t\treturn err // the caller sends the same page again", "\t}", "\tdefer resp.Body.Close()", "\treturn checkStatus(resp)", "}"],
+ map:{"1": [9], "2": [3, 4, 5], "3": [4], "4": [8], "5": [9, 10, 11, 13], "6": [10], "7": [14, 15], "8": [12]}}
+};
+const PCS={"n1": [[1], [2], [3, 4, 5, 6], [4, 5, 6], [7]], "join": [[1], [2, 3], [4, 5, 6], [6], [7, 8]], "write": [[1], [2], [3], [4, 5], [6, 7, 8]]};
+for(const m in PCS)PCS[m].forEach((p,k)=>{steps[m][k].pc=p});
+const RLS={};
+for(const m in RLS)RLS[m].forEach((r,k)=>{if(r)steps[m][k].rl=r});
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("app").textContent=s.app||"order page";$("dbn").textContent=s.db||"database";
+  const g=$("arrows");g.innerHTML="";const els=[];
+  const n=s.a,gap=n?Math.min(40,225/n):0;
+  for(let k=0;k<n;k++){const lab=s.l&&s.l[k]&&gap>=18?s.l[k]:"";els.push(arrow(80+k*gap,k===0&&mode==="n1"?"var(--coord)":s.bad?"var(--fail)":"var(--coord)",gap<14?1.5:2.5,lab));}
+  if(n>4&&gap<18)els.push((()=>{const t=document.createElementNS(NS,"text");t.setAttribute("x",450);t.setAttribute("y",72);t.setAttribute("text-anchor","middle");t.setAttribute("fill","var(--fail)");t.setAttribute("class","msg");t.textContent=s.note||(mode==="write"?"one arrow per row ... 10,000 in all":`${n} round trips`);return t;})());
+  (s.f||[]).forEach((lab,k)=>els.push(arrow(130+k*80,s.retry&&k===0?"var(--wait)":"var(--ok)",7,lab,s.retry&&k===0)));
+  els.forEach((el,k)=>{g.appendChild(el);const show=()=>el.classList.add("on");matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,Math.min(60*k,1200)+30);});
+  let sg="";const m=s.sg||0;
+  for(let k=0;k<m;k++){const big=m===1;const x=big?720:718+(k%10)*14.5,y=big?150:96+Math.floor(k/10)*20;
+    sg+=`<rect x="${x}" y="${y}" width="${big?130:11}" height="${big?60:14}" rx="2" fill="${s.sgBad?"var(--fail)":big?"var(--ok)":"var(--wait)"}" stroke="#fff" stroke-width="1"/>`;}
+  if(m===1)sg+=`<text x="785" y="186" text-anchor="middle" fill="#fff" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700">1 segment</text>`;
+  $("segs").innerHTML=sg;
+  $("cnt").textContent=s.c;$("cnt").setAttribute("fill",s.bad?"var(--fail)":"var(--fg)");
+  $("sub").textContent=s.s;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

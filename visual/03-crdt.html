@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRDTs</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>CRDTs: data that merges itself</h1>
+  <p class="lede">A post gets likes in Europe and in the United States while the link between the two data centres is down. Press <b>Next</b> to watch the two counters merge to the same total, then see the rule a CRDT cannot keep.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="merge" id="tab-merge">G-Counter: likes merge</button>
+    <button role="tab" aria-selected="false" data-mode="limit" id="tab-limit">The limit: stock below zero</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Two replicas of a counter, cut apart and then merged</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-crdt/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">replica</span>
+    <span style="--c:var(--wait)">replicas disagree</span>
+    <span style="--c:var(--ok)">merged, the same on both</span>
+    <span style="--c:var(--fail)">link down, or a broken business rule</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Riak and Redis Enterprise active-active keep CRDT counters and sets across regions. Collaborative editors built on Automerge or Yjs use sequence CRDTs for shared text. Shopping carts use an OR-Set, so an item added offline is never lost.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Use a CRDT where every merge result is acceptable: likes, views, carts, presence. Keep money and stock behind a leader or a consensus store, because a CRDT cannot keep a rule like 'never below zero'.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>CRDT</th><th>Leader or consensus</th></tr>
+      <tr><td>Coordination per write</td><td>None</td><td>A round trip to the leader</td></tr>
+      <tr><td>Works while cut off</td><td>Yes, both sides keep writing</td><td>Only the majority side</td></tr>
+      <tr><td>Always converges</td><td>Yes, by the merge rules</td><td>Yes, one order</td></tr>
+      <tr><td>Keeps a rule like stock >= 0</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Fits</td><td>Likes, carts, shared text</td><td>Money, stock, unique names</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A CRDT merges in any order and always agrees, so it needs no coordination, but it cannot keep a rule like 'stock never below zero'."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+function rep(x,name,v,lab,tot,f){let o=R(x,50,300,210,f)+T(x+150,80,name,{c:"#fff",s:17});
+  lab.forEach((l,k)=>{o+=R(x+20,100+k*48,260,38,"var(--panel)",{rx:6})+T(x+36,125+k*48,l,{a:"start",s:14,w:400})+T(x+262,125+k*48,v[k],{a:"end",s:16})});
+  return o+T(x+150,244,tot,{c:"#fff",s:16});}
+function scene(s){
+  let b="";const msgs=[];
+  const lab=mode==="merge"?["EU slot","US slot"]:["sold in EU","sold in US"];
+  const tot=v=>mode==="merge"?"total likes: "+(v[0]+v[1]):"stock: "+(1-v[0]-v[1]);
+  const agree=s.E.join()===s.U.join();
+  b+=rep(40,"Europe replica",s.E,lab,tot(s.E),agree?(s.done?"var(--ok)":"var(--coord)"):"var(--wait)");
+  b+=rep(560,"US replica",s.U,lab,tot(s.U),agree?(s.done?"var(--ok)":"var(--coord)"):"var(--wait)");
+  if(s.link==="down")b+=`<line x1="340" y1="155" x2="560" y2="155" stroke="var(--fail)" stroke-width="3" stroke-dasharray="8 6"/>`+T(450,145,"link down",{c:"var(--fail)"});
+  else if(!s.m)b+=`<line x1="340" y1="155" x2="560" y2="155" stroke="var(--muted)" stroke-width="3"/>`+T(450,145,"link up",{c:"var(--muted)"});
+  (s.m||[]).forEach(([d,l,kd])=>msgs.push(d===">"?ARROW(345,140,555,140,l,KC[kd||"n"]):ARROW(555,180,345,180,l,KC[kd||"n"],{ly:200})));
+  if(s.note)msgs.push(T(450,300,s.note,{s:14,c:"var(--fg)"}));
+  if(s.ban)msgs.push(BANNER(350,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+merge:[
+ {t:"Two replicas, one counter",b:"The like counter lives in Europe and in the United States. It is a G-Counter (line 1): one slot per replica, EU and US, both 0.",w:"Line 3 only ever adds to the caller's own slot. That one rule makes the merge safe.",E:[0,0],U:[0,0],link:"up",pc:[1]},
+ {t:"The link goes down",b:"The cable between the two data centres fails. Neither replica needs the other to run line 2, so each keeps serving its own users.",w:"No lock and no leader is needed, so neither side stops.",E:[0,0],U:[0,0],link:"down",pc:[2]},
+ {t:"Both sides keep counting",b:"Three likes in Europe run line 3 three times with me = EU: the EU slot becomes 3. Two likes in the US run it with me = US: the US slot becomes 2. Line 5 gives totals of 3 and 2.",w:"The totals disagree for now. Each side only touched its own slot, so nothing conflicts.",E:[3,0],U:[0,2],link:"down",pc:[2,3,4,5]},
+ {t:"The link returns: send the state",b:"Line 10: each replica sends its whole counter. Europe sends EU 3, US 0. The US sends EU 0, US 2.",w:"Sending state, not 'add one' messages, means a lost or repeated message does no harm.",E:[3,0],U:[0,2],m:[[">","EU 3, US 0"],["<","EU 0, US 2"]],pc:[9,10]},
+ {t:"Merge: the max of each slot",b:"Line 8 runs per slot. EU slot: max(3, 0) = 3. US slot: max(0, 2) = 2. Line 5 sums them: 5, on both sides.",w:"No like was lost and none was counted twice. Nobody coordinated.",E:[3,2],U:[3,2],done:true,link:"up",pc:[6,7,8,5]},
+ {t:"Merge again: nothing changes",b:"A retry delivers Europe's state a second time. Line 8: max(3, 3) = 3 and max(2, 0) = 2. The total stays 5.",w:"Max is idempotent, commutative and associative. Any order, any grouping, any number of repeats give the same answer.",E:[3,2],U:[3,2],done:true,m:[[">","EU 3, US 2 (again)","ok"]],note:"merge(merge(a, b), b) = merge(a, b)",pc:[7,8]}
+],
+limit:[
+ {t:"One phone left, counted with a CRDT",b:"The shop keeps stock as 1 minus the phones sold (line 11). Sales are a G-Counter with one slot per region. The link is down.",w:"This looks like the like counter. The difference is a business rule: stock must never go below zero.",E:[0,0],U:[0,0],link:"down",pc:[11]},
+ {t:"Europe sells the phone",b:"Line 12 in Europe: 1 minus sold 0 is 1, more than 0, so line 13 adds 1 to the EU slot. Europe now sees stock 0.",w:"From Europe's side, everything is correct.",E:[1,0],U:[0,0],link:"down",pc:[12,13]},
+ {t:"The US sells the same phone",b:"Line 12 in the US: it has not heard from Europe, so sold is 0 and 1 minus 0 is 1. The check passes and line 13 adds 1 to the US slot.",w:"Line 12 checks only this replica's view. With the link down, that view is incomplete.",E:[1,0],U:[0,1],link:"down",pc:[12,13]},
+ {t:"The failure: the merge gives stock -1",b:"The link returns. Line 8 merges: EU slot max(1, 0) = 1, US slot max(0, 1) = 1. Sold is 2, so stock is 1 minus 2: -1, on both sides.",w:"The CRDT did its job: both sides agree. They agree on a result the business cannot accept. Line 12 can never be made safe without talking to the other side.",E:[1,1],U:[1,1],link:"up",ban:"Both replicas agree: stock -1. Two phones sold, one in the warehouse.",pc:[8,12]},
+ {t:"The fix: a leader for stock",b:"Stock moves to one leader (lines 14 to 16). Europe's sale: stock 1 is more than 0, so it becomes 0. The US sale: line 16 sees 0 and refuses. Likes and carts stay CRDTs.",w:"A CRDT always converges, but it cannot keep a rule like 'never below zero'. That needs one place that decides.",E:[1,0],U:[1,0],done:true,link:"up",note:"stock lives on one leader: the second sale is refused",pc:[14,15,16]}
+]};
+const code={"*": {"label": "Go", "pc": ["counter = one slot per replica, all 0", "inc(me):", "  counter[me] = counter[me] + 1          # only my own slot", "value():", "  return the sum of all slots", "merge(other):", "  for each replica r:", "    counter[r] = max(counter[r], other[r])  # any order, any repeat", "on link up:", "  send my whole state; merge what arrives", "stock as a counter:", "  sell(me): if 1 - sold.value() > 0:     # checks only my own view", "    sold.inc(me)", "fix, one leader for stock:", "  sell(): if stock > 0: stock = stock - 1", "          else: refuse                   # the second sale fails"], "real": ["// Inc adds one to this replica's own slot.", "func (c GCounter) Inc(me string) {", "\tc[me]++", "}", "", "// Value is the sum of all slots.", "func (c GCounter) Value() int {", "\ttotal := 0", "\tfor _, v := range c {", "\t\ttotal += v", "\t}", "\treturn total", "}", "", "// Merge takes the larger value of each slot. It is commutative,", "// associative and idempotent, so any order and any repeat agree.", "func (c GCounter) Merge(other GCounter) {", "\tfor r, v := range other {", "\t\tif v > c[r] {", "\t\t\tc[r] = v", "\t\t}", "\t}", "}", "", "// SellLocal sells if this replica's own view of stock is above zero.", "// The check only sees what this replica knows.", "func SellLocal(sold GCounter, me string, stock int) bool {", "\tif stock-sold.Value() <= 0 {", "\t\treturn false", "\t}", "\tsold.Inc(me)", "\treturn true", "}", "", "// Sell decrements stock only if there is some left.", "func (l *StockLeader) Sell() bool {", "\tif l.stock <= 0 {", "\t\treturn false", "\t}", "\tl.stock--", "\treturn true", "}"], "map": {"1": [2], "2": [2], "3": [3], "4": [7], "5": [10, 12], "6": [17], "7": [18], "8": [19, 20], "9": [17], "10": [17], "11": [27], "12": [28], "13": [31], "14": [36], "15": [40], "16": [37]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

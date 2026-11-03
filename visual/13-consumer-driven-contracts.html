@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consumer-Driven Contracts</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.note{font-size:13px}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Consumer-driven contracts</h1>
+  <p class="lede">Two teams read the pool service: a dashboard and an alerting job. Each writes down only the fields it reads. Press <b>Next</b> and watch the pool service build check both before it ships.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good">Pacts that name what is read</button>
+    <button role="tab" aria-selected="false" data-mode="greedy">A greedy pact</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of two consumers publishing pacts and a provider build verifying them</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="actors" font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700"></g>
+      <g id="chips" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program replays this story with <code>net/http</code> handlers and <code>httptest</code>: <code>handbook/code/13-consumer-driven-contracts/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">consumers</span>
+    <span style="--c:var(--svc)">broker and provider</span>
+    <span style="--c:var(--ok)">verified</span>
+    <span style="--c:var(--wait)">risky or building</span>
+    <span style="--c:var(--fail)">break or false alarm</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: microservices</h2>
+      <p>Services owned by different teams, where an end-to-end test environment is slow and flaky. Pact and a broker replace most of it.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: public APIs and agent tools</h2>
+      <p>You cannot collect pacts from strangers, so a public API uses the OpenAPI diff instead. An agent tool server records the calls real hosts make and replays them in the build.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Name what is read</th><th>Copy the whole body</th></tr>
+      <tr><td>New harmless field</td><td>Passes</td><td>Fails</td></tr>
+      <tr><td>Removed field a consumer reads</td><td>Fails, names the consumer</td><td>Fails</td></tr>
+      <tr><td>Trust in red builds</td><td>High</td><td>Erodes</td></tr>
+      <tr><td>Match</td><td>By type</td><td>By exact value</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Each consumer writes down what it reads, and the provider's build checks every one of them, so a break is caught before it ships and names who it hurts."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Each tab: actors (columns), chips (state pills under some actors) and steps.
+// A step message is [from,to,y,text,kind], ["band",y,text], or ["note",actor,y,text,kind].
+// kind: true or "fail" = red, "lost" = cut arrow, "replay" = purple, "ok" = green, "wait" = amber.
+const TABS={
+ "good":{actors:[{"id":"d","n":"Dashboard","c":"coord"},{"id":"al","n":"Alert job","c":"coord"},{"id":"b","n":"Pact broker"},{"id":"p","n":"Pool service"}],chips:["d","al","p"],steps:[
+  {"t":"The dashboard records what it reads","b":"The dashboard's tests run against a mock of the pool service. Line 1 records the request and the one field it uses: fee_bps, a number. Line 2 publishes it.","w":"That record is the pact: what this consumer depends on, nothing more.","m":[["note","d",130,"test vs mock"],["d","b",175,"pact: fee_bps int"]],"st":{"d":["pact v1","ok"],"al":["no pact","idle"],"p":["green","ok"]},"pc":[1,2]},
+  {"t":"The alert job records its own","b":"The alert job reads only tvl_usd, a number. Line 1 records that and line 2 publishes its own pact.","w":"Each consumer says what it needs. Together the pacts say what the provider may not break.","m":[["al","b",150,"pact: tvl_usd number"]],"st":{"d":["pact v1","ok"],"al":["pact v1","ok"],"p":["green","ok"]},"pc":[1,2]},
+  {"t":"The provider replays every pact","b":"Line 3: the pool service build fetches both pacts from the broker. Line 4 replays each against the real service. The program prints replay on v1: true.","w":"The provider tests itself against its real consumers, not against its own idea of them.","m":[["b","p",130,"2 pacts"],["note","p",175,"replay both","ok"]],"st":{"d":["pact v1","ok"],"al":["pact v1","ok"],"p":["2 verified","ok"]},"pc":[3,4,5]},
+  {"t":"A developer drops a field","b":"A pool developer removes tvl_usd, thinking nobody reads it. Line 3 runs in the next build, as on every build.","w":"Only the alert job reads it, and that team is not in this review.","m":[["note","p",140,"remove tvl_usd",true]],"st":{"d":["pact v1","ok"],"al":["pact v1","ok"],"p":["building","wait"]},"pc":[3]},
+  {"t":"The build names who it hurts","b":"Line 5 looks for tvl_usd and line 6 fails. The program prints alert job needs tvl_usd as number. The build is red and names the consumer and the field.","w":"The break is caught before it ships, and the message says exactly whom to talk to.","m":[["b","p",130,"2 pacts"],["note","p",175,"alert job: tvl_usd",true],["p","b",215,"failed",true]],"st":{"d":["pact v1","ok"],"al":["would break","fail"],"p":["red","fail"]},"bad":"p","pc":[5,6]},
+  {"t":"Can I deploy?","b":"The developer keeps tvl_usd and adds fee_tier. Line 7 asks the broker whether this version passes every live pact. Line 8 finds no failures: the program prints can I deploy the addition: true.","w":"The broker knows which versions are live, so each side deploys safely on its own.","m":[["p","b",140,"can I deploy?"],["b","p",175,"yes: 2 of 2 verified","ok"]],"st":{"d":["pact v1","ok"],"al":["pact v1","ok"],"p":["deployed","ok"]},"pc":[7,8]}
+ ]},
+ "greedy":{actors:[{"id":"d","n":"Dashboard","c":"coord"},{"id":"al","n":"Alert job","c":"coord"},{"id":"b","n":"Pact broker"},{"id":"p","n":"Pool service"}],chips:["d","al","p"],steps:[
+  {"t":"A pact copies the whole body","b":"Line 1: the dashboard team records the whole response, every field with its exact value, as its pact.","w":"It feels thorough. It is a trap.","m":[["d","b",140,"pact: whole body",true]],"st":{"d":["greedy pact","wait"],"al":["pact v1","ok"],"p":["green","ok"]},"pc":[1]},
+  {"t":"A harmless addition","b":"Line 2: the pool developer adds fee_tier. No consumer reads it. Adding a field is safe.","w":"Additive changes should never break anyone.","m":[["note","p",140,"+ fee_tier","ok"]],"st":{"d":["greedy pact","wait"],"al":["pact v1","ok"],"p":["building","wait"]},"pc":[2]},
+  {"t":"The build fails anyway","b":"Line 3 compares the body with the copy. They differ, so the program prints dashboard expected the exact old body. A harmless change fails the build.","w":"A false alarm.","m":[["b","p",130,"2 pacts"],["note","p",175,"dashboard: extra field",true]],"st":{"d":["greedy pact","wait"],"al":["pact v1","ok"],"p":["red for nothing","fail"]},"bad":"p","pc":[2,3]},
+  {"t":"The failure that matters","b":"Line 4: after a few false alarms, the team marks the contract tests as allowed to fail. The next real break ships.","w":"A contract test that cries wolf is worse than none: it trains people to ignore red.","m":[["band",160,"red builds ignored, the real break ships"]],"st":{"d":["broken","fail"],"al":["broken","fail"],"p":["tests ignored","fail"]},"pc":[4]},
+  {"t":"The fix","b":"Line 6 lists only fee_bps. Line 7 matches its type. The program prints [] for the addition, [] for a new value 45, and needs fee_bps as number for a real break.","w":"Name what you read, match its type.","m":[["d","b",140,"pact: fee_bps int","ok"],["note","p",185,"+ fee_tier: green","ok"]],"st":{"d":["pact v2","ok"],"al":["pact v1","ok"],"p":["green","ok"]},"pc":[6,7]}
+ ]}
+};
+const CODE={
+ "good":{label:"Go",
+  pc:[
+   "consumer test: record the request and only the fields it reads",
+   "publish that pact to the broker",
+   "provider build: fetch every pact from the broker",
+   "  for each pact: call the real provider",
+   "    for each field in the pact:",
+   "      missing or wrong type: fail, name the consumer and the field",
+   "before deploy: can I deploy?",
+   "  yes only if every live pact passes"],
+  real:[
+   "type Pact struct {",
+   "\tConsumer string",
+   "\tFields   map[string]string // field -> type",
+   "\tExact    map[string]any",
+   "}",
+   "",
+   "func replay(p Pact, provider http.Handler) []string {",
+   "\tsrv := httptest.NewServer(provider)",
+   "\tdefer srv.Close()",
+   "\tres, err := http.Get(srv.URL)",
+   "\tif err != nil {",
+   "\t\tpanic(err)",
+   "\t}",
+   "\tdefer res.Body.Close()",
+   "\traw, _ := io.ReadAll(res.Body)",
+   "\tvar got map[string]any",
+   "\tjson.Unmarshal(raw, &got)",
+   "\tvar fails []string",
+   "\tfor f, want := range p.Fields {",
+   "\t\tif v, ok := got[f]; !ok || typeOf(v) != want {",
+   "\t\t\tfails = append(fails, p.Consumer+\" needs \"+f+\" as \"+want)",
+   "\t\t}",
+   "\t}",
+   "\tif p.Exact != nil && !reflect.DeepEqual(p.Exact, got) {",
+   "\t\tfails = append(fails, p.Consumer+\" expected the exact old body\")",
+   "\t}",
+   "\tsort.Strings(fails)",
+   "\treturn fails",
+   "}",
+   "",
+   "func canIDeploy(broker []Pact, provider http.Handler) (bool, []string) {",
+   "\tvar fails []string",
+   "\tfor _, p := range broker {",
+   "\t\tfails = append(fails, replay(p, provider)...)",
+   "\t}",
+   "\treturn len(fails) == 0, fails",
+   "}",
+   "",
+   "\tdashboard := Pact{Consumer: \"dashboard\", Fields: map[string]string{\"fee_bps\": \"number\"}}",
+   "\talerts := Pact{Consumer: \"alert job\", Fields: map[string]string{\"tvl_usd\": \"number\"}}",
+   "\tbroker := []Pact{dashboard, alerts}"],
+  map:{"1":[1,3,39,40],"2":[41],"3":[33],"4":[8,9,10,11,12,13,14,15,16,17],"5":[19],"6":[20,21],"7":[31],"8":[36]}},
+ "greedy":{label:"Go",
+  pc:[
+   "greedy pact: copy the whole body, every value",
+   "provider adds fee_tier, which nobody reads",
+   "replay: body differs from the copy: fail",
+   "after false alarms: tests marked allowed to fail",
+   "the next real break ships",
+   "fix: list only the fields read",
+   "  match by type, not by exact value"],
+  real:[
+   "type Pact struct {",
+   "\tConsumer string",
+   "\tFields   map[string]string // field -> type",
+   "\tExact    map[string]any",
+   "}",
+   "",
+   "\tvar fails []string",
+   "\tfor f, want := range p.Fields {",
+   "\t\tif v, ok := got[f]; !ok || typeOf(v) != want {",
+   "\t\t\tfails = append(fails, p.Consumer+\" needs \"+f+\" as \"+want)",
+   "\t\t}",
+   "\tif p.Exact != nil && !reflect.DeepEqual(p.Exact, got) {",
+   "\t\tfails = append(fails, p.Consumer+\" expected the exact old body\")",
+   "\t}",
+   "",
+   "\tgreedy := Pact{Consumer: \"dashboard\", Exact: v1}",
+   "\tdashboard := Pact{Consumer: \"dashboard\", Fields: map[string]string{\"fee_bps\": \"number\"}}"],
+  map:{"1":[4,16],"2":[12],"3":[12,13],"4":[13],"5":[13],"6":[3,17],"7":[8,9,10]}}
+};
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)"};
+const colFor={fail:"var(--fail)",lost:"var(--fail)",replay:"var(--undo)",ok:"var(--ok)",wait:"var(--wait)"};
+const NS="http://www.w3.org/2000/svg";
+let mode="good",view="pc",i=0,timer=null,X={},W=160;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function drawActors(){
+  const T=TABS[mode],n=T.actors.length,gap=900/n;W=Math.min(180,gap-24);X={};
+  let a="",c="";
+  T.actors.forEach((ac,k)=>{const x=gap/2+k*gap;X[ac.id]=x;
+    a+=`<rect id="bx-${ac.id}" class="box" x="${x-W/2}" y="20" width="${W}" height="52" rx="8" fill="var(--${ac.c||"svc"})"/><text x="${x}" y="52" text-anchor="middle" fill="#fff">${esc(ac.n)}</text><line x1="${x}" y1="72" x2="${x}" y2="340" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  T.chips.forEach(id=>{const x=X[id];
+    c+=`<rect id="st-${id}" class="box" x="${x-W/2+6}" y="300" width="${W-12}" height="28" rx="14" fill="var(--line)"/><text id="tx-${id}" x="${x}" y="319" fill="var(--fg)"></text>`;});
+  $("actors").innerHTML=a;$("chips").innerHTML=c;
+}
+function msgSvg(m){
+  if(m[0]==="band"){const col=colFor[m[3]||"fail"];
+    return `<rect x="20" y="${m[1]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[1]+3}" text-anchor="middle" fill="${col}" font-weight="700">${esc(m[2])}</text>`;}
+  if(m[0]==="note"){const [,id,y,txt,kind]=m,x=X[id],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+    return `<rect x="${x-W/2}" y="${y-17}" width="${W}" height="26" rx="6" fill="var(--panel)" stroke="${col}" stroke-width="2"/><text class="note" x="${x}" y="${y+1}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  const [a,b,y,txt,kind]=m,x1=X[a],x2=X[b],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+  if(kind==="lost"){const mid=(x1+x2)/2;
+    return `<line x1="${x1}" y1="${y}" x2="${mid}" y2="${y}" stroke="${col}" stroke-dasharray="6 5"/><path d="M${mid-8} ${y-8}L${mid+8} ${y+8}M${mid-8} ${y+8}L${mid+8} ${y-8}" stroke="${col}" stroke-width="3"/><text x="${(x1+mid)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;
+}
+function drawCode(){
+  const c=CODE[mode],s=TABS[mode].steps[i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const T=TABS[mode],s=T.steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${T.steps.length}`;
+  for(const id of T.chips){const [v,c]=(s.st&&s.st[id])||["","idle"];$("tx-"+id).textContent=v;
+    $("st-"+id).setAttribute("fill",fillFor[c]);$("tx-"+id).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");}
+  for(const ac of T.actors)$("bx-"+ac.id).setAttribute("fill",s.bad===ac.id?"var(--fail)":`var(--${ac.c||"svc"})`);
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=msgSvg(m);g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===T.steps.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(TABS[mode].steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=TABS[mode].steps.length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));drawActors();go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawActors();go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

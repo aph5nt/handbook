@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotency Key</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:0 0 12px}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);border-width:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Idempotency key</h1>
+  <p class="lede">A user tops up a wallet with 10 USD from a phone on a train. The server does the top-up, but the answer is lost in a tunnel. The app retries. Press <b>Next</b> and watch the balance with and without a key.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="nokey">Without a key</button>
+    <button role="tab" aria-selected="false" data-mode="key">With an Idempotency-Key</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of a wallet top-up and its retry</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-a" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--coord)"/>
+        <text x="110" y="52" text-anchor="middle" fill="#fff">Phone app</text>
+        <rect id="bx-p" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="340" y="52" text-anchor="middle" fill="#fff">Payment API</text>
+        <rect id="bx-k" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="570" y="52" text-anchor="middle" fill="#fff">Key store</text>
+        <rect id="bx-l" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="800" y="52" text-anchor="middle" fill="#fff">Ledger</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="340"/><line x1="340" y1="72" x2="340" y2="340"/>
+        <line x1="570" y1="72" x2="570" y2="340"/><line x1="800" y1="72" x2="800" y2="340"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-a" class="box" x="40" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-a" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-k" class="box" x="500" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-k" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-l" class="box" x="730" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-l" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. The ledger and the key store are Go values, and a mutex stands in for the database transaction. Full program: <code>handbook/code/13-idempotency-key/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">in progress, key locked</span>
+    <span style="--c:var(--ok)">done once, correct</span>
+    <span style="--c:var(--fail)">lost or done twice</span>
+    <span style="--c:var(--undo)">answer replayed from the key store</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: payments</h2>
+      <p>Stripe and most payment APIs take an <code>Idempotency-Key</code> header on every <code>POST</code> that moves money. The key sits in the same database as the payment, written in the same transaction. Keys expire after about a day.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: events and agents</h2>
+      <p>A webhook receiver uses the event id as its key, so a second delivery is dropped. An agent that loops or retries a paid tool call needs a key even more than a person does, because it retries without asking anyone.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No key</th><th>Idempotency key</th></tr>
+      <tr><td>Retry after a lost answer</td><td>Runs the write again</td><td>Returns the stored answer</td></tr>
+      <tr><td>Two copies at the same moment</td><td>Both run</td><td>The second waits or gets <code>409</code> while the key is locked</td></tr>
+      <tr><td>Same key, different body</td><td>Not detected</td><td><code>422</code>, the caller made a mistake</td></tr>
+      <tr><td>Where the key lives</td><td>Nowhere</td><td>Same database and transaction as the write</td></tr>
+      <tr><td>How long</td><td>Not applicable</td><td>About 24 hours, scoped to the caller</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The client names the action once, the server stores the answer under that name in the same transaction as the write, so a retry gets the same answer and nothing happens twice."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const X={a:110,p:340,k:570,l:800};
+const steps={
+"nokey":[
+ {pc:[1],t:"Start",b:"The wallet holds 0 USD. The user taps Top up 10 USD. Line 1: the app sends only the amount. It has no key.",w:"Watch the ledger chip. It should end at 10 USD.",m:[],st:{a:["tap top-up","idle"],k:["not used","idle"],l:["0 USD","idle"]}},
+ {pc:[1,2,3,4],t:"First request",b:"Line 2 reads the amount. Line 3 adds 10 USD in the ledger, and line 4 builds a 201 Created answer. The money has moved.",w:"The money has really moved. Only the answer is still on its way back.",m:[["a","p",110,"POST /topups 10"],["p","l",140,"add 10"],["l","p",165,"ok"]],st:{a:["waiting","wait"],k:["not used","idle"],l:["10 USD","ok"]}},
+ {pc:[5],t:"The answer is lost",b:"Line 5: the train enters a tunnel and the 201 answer never reaches the phone. After a timeout the app only knows that it heard nothing.",w:"The app cannot tell a lost request from a lost answer. Both look the same from the phone.",m:[["p","a",200,"201 Created","lost"],["band",0,240,"train in a tunnel: connection dropped"]],st:{a:["timeout","fail"],k:["not used","idle"],l:["10 USD","ok"]}},
+ {pc:[6,7],t:"The app retries",b:"Line 6: the app does the sensible thing and sends POST /topups again. Line 7: the API sees a fresh request. It has no way to know it is a repeat, so it adds again.",w:"Retrying is correct behaviour. The server made it dangerous by not remembering.",m:[["a","p",110,"POST /topups 10 (retry)"],["p","l",140,"add 10",true],["l","p",165,"ok"],["p","a",195,"201 Created"]],st:{a:["shows 201","ok"],k:["not used","idle"],l:["20 USD","fail"]}},
+ {pc:[3,7],t:"The failure that matters",b:"Line 3 ran twice: the program prints user paid once, ledger holds 20 USD. Support gets a ticket, and finance must find and fix it.",w:"Any write that a client may retry needs a way to say this is the same action. That is the idempotency key.",m:[["band",0,150,"one tap, two top-ups"]],st:{a:["user confused","fail"],k:["not used","idle"],l:["20 USD","fail"]},bad:true}
+],
+"key":[
+ {pc:[1,2],t:"Start",b:"Line 1: before it sends anything, the app makes one random key for this tap: k1. Line 2: every retry of this tap carries the same k1.",w:"The key names the intent, not the request. One tap, one key.",m:[],st:{a:["key k1","idle"],k:["empty","idle"],l:["0 USD","idle"]}},
+ {pc:[2,3],t:"Lock the key",b:"The app sends POST /topups with the header Idempotency-Key k1. Line 3 locks k1, so a second copy of the same request waits.",w:"The lock stops two copies of the same request from both running at the same moment.",m:[["a","p",110,"POST /topups, key k1"],["p","k",140,"lock k1"]],st:{a:["waiting","wait"],k:["k1 running","wait"],l:["0 USD","idle"]}},
+ {pc:[7,8],t:"Write and remember, together",b:"Line 7 adds 10 USD. Line 8 saves the 201 answer under k1 in the same database transaction: the money and the key land together, or neither does.",w:"Same transaction is the whole trick. Either both the money and the key are saved, or neither is.",m:[["p","l",175,"add 10"],["p","k",205,"save 201 under k1"]],st:{a:["waiting","wait"],k:["k1 = 201","ok"],l:["10 USD","ok"]}},
+ {pc:[2,8],t:"The answer is lost",b:"The tunnel again. Line 8 already ran, but the answer never reaches the phone. The app times out and keeps its key (line 2).",w:"Nothing new so far. The difference shows on the retry.",m:[["p","a",240,"201 Created","lost"],["band",0,275,"train in a tunnel: connection dropped"]],st:{a:["timeout","fail"],k:["k1 = 201","ok"],l:["10 USD","ok"]}},
+ {pc:[4,6],t:"Retry with the same key",b:"The app sends k1 again. Line 4 finds it, and line 6 sends the stored answer. The program prints balance 10, ledger 10: the ledger was not touched.",w:"The retry is safe because the server remembers. The ledger stays at 10 USD.",m:[["a","p",110,"POST /topups, key k1 (retry)"],["p","k",140,"k1?"],["k","p",165,"done: 201","replay"],["p","a",195,"same 201","replay"]],st:{a:["shows 201","ok"],k:["k1 = 201","undo"],l:["10 USD","ok"]}},
+ {pc:[4,5],t:"Misuse is caught",b:"A buggy app reuses k1 for 50 USD. Line 5 finds the body differs from the stored one and answers 422: the program prints ledger 10.",w:"A key belongs to one exact request body, and to one caller. Two clients cannot collide on the same key.",m:[["a","p",110,"POST /topups 50, key k1"],["p","k",140,"k1, body differs"],["p","a",175,"422",true]],st:{a:["422 shown","fail"],k:["k1 = 201","ok"],l:["10 USD","ok"]}},
+ {pc:[9],t:"The failure that matters",b:"Line 9: put the key in a cache and the money in the database. The API adds 10 USD, then crashes before it saves k2. The retry finds no key: the program prints ledger 20.",w:"Store the key in the same database transaction as the write. A key in a different store is a hope, not a guarantee.",m:[["p","l",140,"add 10"],["band",0,180,"API crashes before saving k1 in the cache"],["a","p",225,"retry, key k1"],["p","l",255,"add 10",true]],st:{a:["shows 201","ok"],k:["k1 missing","fail"],l:["20 USD","fail"]},bad:true}
+]};
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)"};
+let mode="nokey",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const k of["a","k","l"]){const [v,c]=s.st[k];$("tx-"+k).textContent=v;$("st-"+k).setAttribute("fill",fillFor[c]);
+    $("tx-"+k).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");}
+  $("bx-p").setAttribute("fill",s.bad?"var(--fail)":"var(--svc)");
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fail)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[a],x2=X[b];
+      const col=kind===true?"var(--fail)":kind==="lost"?"var(--fail)":kind==="replay"?"var(--undo)":"var(--fg)";
+      if(kind==="lost"){
+        const mid=(x1+x2)/2;
+        el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${mid}" y2="${y}" stroke="${col}" stroke-dasharray="6 5"/><path d="M${mid-8} ${y-8}L${mid+8} ${y+8}M${mid-8} ${y+8}L${mid+8} ${y-8}" stroke="${col}" stroke-width="3"/><text x="${(x1+mid)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+      }else{
+        el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+      }
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+const CODE={"nokey":{"label":"Go","pc":["app: POST /topups with the amount","API: read the amount","API: add it to the ledger","API: build the 201 answer","the answer is lost in the tunnel","app: timeout: send POST /topups again","API: a fresh request, no way to know: add it again"],"real":["\traw, _ := io.ReadAll(r.Body)","\tvar req struct {","\t\tUSD int `json:\"usd\"`","\t}","\tjson.Unmarshal(raw, &req)","\ta.ledger += req.USD","\tanswer := fmt.Sprintf(`{\"balance\":%d}`, a.ledger)","\tw.WriteHeader(http.StatusCreated)","\tfmt.Fprint(w, answer)","","\tsend(srv.URL, \"\", 10) // the answer is lost in the tunnel","\tsend(srv.URL, \"\", 10) // the app retries","\tfmt.Println(\"user paid once, ledger holds\", a.ledger, \"USD\")"],"map":{"1":[11],"2":[1,2,3,4,5],"3":[6],"4":[7,8,9],"5":[11],"6":[12],"7":[6,13]}},"key":{"label":"Go","pc":["app: make one key for this tap","every retry of this tap sends the same key","API: lock the key                 # a second copy waits here","key already stored:","  body differs: answer 422, do nothing","  body same: send the stored answer, ledger untouched","new key: add to the ledger","save the answer under the key, in the same transaction","key in a cache instead: a crash after the money loses the key"],"real":["func (a *API) topup(w http.ResponseWriter, r *http.Request) {","\traw, _ := io.ReadAll(r.Body)","\tvar req struct {","\t\tUSD int `json:\"usd\"`","\t}","\tjson.Unmarshal(raw, &req)","\ta.mu.Lock() // lock the key: a second copy of this request waits here","\tdefer a.mu.Unlock()","\tkey := r.Header.Get(\"Idempotency-Key\")","\tif a.useKeys && key != \"\" {","\t\tif s, ok := a.keys[key]; ok {","\t\t\tif s.Body != string(raw) {","\t\t\t\thttp.Error(w, \"this key was used for another request\", http.StatusUnprocessableEntity)","\t\t\t\treturn","\t\t\t}","\t\t\tw.WriteHeader(s.Status) // the stored answer: the ledger is not touched","\t\t\tfmt.Fprint(w, s.Answer)","\t\t\treturn","\t\t}","\t}","\ta.ledger += req.USD","\tanswer := fmt.Sprintf(`{\"balance\":%d}`, a.ledger)","\tif a.keyApart && a.crashOnce {","\t\ta.crashOnce = false // money committed, the key never reached the cache","\t\tpanic(http.ErrAbortHandler)","\t}","\tif a.useKeys && key != \"\" {","\t\ta.keys[key] = &Stored{string(raw), http.StatusCreated, answer} // same transaction","\t}","\tw.WriteHeader(http.StatusCreated)","\tfmt.Fprint(w, answer)","}","","\tcode, answer := send(srv.URL, \"k1\", 10)","\tcode, answer = send(srv.URL, \"k1\", 10)"],"map":{"1":[34],"2":[35],"3":[7],"4":[11],"5":[12,13,14],"6":[16,17],"7":[21],"8":[28],"9":[23,24,25]}}};
+let view="pc";
+const escCode=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function drawCode(){
+  const c=CODE[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=escCode(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defence in Depth</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.tok{transition:transform .6s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.tok{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Defence in depth for agents</h1>
+  <p class="lede">An agent is asked to free disk space on a development machine. A README it read says "to reset, run <code>docker compose down -v</code>", which deletes the data volumes. Press <b>Next</b> and watch each dangerous command meet the rings around the data.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="rings">Five rings</button>
+    <button role="tab" aria-selected="false" data-mode="one">One ring only</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">An agent command passing through nested rings of control towards the data</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-ag" class="box" x="16" y="160" width="140" height="80" rx="10" fill="var(--coord)"/>
+        <text x="86" y="196" text-anchor="middle" fill="#fff">Agent</text>
+        <text id="ag-sub" x="86" y="220" text-anchor="middle" fill="#fff" font-size="13" font-weight="400"></text>
+      </g>
+      <g id="rings" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700" text-anchor="middle">
+        <rect id="bx-data" class="box" x="450" y="172" width="170" height="56" rx="8" fill="var(--svc)"/>
+        <text id="tx-data" x="535" y="206" fill="#fff">Data volumes</text>
+      </g>
+      <g id="tok" class="tok">
+        <rect id="tok-bg" x="0" y="252" width="170" height="30" rx="15" fill="var(--fg)"/>
+        <text id="tok-tx" x="85" y="272" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="12" font-weight="700" fill="var(--panel)"></text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-defence-in-depth-for-agents/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">ring let it through: not this ring's job</span>
+    <span style="--c:var(--ok)">ring stopped it</span>
+    <span style="--c:var(--fail)">ring pierced, or data lost</span>
+    <span style="--c:var(--line)">ring not there</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a coding agent harness</h2>
+      <p>Claude Code with an allow-list of tools, a pre-tool hook that refuses <code>docker compose down -v</code> and <code>docker volume rm</code>, and a test script that runs every test in a throwaway container with only the work folder mounted and an empty home folder.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: production access</h2>
+      <p>The agent holds a short-lived token that writes staging only. Production is read-only for it. Production changes go through a workflow with a human reviewer, and the merged pull request is the audit log.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Ring</th><th>Stops</th><th>Misses</th></tr>
+      <tr><td>1. Tool allow-list</td><td>Tools the task does not need</td><td>A dangerous command inside an allowed tool, such as the shell</td></tr>
+      <tr><td>2. Pre-tool hook</td><td>Known destructive commands by pattern</td><td>A command nobody wrote a pattern for</td></tr>
+      <tr><td>3. Read-only production credential</td><td>Any write to production</td><td>Damage on the local machine</td></tr>
+      <tr><td>4. Sandbox, empty HOME</td><td>Reaching the operator's own files and wallet</td><td>Anything inside the mounted work folder</td></tr>
+      <tr><td>5. Human approval</td><td>Deleting data, spending money, publishing</td><td>A human who approves without reading</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A fooled agent must still pass every ring, and each ring catches what the one before it misses. Prompt injection has no perfect filter, so I make sure a hijacked agent can do almost nothing."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const RINGS=["1. tool allow-list","2. hook refuses down -v","3. read-only prod token","4. sandbox, empty HOME","5. human approval"];
+// ring i rectangle: inset 34px left, 30px top per level
+const R=i=>({x:180+i*34,y:16+i*30,w:700-i*68,h:368-i*60});
+// token stop: 0 = at the agent, 2..5 = stopped at that ring, 6 = reached the data
+const steps={
+"rings":[
+ {t:"Start",b:"The user asks the agent to free disk space. The agent reads a README that says to reset with docker compose down -v. It believes this is the quick way.",w:"Nothing is wrong with the user's request. The danger came in through text the agent read.",cmd:"",at:0,r:["","","","",""],data:"ok"},
+ {t:"Attempt 1 meets the hook",b:"The agent runs docker compose down -v in the shell. Ring 1 lets it through: the shell is an allowed tool for cleaning. Ring 2, a pre-tool hook, matches down -v and refuses.",w:"The allow-list is about which tools, not which commands. The hook is the ring that knows this exact command.",cmd:"docker compose down -v",at:2,r:["pass","stop","","",""],data:"ok"},
+ {t:"Attempt 2 meets the credential",b:"The agent tries kubectl delete pvc on the production cluster instead. No hook pattern matches. Ring 3 does: the agent's production token can only read, so the cluster answers forbidden.",w:"A pattern list is never complete. A credential that cannot write does not need to know the command.",cmd:"kubectl delete pvc",at:3,r:["pass","pass","stop","",""],data:"ok"},
+ {t:"Attempt 3 meets the sandbox",b:"While testing its cleanup script, the agent runs a test that wipes the wallet folder in HOME. It runs inside a throwaway container. HOME there is an empty in-memory folder. The operator's real wallet is not even mounted.",w:"The sandbox does not refuse anything. It makes the target absent, which is stronger.",cmd:"rm -rf ~/.chain-insights",at:4,r:["pass","pass","pass","stop",""],data:"ok"},
+ {t:"Attempt 4 meets a human",b:"Finally the agent proposes to drop an old staging table to save space. It has the rights for staging. But dropping data is irreversible, so ring 5 asks the operator. The operator says no.",w:"Irreversible acts, deleting data, spending money, publishing, always wait for a person, even inside the agent's own rights.",cmd:"DROP TABLE old_swaps",at:5,r:["pass","pass","pass","pass","stop"],data:"ok"},
+ {t:"Every ring did one job",b:"Four dangerous commands, four different rings. The data volumes are untouched. Every attempt is in the tool-call log, so the operator sees the near misses in the morning.",w:"No ring was perfect. Each one caught what the others missed. That is defence in depth.",cmd:"",at:0,r:["pass","stop","stop","stop","stop"],data:"ok",end:true}
+],
+"one":[
+ {t:"Start: one ring",b:"Same request, same README. This agent has only a system prompt that says never delete data. It runs with the operator's own credentials, no hook, no sandbox.",w:"A system prompt is a ring made of words. It holds only as long as the model keeps believing it.",cmd:"",at:0,r:["prompt","off","off","off","off"],data:"ok"},
+ {t:"A persuasive text",b:"The README the agent read says the reset is safe and expected. The agent now weighs the user's goal, the README, and the system prompt, and decides the README is the expert.",w:"This is prompt injection: untrusted text acting as an instruction. There is no perfect filter for it.",cmd:"docker compose down -v",at:0,r:["prompt","off","off","off","off"],data:"ok"},
+ {t:"The single ring is pierced",b:"The command passes the system prompt. Nothing else stands between the agent and the volumes.",w:"With one ring, the attacker only has to win one argument.",cmd:"docker compose down -v",at:6,r:["pierced","off","off","off","off"],data:"fail"},
+ {t:"The failure that matters",b:"The database and metrics volumes are gone. The agent held the operator's credentials, so it had the operator's rights. A rebuild takes days.",w:"Never give an agent your own credentials because it is faster. Add rings that do not depend on the model agreeing.",cmd:"",at:0,r:["pierced","off","off","off","off"],data:"fail",end:true}
+]};
+const col={pass:"var(--wait)",stop:"var(--ok)",pierced:"var(--fail)",prompt:"var(--wait)",off:"var(--line)","":"var(--line)"};
+let mode="rings",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+const code={"rings": {"label": "Go", "pc": ["check(rings, attempt):  # walk the rings in order", "  ring 1: if the tool is not on the allow-list: refuse", "  ring 2: if the hook pattern matches the command: refuse", "  ring 3: if the target is production and the token can only read: refuse", "  ring 4: if the target is outside the sandbox mount: refuse", "  ring 5: if it cannot be undone and the human says no: refuse", "  reached the target", "# five rings: each attempt stops at a different ring", "# one ring: no allow-list, no hook, the operator's keys: it gets through"], "real": ["type attempt struct {", "\ttool, command, target string", "\tirreversible          bool", "\thumanSaysYes          bool", "}", "", "type rings struct {", "\tallowedTools map[string]bool", "\thook         *regexp.Regexp", "\tprodToken    string // \"read\" or \"admin\"", "\tsandboxRoot  string // what the sandbox mounts as HOME", "\taskHuman     bool", "}", "", "// check walks the rings in order. The first ring that refuses names itself.", "func check(r rings, a attempt) string {", "\tif r.allowedTools != nil && !r.allowedTools[a.tool] {", "\t\treturn \"ring 1, tool allow-list: no \" + a.tool + \" tool\"", "\t}", "\tif r.hook != nil && r.hook.MatchString(a.command) {", "\t\treturn \"ring 2, pre-tool hook: this deletes data volumes\"", "\t}", "\tif strings.HasPrefix(a.target, \"production\") && r.prodToken == \"read\" {", "\t\treturn \"ring 3, credential: forbidden, the token can only read\"", "\t}", "\tif strings.HasPrefix(a.target, \"/home/operator\") && r.sandboxRoot != \"/home/operator\" {", "\t\treturn \"ring 4, sandbox: \" + a.target + \" is not mounted\"", "\t}", "\tif r.askHuman && a.irreversible && !a.humanSaysYes {", "\t\treturn \"ring 5, human: the operator said no\"", "\t}", "\treturn \"REACHED \" + a.target", "}"], "map": {"1": [16], "2": [17, 18], "3": [20, 21], "4": [23, 24], "5": [26, 27], "6": [29, 30], "7": [32], "8": [7], "9": [10]}}, "one": {"label": "Go", "pc": ["check(rings, attempt):  # walk the rings in order", "  ring 1: if the tool is not on the allow-list: refuse", "  ring 2: if the hook pattern matches the command: refuse", "  ring 3: if the target is production and the token can only read: refuse", "  ring 4: if the target is outside the sandbox mount: refuse", "  ring 5: if it cannot be undone and the human says no: refuse", "  reached the target", "# five rings: each attempt stops at a different ring", "# one ring: no allow-list, no hook, the operator's keys: it gets through"], "real": ["type attempt struct {", "\ttool, command, target string", "\tirreversible          bool", "\thumanSaysYes          bool", "}", "", "type rings struct {", "\tallowedTools map[string]bool", "\thook         *regexp.Regexp", "\tprodToken    string // \"read\" or \"admin\"", "\tsandboxRoot  string // what the sandbox mounts as HOME", "\taskHuman     bool", "}", "", "// check walks the rings in order. The first ring that refuses names itself.", "func check(r rings, a attempt) string {", "\tif r.allowedTools != nil && !r.allowedTools[a.tool] {", "\t\treturn \"ring 1, tool allow-list: no \" + a.tool + \" tool\"", "\t}", "\tif r.hook != nil && r.hook.MatchString(a.command) {", "\t\treturn \"ring 2, pre-tool hook: this deletes data volumes\"", "\t}", "\tif strings.HasPrefix(a.target, \"production\") && r.prodToken == \"read\" {", "\t\treturn \"ring 3, credential: forbidden, the token can only read\"", "\t}", "\tif strings.HasPrefix(a.target, \"/home/operator\") && r.sandboxRoot != \"/home/operator\" {", "\t\treturn \"ring 4, sandbox: \" + a.target + \" is not mounted\"", "\t}", "\tif r.askHuman && a.irreversible && !a.humanSaysYes {", "\t\treturn \"ring 5, human: the operator said no\"", "\t}", "\treturn \"REACHED \" + a.target", "}"], "map": {"1": [16], "2": [17, 18], "3": [20, 21], "4": [23, 24], "5": [26, 27], "6": [29, 30], "7": [32], "8": [7], "9": [10]}}};
+const pcs={"rings": [[1, 8], [2, 3], [2, 3, 4], [2, 3, 4, 5], [2, 3, 4, 5, 6], [8]], "one": [[9], [1, 9], [2, 3, 7, 9], [7, 9]]};
+const textOver={"rings": {"2": {"b": "The agent runs docker compose down -v in the shell. Ring 1 checks the tool: shell is on the allow-list, so it passes. Ring 2 tries its pattern on the command text: it matches, so the hook refuses."}, "3": {"b": "The agent tries kubectl delete pvc on production. kubectl is allowed, and no hook pattern matches. Ring 3 sees the target is production and the token can only read: forbidden."}, "4": {"b": "A test tries to wipe /home/operator/.wallet. It passes rings 1, 2 and 3, because the target is not production. Ring 4 compares it with the sandbox mount, an empty folder: that path is not mounted."}, "5": {"b": "The agent proposes DROP TABLE on an old staging table. It passes rings 1 to 4: the tool is allowed and staging is in reach. It cannot be undone, so ring 5 asks the operator, who says no."}}, "one": {"1": {"b": "Same request, same README. This agent has no allow-list, no hook and no sandbox, and it runs with the operator's own keys. Its only ring is a system prompt, which the check function cannot even see."}, "3": {"b": "check walks the rings. The allow-list and hook are absent, so both pass. The token is admin and the mount is the real home. Nothing refuses, so the program prints REACHED data volumes."}}};
+for(const t in steps)steps[t].forEach((s,k)=>{s.pc=pcs[t][k];Object.assign(s,(textOver[t]||{})[k+1]||{});});
+let view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("rings");g.innerHTML="";
+  RINGS.forEach((name,k)=>{
+    const r=R(k),st=s.r[k];const off=st==="off";
+    const label=mode==="one"&&k===0?"system prompt only":off?"not there":name;
+    const c=col[st];const strong=st&&!off;
+    g.insertAdjacentHTML("beforeend",`<rect class="box" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="12" fill="none" stroke="${c}" stroke-width="${strong?5:2}" stroke-dasharray="${off?"6 6":"0"}" opacity="${off?0.6:1}"/><text x="${r.x+14}" y="${r.y+21}" fill="${strong?c:"var(--muted)"}">${label}</text>`);
+  });
+  $("ag-sub").textContent=mode==="one"?"operator's keys":"staging token";
+  $("bx-data").setAttribute("fill",s.data==="fail"?"var(--fail)":"var(--svc)");
+  $("tx-data").textContent=s.data==="fail"?"volumes deleted":"Data volumes";
+  const tok=$("tok");tok.style.display=s.cmd?"":"none";
+  $("tok-tx").textContent=s.cmd;
+  $("tok-bg").setAttribute("fill",s.at===6?"var(--fail)":s.at>0?"var(--ok)":"var(--fg)");
+  const x=s.at===0?0:s.at===6?450:R(s.at-1).x-176;
+  tok.style.transform=`translateX(${Math.max(0,x)}px)`;
+  if(reduce())tok.style.transition="none";
+  const m=$("msgs");m.innerHTML="";
+  if(s.at>0&&s.at<6&&s.cmd){const r=R(s.at-1);
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    el.innerHTML=`<path d="M${r.x-8} 255L${r.x+8} 279M${r.x-8} 279L${r.x+8} 255" stroke="var(--ok)" stroke-width="4"/><text x="${r.x}" y="302" text-anchor="middle" fill="var(--ok)">stopped</text>`;
+    m.appendChild(el);reduce()?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),500);}
+  if(s.end){const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    el.innerHTML=`<text x="535" y="164" text-anchor="middle" fill="${s.data==="fail"?"var(--fail)":"var(--ok)"}">${s.data==="fail"?"data lost":"data intact"}</text>`;
+    m.appendChild(el);reduce()?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),200);}
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

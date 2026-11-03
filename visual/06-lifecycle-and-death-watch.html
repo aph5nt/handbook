@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lifecycle and Death Watch</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Actor lifecycle and death watch</h1>
+  <p class="lede">Device actor 42 is created, restarted and finally stopped. Each moment runs a hook. A dashboard session actor watches device 42, so when the device is unregistered, the session hears about it as a <code>Terminated</code> message. Press <b>Next</b>. The last tab shows the watcher that forgot to handle it.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="life">Lifecycle hooks</button>
+    <button role="tab" aria-selected="false" data-mode="watch">Death watch</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Terminated not handled</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title">
+      <title id="stage-title">A supervisor, device actor 42 with its current hook, its thermostat connection, and two session actors</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <line x1="450" y1="61" x2="450" y2="120" stroke="var(--line)" stroke-width="2"/>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-sup" class="box" x="330" y="15" width="240" height="46" rx="8" fill="var(--coord)"/><text id="t-sup" x="450" y="43" fill="#fff">Devices supervisor</text>
+        <rect id="c-dev" class="box" x="330" y="120" width="240" height="80" rx="8" fill="var(--line)"/><text id="t-dev" x="450" y="152" fill="var(--fg)">device 42</text><text id="s-dev" x="450" y="178" fill="var(--fg)" font-size="13">not created</text>
+        <rect id="c-hook" class="box" x="330" y="235" width="240" height="40" rx="20" fill="var(--line)"/><text id="t-hook" x="450" y="260" fill="var(--fg)" font-size="13">hook: none yet</text>
+        <rect id="c-res" class="box" x="640" y="130" width="240" height="60" rx="8" fill="var(--line)"/><text id="t-res" x="760" y="155" fill="var(--fg)">thermostat connection</text><text id="s-res" x="760" y="177" fill="var(--fg)" font-size="13">closed</text>
+        <rect id="c-ses" class="box" x="20" y="120" width="240" height="80" rx="8" fill="var(--svc)"/><text id="t-ses" x="140" y="152" fill="#fff">session actor, user Ana</text><text id="s-ses" x="140" y="178" fill="#fff" font-size="13">shows device 42</text>
+        <g id="g-ses2" class="msg"><rect id="c-ses2" class="box" x="20" y="225" width="240" height="70" rx="8" fill="var(--svc)"/><text id="t-ses2" x="140" y="253" fill="#fff">session actor, user Ben</text><text id="s-ses2" x="140" y="277" fill="#fff" font-size="13">shows device 42</text></g>
+        <rect id="c-leak" class="box" x="640" y="235" width="240" height="40" rx="20" fill="var(--line)"/><text id="t-leak" x="760" y="260" fill="var(--fg)" font-size="13">open connections: 0</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--svc)">running</span>
+    <span style="--c:var(--wait)">a hook is running</span>
+    <span style="--c:var(--undo)">fresh instance after a restart</span>
+    <span style="--c:var(--ok)">resource open, or handled well</span>
+    <span style="--c:var(--fail)">failed or leaked</span>
+    <span style="--c:var(--line)">stopped or closed</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Session and subscription actors that watch the entity they show. A parent that must react when a child stops for good, not only when it fails. Akka <code>Context.Watch</code> and <code>Terminated</code>, Erlang monitors (and links, the stricter form: one dies, both die).</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Open resources in <code>PreStart</code> and close them in <code>PostStop</code>, never in the constructor. Handle <code>Terminated</code> in every behaviour of a watcher. Use supervision for a parent's decision about a failure, death watch for anyone who needs to know an actor is gone.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Supervision</th><th>Death watch</th></tr>
+      <tr><td>Who</td><td>Only the parent</td><td>Any actor, on any node</td></tr>
+      <tr><td>When</td><td>The child failed</td><td>The actor stopped, for any reason</td></tr>
+      <tr><td>What arrives</td><td>A failure the parent decides about</td><td>One <code>Terminated(ref)</code> message</td></tr>
+      <tr><td>Can it change the outcome</td><td>Yes: resume, restart, stop, escalate</td><td>No: the actor is already gone</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Supervision is for a parent deciding about a failure, death watch is for anyone who needs to know an actor stopped, and they get it as a Terminated message."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-lifecycle-and-death-watch/main.go";
+const code={_:{pc:`
+create(Device):
+  instance = new Device()          # never open resources here
+  instance.PreStart()              # open the thermostat connection
+loop: handle one message at a time
+on failure, supervisor says Restart:
+  old.PreRestart() -> stop children, old.PostStop()   # close
+  instance = new Device(); instance.PostRestart() -> PreStart()
+  the mailbox and the reference stay the same
+on Stop:
+  finish the current message, stop children, PostStop()   # close
+  for each watcher: tell(watcher, Terminated(self))       # exactly once
+watcher: watch(device42)
+watcher on Terminated(who): show offline; unwatch(who)
+watcher without that handler: fails with DeathPactException
+# the leak: open in the constructor, close nowhere
+on a new state: tell each watcher the state`,go:`
+d := newDevice(leaky) //@1,2
+d.PreStart() // openConns++ //@2,3
+for m := range mailbox { //@4
+	switch m.(type) {
+	case Fail: //@5
+		d.PostStop() // openConns-- //@6
+		d = newDevice(leaky) //@7
+		d.PreStart() //@7
+		// same mailbox channel, same *Ref //@8
+	case State: //@16
+		for _, w := range *watchers { //@16
+			w <- m //@16
+		}
+	case Stop: //@9
+		d.PostStop() //@10
+		for _, w := range *watchers { //@11
+			w <- Terminated{name} //@11
+		}
+		return
+	}
+}
+func newDevice(leaky bool) *Device {
+	d := &Device{leaky: leaky} //@1
+	if leaky {
+		openConns++ // the leak: opened in the constructor //@15
+	}
+	return d
+}
+watchers := []chan Msg{ana, ben} // Watch(42) //@12
+case Terminated: //@13,14
+	if !handles { //@14
+		out <- fmt.Sprintf("session %s: failed: %v", user, errors.New("DeathPactException: unhandled Terminated("+v.Who+")")) //@14
+		return
+	}
+	out <- fmt.Sprintf("session %s: Terminated(%s) -> shows offline, unwatch", user, v.Who) //@13`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET lifecycle hooks and death watch.
+public class DeviceActor : ReceiveActor {
+    ThermostatConnection _conn; // not opened in the constructor //@1
+    protected override void PreStart() => _conn = Thermostat.Open(42); //@2,3
+    protected override void PostStop() => _conn?.Dispose(); //@6,10
+    public DeviceActor() => Receive<Reading>(r => { _last = r.C; //@4
+        _watchers.ForEach(w => w.Tell(new StateUpdate(_last))); }); //@16
+    protected override void PreRestart(Exception e, object m) //@5,6
+        => base.PreRestart(e, m); // stops children, calls PostStop //@6
+    protected override void PostRestart(Exception e) => base.PostRestart(e); // calls PreStart //@7,8
+}
+// The session watches device 42.
+Context.Watch(device42); // Terminated will come once //@12,11
+Receive<Terminated>(t => { ShowOffline(); Context.Unwatch(t.ActorRef); }); //@13
+Receive<StateUpdate>(u => Show(u.C)); // no Receive<Terminated>: DeathPactException //@14
+Context.Stop(device42); // thermostat unregistered //@9
+// the runtime then tells every watcher Terminated(device42), once //@11
+class LeakyDevice : ReceiveActor { ThermostatConnection _c = Thermostat.Open(42); } // the leak //@15`}};
+const live={f:{"c-dev":"svc","c-res":"ok","c-leak":"line"},x:{"s-dev":"running","s-res":"open","t-leak":"open connections: 1"}};
+live.x["t-hook"]="hook: none";
+const tabInit={life:{},watch:live,bad:{...live,on:["g-ses2"]}};
+const steps={
+life:[
+ {pc:[1,2,3],t:"Create: PreStart runs",b:"The supervisor creates device 42. Before the first message the runtime runs PreStart, and PreStart opens the thermostat connection.",w:"Open resources in PreStart, so a restart opens them again cleanly.",a:[[450,61,450,120,"create"],[570,160,640,160,"open","ok"]],f:{"c-dev":"wait","c-hook":"wait","c-res":"ok","c-leak":"line"},x:{"s-dev":"starting","t-hook":"hook: PreStart","s-res":"open","t-leak":"open connections: 1"}},
+ {pc:[4],t:"Running",b:"Device 42 handles readings, one message at a time.",w:"Most of an actor's life is this state.",f:{"c-dev":"svc","c-hook":"line"},x:{"s-dev":"running","t-hook":"hook: none"}},
+ {pc:[5,6],t:"A failure: PreRestart",b:"A handler throws. The supervisor says restart. PreRestart runs on the old instance. By default it stops the children, then PostStop closes the connection.",w:"The old instance cleans up before it is thrown away.",a:[[460,120,460,61,"failure","fail"]],f:{"c-dev":"fail","c-hook":"wait","c-res":"line","c-leak":"line"},x:{"s-dev":"failed","t-hook":"hook: PreRestart, then PostStop","s-res":"closed","t-leak":"open connections: 0"}},
+ {pc:[7,8],t:"A new instance: PostRestart",b:"A fresh instance is built. PostRestart runs, which calls PreStart, which opens the connection again. The mailbox was kept.",w:"Restart is a new object with the same reference and the same mailbox.",a:[[570,160,640,160,"open","ok"]],f:{"c-dev":"undo","c-res":"ok","c-leak":"line"},x:{"s-dev":"fresh instance","t-hook":"hook: PostRestart, PreStart","s-res":"open","t-leak":"open connections: 1"}},
+ {pc:[9],t:"Stop",b:"The thermostat is unregistered. The supervisor stops device 42. It finishes its current message, its children stop first, then it stops.",w:"Stop is final. Queued messages go to dead letters.",a:[[440,61,440,120,"stop"]],f:{"c-dev":"line","c-hook":"wait"},x:{"s-dev":"stopping"}},
+ {pc:[10],t:"PostStop closes the resource",b:"PostStop runs and closes the thermostat connection. Open connections go from 1 to 0.",w:"Every open in PreStart is paired with a close in PostStop.",f:{"c-res":"line","c-hook":"line"},x:{"s-res":"closed","t-hook":"hook: PostStop","s-dev":"stopped","t-leak":"open connections: 0"}},
+ {pc:[15,7],t:"The failure that matters: a leak",b:"Replay it with the connection opened in the constructor and closed nowhere. Each restart calls the constructor again, and nothing closes the old one. Two restarts make three instances and three open connections. Two of them belong to dead instances.",w:"Pair every open with a close in the lifecycle hooks, or every restart leaks.",f:{"c-dev":"undo","c-res":"fail","c-leak":"fail"},x:{"s-dev":"3 instances, 2 restarts","t-hook":"opened in the constructor","s-res":"3 open, 2 orphaned","t-leak":"open connections: 3"}}
+],
+watch:[
+ {pc:[12],t:"The session watches device 42",b:"User Ana's dashboard session actor shows the live state of device 42. It calls Watch on device 42.",w:"Any actor can watch any other, not only its children.",a:[[260,150,330,150,"Watch(42)","fg",false,[295,110,"middle"]]]},
+ {pc:[16],t:"Updates flow",b:"Device 42 tells the session each new state. Ana sees 21.5 C.",w:"Watching costs nothing until something stops.",a:[[330,180,260,180,"state: 21.5 C","ok",false,[300,219,"middle"]]],x:{"s-ses":"shows 21.5 C"}},
+ {pc:[9,10],t:"Device 42 is stopped",b:"The thermostat is unregistered and the supervisor stops device 42.",w:"The session did not ask for this and is not its parent.",a:[[440,61,440,120,"stop"]],f:{"c-dev":"line","c-res":"line"},x:{"s-dev":"stopped","s-res":"closed","t-leak":"open connections: 0"}},
+ {pc:[11],t:"Terminated arrives",b:"The runtime sends the session one message: Terminated(device 42).",w:"It arrives once, for any reason the actor stopped: stopped, failed for good, or its node died.",a:[[330,165,260,165,"Terminated(42)","coord",false,[295,110,"middle"]]],f:{"c-ses":"wait"},x:{"s-ses":"Terminated(42) in mailbox"}},
+ {pc:[13],t:"The session reacts",b:"The session's current behaviour has a Terminated handler, so the message matches. It shows offline, unwatches, and stops sending to the dead reference.",w:"No polling and no timeouts: the watcher is told.",f:{"c-ses":"ok"},x:{"s-ses":"shows offline"}},
+ {pc:[11],t:"Across nodes too",b:"If device 42 lived on another node and that node died, the session still gets Terminated, once the cluster marks the node down.",w:"A dead node counts as all its actors stopping.",band:[310,"node of device 42 down: every watcher gets Terminated"]}
+],
+bad:[
+ {pc:[12],t:"Two sessions watch device 42",b:"Ana's and Ben's sessions both watch device 42. Their current behaviour handles state updates, but not Terminated.",w:"Watching is one line. Handling the answer is a second one that is easy to forget.",a:[[260,150,330,150,"Watch(42)","fg",false,[295,110,"middle"]],[260,250,330,190,"Watch(42)","fg",false,[300,219,"middle"]]]},
+ {pc:[9,11],t:"Device 42 stops",b:"The thermostat is unregistered. Device 42 stops.",w:"Both sessions are sent Terminated(42).",a:[[440,61,440,120,"stop"]],f:{"c-dev":"line","c-res":"line"},x:{"s-dev":"stopped","s-res":"closed","t-leak":"open connections: 0"}},
+ {pc:[14],t:"Terminated is not handled",b:"Each session looks for a handler for Terminated in its current behaviour. There is none. In classic Akka an unhandled Terminated makes the watcher fail with a DeathPactException.",w:"The rule assumes a watcher that ignores the death of what it watches has a bug.",a:[[330,165,260,165,"Terminated(42)","coord",false,[295,110,"middle"]],[330,190,260,250,"Terminated(42)","coord",false,[300,219,"middle"]]],f:{"c-ses":"wait","c-ses2":"wait"},x:{"s-ses":"unhandled Terminated","s-ses2":"unhandled Terminated"}},
+ {pc:[14],t:"The failure that matters",b:"Both session actors fail. One stopped device took down every dashboard that showed it, and Ana and Ben lose their views.",w:"With a thousand watchers, one stop is a thousand failures.",f:{"c-ses":"fail","c-ses2":"fail"},x:{"s-ses":"failed: DeathPactException","s-ses2":"failed: DeathPactException"}},
+ {pc:[13],t:"The fix",b:"Handle Terminated in every behaviour of a watcher: show offline, unwatch, maybe stop the session.",w:"Every Watch needs a Terminated handler in every state the watcher can be in.",f:{"c-ses":"ok","c-ses2":"ok"},x:{"s-ses":"shows offline","s-ses2":"shows offline"}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

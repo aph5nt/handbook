@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability and alerting</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Observability and alerting: page on symptoms</h1>
+  <p class="lede">A data pipeline reads blocks from a node, indexes them and writes them to a warehouse. The warehouse disk slows down. Watch one page that says what users feel lead the on-call to the cause, and watch a page per cause bury them. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="symptom">Page on the symptom</button>
+    <button role="tab" aria-selected="false" data-mode="cause">A page per cause: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A pipeline, its three signals, a pager, an on-call engineer and a dashboard</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-nd" class="box" x="20" y="30" width="150" height="56" rx="8"/><text id="b-nd-t" x="95" y="64">Node</text>
+        <rect id="b-ix" class="box" x="200" y="30" width="150" height="56" rx="8"/><text id="b-ix-t" x="275" y="64">Indexer</text>
+        <rect id="b-wh" class="box" x="380" y="30" width="150" height="56" rx="8"/><text id="b-wh-t" x="455" y="54">Warehouse</text><text id="b-wh-l" x="455" y="76" class="sm"></text>
+        <g stroke="var(--muted)" stroke-width="2"><line x1="170" y1="58" x2="198" y2="58" marker-end="url(#arr)"/><line x1="350" y1="58" x2="378" y2="58" marker-end="url(#arr)"/></g>
+        <rect id="b-me" class="box" x="20" y="150" width="150" height="62" rx="8"/><text id="b-me-t" x="95" y="176">Metrics</text><text id="b-me-l" x="95" y="199" class="sm"></text>
+        <rect id="b-lo" class="box" x="200" y="150" width="150" height="62" rx="8"/><text id="b-lo-t" x="275" y="176">Logs</text><text id="b-lo-l" x="275" y="199" class="sm"></text>
+        <rect id="b-tr" class="box" x="380" y="150" width="150" height="62" rx="8"/><text id="b-tr-t" x="455" y="176">Traces</text><text id="b-tr-l" x="455" y="199" class="sm"></text>
+        <text x="275" y="252" class="sm" fill="var(--muted)">Dashboard: causes, for diagnosis</text>
+        <rect id="t-cpu" class="box" x="20" y="262" width="118" height="50" rx="6"/><text id="t-cpu-t" x="79" y="292" class="sm">CPU</text>
+        <rect id="t-dk" class="box" x="148" y="262" width="118" height="50" rx="6"/><text id="t-dk-t" x="207" y="292" class="sm">Disk</text>
+        <rect id="t-q" class="box" x="276" y="262" width="118" height="50" rx="6"/><text id="t-q-t" x="335" y="292" class="sm">Queue depth</text>
+        <rect id="t-lag" class="box" x="404" y="262" width="126" height="50" rx="6"/><text id="t-lag-t" x="467" y="292" class="sm">Node lag</text>
+        <rect id="b-pg" class="box" x="720" y="30" width="160" height="56" rx="8"/><text id="b-pg-t" x="800" y="54">Pager</text><text id="b-pg-l" x="800" y="76" class="sm"></text>
+        <rect id="b-oc" class="box" x="720" y="150" width="160" height="62" rx="8"/><text id="b-oc-t" x="800" y="176">On-call</text><text id="b-oc-l" x="800" y="199" class="sm"></text>
+        <rect id="b-pm" class="box" x="720" y="262" width="160" height="62" rx="8"/><text id="b-pm-t" x="800" y="288">Postmortem</text><text id="b-pm-l" x="800" y="311" class="sm"></text>
+        <text id="cap" x="450" y="360" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-observability-and-alerting/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">a signal or a person</span>
+    <span style="--c:var(--ok)">healthy</span>
+    <span style="--c:var(--wait)">under strain</span>
+    <span style="--c:var(--fail)">a page, a fault, or a broken store</span>
+    <span style="--c:var(--line)">not involved yet</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Prometheus for metrics with a <code>lane</code> label of two values, Loki or Elasticsearch for logs, OpenTelemetry for traces, Grafana for the dashboard. A postmortem that ends "the health check restarted every copy at once; fix: liveness no longer calls the database", not "engineer X made a mistake".</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Page on symptoms: error rate, latency against the SLO, freshness. Put causes such as CPU, disk and queue depth on the dashboard. Use burn-rate alerts: page when the error budget will be gone in hours, open a ticket when it burns slowly. Keep metric labels few. Put addresses and user ids in logs and traces.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Page on symptoms</th><th>Page on causes</th></tr>
+      <tr><td>One incident</td><td>One page that says what users feel</td><td>Twenty pages, one per cause</td></tr>
+      <tr><td>Quiet days</td><td>Quiet pager</td><td>Noise that trains people to ignore it</td></tr>
+      <tr><td>Finding the cause</td><td>The on-call opens the dashboard</td><td>Guess which of twenty pages matters</td></tr>
+      <tr><td>Misses</td><td>Few: users felt nothing, so no page</td><td>Causes nobody wrote a rule for</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I page on what the user feels, keep causes on the dashboard, alert on error-budget burn rate, and keep metric labels low-cardinality."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const tiles=(c,d,q,l)=>({"t-cpu":c,"t-dk":d,"t-q":q,"t-lag":l});
+const base={f:Object.assign({"b-nd":G,"b-ix":G,"b-wh":G,"b-me":C,"b-lo":C,"b-tr":C,"b-pg":N,"b-oc":N,"b-pm":N},tiles(G,G,G,G)),
+ x:{"b-wh-l":"","b-me-t":"Metrics","b-me-l":"20 blocks behind","b-lo-l":"","b-tr-l":"","b-pg-l":"pages: 0","b-oc-l":"","b-pm-l":"","cap":"","t-cpu-t":"CPU 30%","t-dk-t":"Disk 40%","t-q-t":"Queue 10","t-lag-t":"Node lag 0"}};
+const D={symptom:base,cause:base};
+const PAGE=[110,150,718,70],PO=[800,86,800,148],OD=[718,200,532,282],OL=[718,181,532,181],OP=[800,212,800,260];
+const strain={f:Object.assign({"b-wh":Y},tiles(G,R,Y,G)),x:{"b-wh-l":"disk slow","t-dk-t":"Disk 98%","t-q-t":"Queue 4,000","b-me-l":"1,200 blocks behind"}};
+const mix=(...o)=>{const r={f:{},x:{}};o.forEach(p=>{Object.assign(r.f,p.f||{});Object.assign(r.x,p.x||{})});return r};
+const steps={
+symptom:[
+ {t:"A healthy pipeline",b:"The node feeds the indexer, the indexer writes to the warehouse. One alert watches what users feel: is the data more than 1,000 blocks behind the chain head? Today it is 20, so the check resets its counter.",w:"Three signals watch it. Metrics are numbers over time, cheap and good for alerts. Logs carry the detail. Traces follow one request across services.",m:[]},
+ {t:"The warehouse disk slows down",b:"A warehouse disk is nearly full and writes slow down. The indexer's queue grows. The check reads 1,200: above 1,000, so its counter starts at 1.",w:"No page yet. The rule needs 10 minutes in a row, so a short blip resets the counter and wakes nobody.",...mix(strain),m:[]},
+ {t:"One page, about the symptom",b:"The counter reaches 10, and only then does the page fire: \"data is 1,200 blocks behind head for 10 minutes\". It fires once, on 10 exactly, not every minute after.",w:"The page is about the user. Whether the node, the indexer or the warehouse caused it is for the next step.",...mix(strain,{f:{"b-pg":R,"b-oc":C},x:{"b-pg-l":"1 page: data stale","b-oc-l":"woken up"}}),m:[[110,150,718,70,"blocks behind > 1,000 for 10 min",R,0,470,130],[800,86,800,148,"",R]]},
+ {t:"The on-call opens the dashboard",b:"Each tile has a limit. CPU 30 against 90 is fine. Node lag 0 is fine. Disk 98 against 90 and queue 4,000 against 1,000 are over, so they are red.",w:"Causes live on the dashboard, for diagnosis. They are never pages on their own.",...mix(strain,{f:{"b-pg":R,"b-oc":C},x:{"b-pg-l":"1 page: data stale","b-oc-l":"reading the board"}}),m:[[718,200,532,282,"",C]]},
+ {t:"Logs say why, traces say where",b:"The logs show \"write timeout to warehouse\". A trace of one batch shows 4 seconds inside the warehouse insert and milliseconds everywhere else.",w:"Metrics said something is wrong, logs said why, traces said where. Each signal answers a different question.",...mix(strain,{f:{"b-pg":R,"b-oc":C,"b-lo":Y,"b-tr":Y},x:{"b-pg-l":"1 page: data stale","b-oc-l":"found it","b-lo-l":"write timeout","b-tr-l":"4 s in insert"}}),m:[[718,181,532,181,"",C]]},
+ {t:"Burn rate decides page or ticket",b:"Every minute is bad, so the burn rate is 100 percent over 0.1: 1,000. 720 hours divided by 1,000 is under an hour, below the 24-hour line, so it paged. A slow leak at burn 1.5 leaves 480 hours, so it opens a ticket.",w:"Burn-rate alerts page only when waiting would break the SLO. Everything slower waits for working hours.",...mix(strain,{f:{"b-pg":R,"b-oc":C},x:{"b-pg-l":"fast burn: page","b-oc-l":"disk grown","cap":"budget gone in under 24 hours: page. later: ticket"}}),m:[]},
+ {t:"A blameless postmortem",b:"After the fix the team writes up the timeline, the root causes and the actions: an alert on disk growth for the dashboard, a bigger disk, a capacity check before each release.",w:"Blameless means the write-up names causes in the system, not a person. People share what really happened only when nobody is punished for it.",f:{"b-pm":G,"b-oc":C},x:{"b-pm-l":"timeline, causes, actions","b-oc-l":"writing it up"},m:[[800,212,800,260,"",C]]}
+],
+cause:[
+ {t:"A rule for every cause",b:"A different team writes an alert for every cause it can think of: CPU, disk, queue depth, node lag, and sixteen more. Each one pages.",w:"It feels thorough. Each rule looks reasonable alone.",f:{"b-pg":Y},x:{"b-pg-l":"20 page rules"},m:[]},
+ {t:"One incident, twenty pages",b:"The same slow disk puts disk, queue, insert latency, indexer lag, freshness and fifteen more over their limits. Each rule fires on its own: twenty pages in three minutes.",w:"The on-call has to work out which of twenty pages is the real one, at 3 in the morning.",...mix(strain,{f:{"b-pg":R,"b-oc":R},x:{"b-pg-l":"20 pages in 3 minutes","b-oc-l":"which one is real?"}}),m:[[532,270,718,74,"a page per cause",R,0,640,160],[800,86,800,148,"",R]]},
+ {t:"The failure that matters: people learn to ignore the pager",b:"On quiet days a CPU spike pages, then clears by itself. No action was needed, so by the test of a page it should not exist. The team mutes the pager instead. One night the data goes stale for real and nobody looks.",w:"A page that needs no action is worse than no page. It teaches people to ignore the next one.",...mix(strain,{f:{"b-pg":Y,"b-oc":R},x:{"b-pg-l":"muted","b-oc-l":"missed the real one","cap":"users saw stale data for 3 hours before anyone noticed"}}),m:[]},
+ {t:"The other failure: too many label values",b:"Someone adds the address as a metric label to see which address is slow. Every address makes a new time series. Millions of addresses make millions of series, and the metrics store runs out of memory.",w:"This is high cardinality. Keep metric labels few: a lane label has two values. Put high-cardinality detail in logs and traces.",f:{"b-me":R},x:{"b-me-t":"Metrics: down","b-me-l":"40 million series"},m:[]},
+ {t:"The fix",b:"Delete the cause pages and keep them as dashboard tiles. Page on freshness, error rate and latency against the SLO. Move the address to logs and traces.",w:"One page per user-visible problem, a board for the causes, and labels a metrics store can hold.",f:{"b-me":C,"b-pg":G},x:{"b-me-t":"Metrics","b-me-l":"lane label: 2 values","b-lo-l":"address here","b-tr-l":"address here","b-pg-l":"3 symptom pages"},m:[]}
+]};
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["symptom alert: limit 1,000 blocks, for 10 minutes", "check(behind):                 # once a minute", "  if behind <= limit: over = 0; no page", "  over += 1", "  page only when over == 10    # once, not every minute", "tile = cause on the board: name, value, limit", "diagnose(board):", "  list every tile over its limit  # disk 98, queue 4,000", "route(burn):", "  hours left = 720 / burn", "  if hours left < 24: page", "  else: ticket", "causePages(rules):             # the other team", "  every rule over its limit is one page", "worth(page):", "  no action needed: delete the page", "slowest(trace): the span with the most time   # where", "labelOK(values): values <= 100, else logs and traces"], "real": ["func (a *Symptom) Check(behind int) bool {", "\tif behind <= a.Limit {", "\t\ta.over = 0", "\t\treturn false", "\t}", "\ta.over++", "\treturn a.over == a.ForMinutes // once, not every minute after", "}", "", "func Diagnose(board []Tile) []string {", "\tvar red []string", "\tfor _, t := range board {", "\t\tif t.Value > t.Limit {", "\t\t\tred = append(red, t.Name)", "\t\t}", "\t}", "\treturn red", "}", "", "func Slowest(spans map[string]int) (string, int) {", "\tworst, ms := \"\", 0", "\tfor name, t := range spans {", "\t\tif t > ms {", "\t\t\tworst, ms = name, t", "\t\t}", "\t}", "\treturn worst, ms", "}", "", "func LabelOK(values int) bool {", "\treturn values <= 100", "}", "", "func Route(burn float64) string {", "\thoursLeft := 30 * 24 / burn", "\tif hoursLeft < 24 {", "\t\treturn \"page\"", "\t}", "\treturn \"ticket\"", "}", "", "func CausePages(rules []Tile) int {", "\tpages := 0", "\tfor _, r := range rules {", "\t\tif r.Value > r.Limit {", "\t\t\tpages++", "\t\t}", "\t}", "\treturn pages", "}", "", "func Worth(neededAction bool) string {", "\tif !neededAction {", "\t\treturn \"delete it: it teaches people to ignore the pager\"", "\t}", "\treturn \"keep\"", "}"], "map": {"1": [2, 7], "2": [1], "3": [2, 3, 4], "4": [6], "5": [7], "6": [13], "7": [10], "8": [11, 12, 13, 14, 15, 16, 17], "9": [34], "10": [35], "11": [36, 37], "12": [39], "13": [42], "14": [43, 44, 45, 46, 47, 48, 49], "15": [52], "16": [53, 54], "17": [21, 22, 23, 24, 25, 26, 27], "18": [31]}}},PCS={"symptom": [[1, 2, 3], [2, 3, 4], [2, 4, 5], [6, 7, 8], [17], [9, 10, 11, 12], [15, 16]], "cause": [[13, 14], [13, 14], [15, 16], [18], [1, 2, 5, 6, 16, 18]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

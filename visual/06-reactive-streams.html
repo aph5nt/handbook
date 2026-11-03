@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reactive Streams</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Reactive Streams: demand flows upstream</h1>
+  <p class="lede">Telemetry flows from a socket, through a parse stage, into a batch writer for the warehouse. Data moves right. Demand, "request n", moves left. Press <b>Next</b> and watch the warehouse slow down. The second tab shows a plain tell to an actor in the middle of the stream.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="demand">Stream with demand</button>
+    <button role="tab" aria-selected="false" data-mode="tell">A plain tell in the middle</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 300" aria-labelledby="stage-title">
+      <title id="stage-title">Devices, socket source, parse stage, batch writer and warehouse in a row, with the buffer of each stage</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <text x="450" y="30" fill="var(--muted)" font-size="13">demand: request n, right to left (top) · data, left to right (bottom)</text>
+        <rect id="c-dev" class="box" x="15" y="110" width="140" height="64" rx="8" fill="var(--coord)"/><text id="t-dev" x="85" y="138" fill="#fff">devices</text><text id="s-dev" x="85" y="160" fill="#fff" font-size="12">sending over TCP</text>
+        <rect id="c-src" class="box" x="195" y="110" width="140" height="64" rx="8" fill="var(--svc)"/><text id="t-src" x="265" y="147" fill="#fff">socket source</text>
+        <rect id="c-par" class="box" x="375" y="110" width="140" height="64" rx="8" fill="var(--svc)"/><text id="t-par" x="445" y="147" fill="#fff">parse stage</text>
+        <rect id="c-wr" class="box" x="555" y="110" width="140" height="64" rx="8" fill="var(--svc)"/><text id="t-wr" x="625" y="147" fill="#fff">batch writer</text>
+        <rect id="c-wh" class="box" x="735" y="110" width="150" height="64" rx="8" fill="var(--undo)"/><text id="t-wh" x="810" y="138" fill="#fff">warehouse</text><text id="s-wh" x="810" y="160" fill="#fff" font-size="12">fast</text>
+        <rect id="c-bs" class="box" x="205" y="235" width="120" height="30" rx="15" fill="var(--line)"/><text id="t-bs" x="265" y="255" fill="var(--fg)" font-size="12">buffer 0 of 16</text>
+        <rect id="c-bp" class="box" x="385" y="235" width="120" height="30" rx="15" fill="var(--line)"/><text id="t-bp" x="445" y="255" fill="var(--fg)" font-size="12">buffer 0 of 16</text>
+        <rect id="c-bw" class="box" x="555" y="235" width="140" height="30" rx="15" fill="var(--line)"/><text id="t-bw" x="625" y="255" fill="var(--fg)" font-size="12">buffer 0 of 16</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--svc)">stage running</span>
+    <span style="--c:var(--coord)">demand signal</span>
+    <span style="--c:var(--wait)">slowed or holding back</span>
+    <span style="--c:var(--fail)">growing without limit, or lost</span>
+    <span style="--c:var(--undo)">the warehouse</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet Reactive Streams</h2>
+      <p>Akka Streams and Alpakka (Kafka into a database), Project Reactor in Spring WebFlux, RxJava, Java's <code>Flow</code> interfaces. All speak the same four parts: publisher, subscriber, subscription, processor. Go gets the same effect from bounded channels: a full channel makes the sender wait.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Keep a pipeline a stream end to end. Where a stage must hand items to an actor, use one that waits for an acknowledgement, such as <code>Sink.actorRefWithBackpressure</code>, or <code>ask</code> with a parallelism limit. Keep buffers small and explicit, and never hide loss behind a large dropping buffer.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Stream with demand</th><th>Plain tell into an actor</th></tr>
+      <tr><td>Who sets the pace</td><td>The slowest consumer</td><td>The fastest producer</td></tr>
+      <tr><td>Memory</td><td>Small fixed buffers per stage</td><td>The mailbox grows until out of memory</td></tr>
+      <tr><td>Warehouse slows</td><td>The socket reads less, TCP slows the devices</td><td>Nothing slows, the queue grows</td></tr>
+      <tr><td>Crash</td><td>A few buffers of items in flight</td><td>Every queued item is lost</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Reactive Streams makes demand flow upstream, request n and the producer sends at most n, so a slow consumer slows the source instead of filling memory."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-reactive-streams/main.go";
+const code={_:{pc:`
+subscriber: request(n)                  # "I can take n"
+publisher: send at most n, then wait
+writer: request(100) to parse           # demand starts at the slowest end
+parse: pass it on: request(100) to source
+source: read at most that many from the socket, send down
+parse each one, send down; writer writes the batch
+every link has a small buffer: 16
+warehouse slow: writer sends no request # silence means send nothing
+buffer full: that stage stops taking
+source stops reading: TCP slows the devices
+writer done: request(100) again
+# a plain tell in the middle:
+stage: for each reading: tell(writer, reading)   # always succeeds
+the mailbox grows until out of memory
+fix: tell one, wait for the ack, then the next   # the ack is the demand
+trap: buffer(100000, dropOldest)        # hides loss: keep small, count drops`,go:`
+func (p *Pipeline) batch() { //@1,3
+	p.demand <- 100 // request(100) //@3,11
+	for i := 0; i < 100; i++ {
+		<-p.toWriter //@6
+	}
+	p.written.Add(100) //@6
+}
+for n := range p.demand { // parse passes it on //@4
+	upstream <- n //@4
+}
+for n := range upstream { // the socket source //@2,5
+	for i := 0; i < n; i++ { //@2,5
+		p.read.Add(1) //@5
+		p.toParse <- Reading{i} // blocks when full //@9,10
+	}
+}
+for r := range p.toParse { // the parse stage //@6
+	p.toForward <- r //@6
+}
+toParse: make(chan Reading, bufferSize), // 16 //@7
+p.demand <- 100 // warehouse slow: asked once more, then takes nothing //@8
+p.settle()      // no batch(): no new request goes up //@8
+for i := 0; i < in; i++ {
+	mailbox <- Reading{i} // tell: always succeeds //@13
+}
+fmt.Printf("  warehouse fast, 4,000 a second: after 5 s the mailbox holds %d\\n", len(mailbox)) //@14
+fmt.Printf("  warehouse slow, 100 a second: after 40 s more it holds %d, then out of memory\\n", len(mailbox)) //@14
+mailbox <- Reading{i} //@15
+<-ack // the ack is the demand signal //@15
+if queue > capacity { //@16
+	dropped += queue - capacity // silent //@16
+	queue = capacity //@16
+}`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET Streams: the demand is built in.
+Source.FromPublisher(socket)    // reads on demand //@2,5,10
+    .Select(Parse)              // passes demand up //@4,6
+    .Grouped(100)               // asks for 100 //@1,3,11
+    .SelectAsync(1, b => warehouse.WriteAsync(b)) //@6,8
+    .RunWith(Sink.Ignore<Done>(), materializer); //@9
+// Stage buffers are configuration:
+akka.stream.materializer.max-input-buffer-size = 16 //@7
+// The leak: no demand signal
+Sink.ActorRef<Reading>(writer, Done.Instance); //@13,14
+// The fix: Init and Ack are the demand signal
+Sink.ActorRefWithAck<Reading>(writer, Init, Ack, Done.Instance); //@15
+// The trap: loss you never see
+.Buffer(100000, OverflowStrategy.DropHead) //@16`}};
+const DM=(a,b,l)=>[a,90,b,90,l,"coord"];
+const DT=(a,b,l,c)=>[a,205,b,205,l,c||"fg"];
+const tabInit={tell:{x:{"t-wr":"writer actor","t-bw":"mailbox: 0"}}};
+const steps={
+demand:[
+ {pc:[1,2],t:"Four stages, one contract",b:"Devices send readings over TCP. A socket source reads them, a parse stage parses them, and a batch writer writes batches to the warehouse.",w:"Reactive Streams: a subscriber asks for n items, and its publisher may send at most n."},
+ {pc:[3],t:"The writer asks for 100",b:"The batch writer has room for a batch. It signals upstream: request 100.",w:"Demand starts at the end of the pipeline, at the slowest point.",a:[DM(625,445,"request 100")]},
+ {pc:[4],t:"The parse stage asks the socket",b:"The parse stage passes the demand on: it requests 100 from the socket source.",w:"Demand flows upstream, one stage at a time.",a:[DM(445,265,"request 100")]},
+ {pc:[5,6],t:"Data flows down",b:"The socket checks its demand: 100. So it reads 100 readings and sends them, and no more. The parse stage parses them and sends 100 parsed readings to the writer. The writer writes a batch.",w:"No stage sent more than was asked for. No buffer grew.",a:[DT(265,445,"100 readings"),DT(445,625,"100 parsed"),DT(625,810,"batch","undo")],f:{"c-bs":"svc","c-bp":"svc"},x:{"t-bs":"buffer 4 of 16","t-bp":"buffer 4 of 16"}},
+ {pc:[8],t:"The warehouse slows down",b:"A big load runs on the warehouse. Each batch now takes much longer. The writer is busy and sends no new request.",w:"Silence is the signal. No request means: send nothing.",f:{"c-wh":"wait","c-wr":"wait"},x:{"s-wh":"slow: big load"}},
+ {pc:[7,9,10],t:"The socket stops reading",b:"The writer has stopped taking. Each buffer fills to 16 of 16, and then each stage waits. The program counts 51 readings read of the 100 asked: 16 in each of 3 buffers, and 3 held by the stages. The socket source stops reading, so TCP tells the devices to slow down.",w:"Back-pressure reached the edge. Nothing grows in memory: each buffer is at most 16.",f:{"c-bs":"wait","c-bp":"wait","c-bw":"wait","c-dev":"wait","c-src":"wait","c-par":"wait"},x:{"t-bs":"buffer 16 of 16","t-bp":"buffer 16 of 16","t-bw":"buffer 16 of 16","s-dev":"TCP: slow down"}},
+ {pc:[11],t:"The warehouse recovers",b:"The load ends. The writer finishes its batch and requests 100 again. Demand flows up and the readings flow down.",w:"The pipeline ran at the warehouse's speed the whole time, and lost nothing.",a:[DM(625,445,"request 100"),DM(445,265,"request 100"),DT(265,445,"readings"),DT(445,625,"parsed")],f:{"c-wh":"undo","c-wr":"svc","c-par":"svc","c-src":"svc","c-dev":"coord","c-bs":"svc","c-bp":"svc","c-bw":"svc"},x:{"s-wh":"fast","s-dev":"sending over TCP","t-bs":"buffer 4 of 16","t-bp":"buffer 4 of 16","t-bw":"buffer 4 of 16"}}
+],
+tell:[
+ {pc:[13],t:"An actor in the middle",b:"Now the parse stage hands each reading to a writer actor with a plain tell, as Sink.actorRef does. The writer actor writes to the warehouse.",w:"A tell has no demand signal. The stream cannot know the actor is behind."},
+ {pc:[13],t:"The socket reads freely",b:"A tell always succeeds, so the stage is always ready for more. The socket reads as fast as the devices send: 5,000 a second, say. The writer handles 4,000 a second, so after 5 s the mailbox holds 5,000.",w:"The stream thinks it has infinite demand.",a:[DT(265,445,"readings"),DT(445,625,"tell, tell, tell","fail")],f:{"c-bw":"wait"},x:{"t-bw":"mailbox: 5,000"}},
+ {pc:[13,14],t:"The warehouse slows down",b:"The big load starts again. The writer actor now handles 100 a second. The tells keep coming at 5,000. So the mailbox grows by 4,900 a second, and 40 s later it holds 201,000.",w:"Producer fast, consumer slow, and nothing between them that can say stop.",a:[DT(445,625,"tell, tell, tell","fail")],f:{"c-wh":"wait","c-wr":"wait","c-bw":"fail"},x:{"s-wh":"slow: big load","t-bw":"mailbox: 201,000"}},
+ {pc:[14],t:"The failure that matters: out of memory",b:"The mailbox grows until the process runs out of memory. It crashes, and every reading in the mailbox is lost.",w:"One plain tell broke the back-pressure of the whole pipeline.",band:[215,"out of memory: every queued reading lost"],f:{"c-wr":"fail"},x:{"t-bw":"mailbox: lost"}},
+ {pc:[15],t:"The fix: acknowledge each item",b:"Use a stage that waits for an acknowledgement, such as Sink.actorRefWithBackpressure. The actor acks each reading, and only then does the stage send the next.",w:"The ack is the demand signal. Back-pressure reaches the socket again.",a:[[625,90,445,90,"ack: send the next","coord"],DT(445,625,"one reading")],f:{"c-wr":"svc","c-wh":"undo","c-bw":"svc"},x:{"s-wh":"fast","t-bw":"mailbox: 1"}},
+ {pc:[16],t:"A second trap: a huge dropping buffer",b:"Someone adds buffer(100,000, drop oldest) to the parse stage to stop the pipeline from slowing down. Each time the queue passes 100,000, the oldest goes. In the program, 60 s of load drops 194,100 readings with no error.",w:"A large buffer with a drop rule hides loss. Keep buffers small and explicit, and count every drop.",f:{"c-bp":"fail"},x:{"t-bp":"100,000, drops"}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

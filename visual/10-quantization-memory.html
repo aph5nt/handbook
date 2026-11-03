@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quantization and memory</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Quantization: fewer bits, smaller model, some quality cost</h1>
+  <p class="lede">A team wants a 70-billion-parameter model on two consumer graphics cards with 24 GB each. Press <b>Next</b> and watch the weights shrink as each weight gets fewer bits, then watch the KV cache claim the room that is left. The second tab shows what the bits cost in quality.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="fit">Make it fit</button>
+    <button role="tab" aria-selected="false" data-mode="cost">What it costs</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Memory needed by a 70-billion-weight model at 16, 8 and 4 bits, against two 24 GB graphics cards, plus the KV cache</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-quantization-memory/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">fits on the cards</span>
+    <span style="--c:var(--fail)">does not fit, or quality lost</span>
+    <span style="--c:var(--undo)">KV cache: grows with context and users</span>
+    <span style="--c:var(--line)">card memory: 2 x 24 GB = 48 GB</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Self-hosting with vLLM or llama.cpp on on-premises GPUs (graphics processing units), where cards are the budget. A small router model at 8-bit for a narrow task. A LoRA adapter trained on top of a frozen 4-bit base.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Size for weights plus KV cache at peak users, never weights alone. Start at 8-bit, which is nearly lossless. Go to 4-bit only after your own golden set says the loss is fine. A small model at 8-bit often beats a big model at 4-bit on a narrow task.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>16-bit</th><th>8-bit</th><th>4-bit</th></tr>
+      <tr><td>Bytes per weight</td><td>2</td><td>1</td><td>0.5</td></tr>
+      <tr><td>70B weights need</td><td>about 140 GB</td><td>about 70 GB</td><td>about 35 GB</td></tr>
+      <tr><td>Quality</td><td>The reference</td><td>Nearly lossless</td><td>Some loss, more on small models and exact numbers</td></tr>
+      <tr><td>Decode speed</td><td>Slowest: most bytes move per token</td><td>Faster</td><td>Often fastest</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Quantization trades bits for memory, so I size weights plus KV cache and measure the quality loss on my own set."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={
+"all": {
+"pc": [
+"weights = params * bits / 8          # 140, 70, 35 GB",
+"if weights > 48 GB: does not fit",
+"kv per token = 2 * layers * heads * dim * 2 bytes  # 0.33 MB",
+"kv = per token * users * tokens      # 8, 30, 12 GB",
+"total = weights + kv",
+"if total > 48 GB: queue or reject   # 65 GB at peak",
+"cap live tokens = (48 - weights) / per token  # 39,672",
+"scale = max |w| / (2^(bits-1) - 1)",
+"q = round(w / scale) * scale         # error grows as bits drop",
+"score the golden set at each bits     # 96, 95, 90 (example)",
+"score exact-number cases apart        # 78 at 4-bit (example)",
+"pick the fewest bits your set accepts # 3-bit saves 9 GB, costs a third"
+],
+"real": [
+"def weights_gb(bits):",
+"    return PARAMS * bits / 8 / 1e9           # parameters times bytes per weight",
+"",
+"def kv_per_token():",
+"    return 2 * LAYERS * KV_HEADS * HEAD_DIM * KV_BYTES   # keys and values, bytes",
+"",
+"def kv_gb(users, tokens_each):",
+"    return kv_per_token() * users * tokens_each / 1e9",
+"",
+"def fits(bits, users=0, tokens_each=0):",
+"    total = weights_gb(bits) + kv_gb(users, tokens_each)",
+"    return total, total <= CARD_GB",
+"",
+"def max_live_tokens(bits):",
+"    \"\"\"The cap: how many tokens of KV cache fit beside the weights.\"\"\"",
+"    return int((CARD_GB - weights_gb(bits)) * 1e9 / kv_per_token())",
+"",
+"def quantize(ws, bits):",
+"    \"\"\"Symmetric absmax quantization of one group: scale, round, scale back.\"\"\"",
+"    scale = max(abs(w) for w in ws) / (2 ** (bits - 1) - 1)",
+"    return [round(w / scale) * scale for w in ws]",
+"",
+"for label, users, each in [(\"4 users x 6,000 tokens\", 4, 6000),",
+"                           (\"peak: 20 users x 4,600 tokens\", 20, 4600),",
+"                           (\"capped: 8 users x 4,500 tokens\", 8, 4500)]:",
+"    total, ok = fits(4, users, each)",
+"    print(f\"  {label}: KV {kv_gb(users, each):4.1f} GB, total {total:4.1f} GB -> {'fits' if ok else 'queue or reject'}\")",
+"",
+"for bits in (8, 4, 3):",
+"    back = quantize(ws, bits)",
+"    err = sum(abs(a - b) for a, b in zip(ws, back)) / len(ws)",
+"    print(f\"  {bits}-bit: mean round-trip error {err:.4f}\")",
+"print(f\"  3-bit weights {weights_gb(3):.0f} GB: saves {weights_gb(4) - weights_gb(3):.0f} GB more than 4-bit\")",
+"print(\"golden set (example numbers from the lesson, not computed here):\")",
+"print(\"  16-bit 96%, 8-bit 95%, 4-bit 90%, 4-bit exact numbers 78%, 3-bit 61%\")"
+],
+"map": {
+"1": [
+1,
+2
+],
+"2": [
+12
+],
+"3": [
+4,
+5
+],
+"4": [
+7,
+8
+],
+"5": [
+11
+],
+"6": [
+12,
+27
+],
+"7": [
+14,
+16
+],
+"8": [
+18,
+20
+],
+"9": [
+21,
+31
+],
+"10": [
+34,
+35
+],
+"11": [
+35
+],
+"12": [
+33
+]
+}
+}
+};
+const X0=150,PX=4.6,CARD=24;
+const ROWS=[["16-bit",140],["8-bit",70],["4-bit",35]];
+const steps={
+"fit":[
+ {t:"The budget: two 24 GB cards",b:"The team has two consumer cards with 24 GB each: 48 GB in total. The model has 70 billion weights.",w:"Memory for weights is the number of weights times the bytes per weight.",rows:0,pc:[1]},
+ {t:"16-bit: about 140 GB",b:"The rule: weights = parameters times bits, divided by 8. 70 billion times 16 bits, divided by 8, is 140 GB. The check asks: is 140 GB at most 48 GB? No.",w:"Nearly three times the budget. It does not fit.",rows:1,pc:[1, 2]},
+ {t:"8-bit: about 70 GB",b:"Same rule at 8 bits: 70 billion times 8, divided by 8, is 70 GB. The check asks: is 70 GB at most 48 GB? No. Quality is nearly the same as 16-bit.",w:"Half the memory, still too big for 48 GB.",rows:2,pc:[1, 2]},
+ {t:"4-bit: about 35 GB",b:"At 4 bits: 70 billion times 4, divided by 8, is 35 GB. The check asks: is 35 GB at most 48 GB? Yes. 13 GB are left.",w:"Now the model runs. The 13 GB left is not free space: something else needs it.",rows:3,pc:[1, 2]},
+ {t:"Add the KV cache",b:"The KV cache stores keys and values for every token of every live request. Per token: 2 x 80 layers x 8 heads x 128 wide x 2 bytes = 0.33 MB. Four users with 6,000 tokens each need about 8 GB. Total 43 GB: it fits.",w:"Size for weights plus KV cache, never weights alone.",rows:3,kv:8,pc:[3, 4, 5]},
+ {t:"The failure: peak load",b:"At peak, 20 users send 4,600 tokens each. The KV cache wants 0.33 MB x 92,000 tokens, about 30 GB. The check asks: is 35 + 30 = 65 GB at most 48 GB? No. Requests queue or get rejected.",w:"The KV cache grows with context length and with users at once. It can outgrow the weights.",rows:3,kv:30,bad:true,pc:[5, 6]},
+ {t:"The fix: cap and size",b:"The cap is (48 - 35) GB / 0.33 MB, about 39,672 live tokens. The server allows 8 users with 4,500 tokens each: about 12 GB of cache, 47 GB in total. Fewer bits also make decode faster, because less memory moves per token.",w:"Context limits at serve time are really KV cache limits.",rows:3,kv:12,ok:true,pc:[7]}
+],
+"cost":[
+ {t:"The golden set at 16-bit",b:"The team runs its golden set on the full 16-bit model, hosted elsewhere, as the reference. Example score: 96%.",w:"Example numbers, not a measurement. Your own set gives your own numbers.",q:1,pc:[10]},
+ {t:"8-bit: nearly lossless",b:"Each weight becomes round(w / scale) x scale, where scale = largest weight / 127. On 1,000 toy weights the mean error is 0.0019. Example golden-set score: 95%.",w:"8-bit is usually close to free in quality.",q:2,pc:[8, 9, 10]},
+ {t:"4-bit: some loss",b:"At 4-bit the scale is largest weight / 7, so the steps are coarse. The mean error grows to 0.0356. Example score: 90%. The loss is not spread evenly.",w:"A few points can matter, depending on which cases they are.",q:3,pc:[8, 9, 10]},
+ {t:"The failure: exact numbers",b:"Split out the cases that need exact numbers, like amounts and block heights. At 4-bit those score 78% in this example.",w:"Quantization hurts most where exact values matter, and on small models.",q:4,bad:true,pc:[11]},
+ {t:"Below 4-bit, quality drops fast",b:"At 3-bit the scale is largest weight / 3. The mean error is 0.0817. Weights drop from 35 to 26 GB, a saving of 9 GB. The example score falls to 61%: a third of the answers lost.",w:"Measure on your own golden set before you pick the bits.",q:5,bad:true,pc:[8, 9, 12]}
+]};
+function scene(s){
+  let h="";
+  if(s.q){const Q=[["16-bit",.96],["8-bit",.95],["4-bit, all cases",.90],["4-bit, exact numbers",.78],["3-bit",.61]];
+    h+=T(30,36,"Golden set pass rate (example numbers)",null,16,"start",1);
+    Q.slice(0,s.q).forEach(([l,v],k)=>{const y=60+k*54;const bad=v<.85;
+      h+=T(30,y+26,l,bad?"var(--fail)":"var(--fg)",15,"start",1)+O(230,y,600,36)+R(230,y,600*v,36,bad?"var(--fail)":k<2?"var(--ok)":"var(--wait)","");
+      h+=T(240,y+24,Math.round(v*100)+"%","#fff",15,"start",1);});
+    return h;}
+  h+=T(30,30,"Memory needed (GB)",null,16,"start",1);
+  const cw=CARD*2*PX;
+  h+=`<rect x="${X0}" y="44" width="${cw}" height="250" fill="var(--line)" fill-opacity=".35" stroke="var(--line)" stroke-width="2"/>`;
+  h+=`<line x1="${X0+CARD*PX}" x2="${X0+CARD*PX}" y1="44" y2="294" stroke="var(--muted)" stroke-dasharray="5 4"/>`;
+  h+=T(X0+CARD*PX/2,314,"card 1: 24 GB","var(--muted)",13,"middle",1)+T(X0+CARD*PX*1.5,314,"card 2: 24 GB","var(--muted)",13,"middle",1);
+  for(let g=0;g<=140;g+=20)h+=T(X0+g*PX,340,g,"var(--muted)",12,"middle");
+  ROWS.slice(0,s.rows).forEach(([l,gb],k)=>{const y=60+k*76,fits=gb<=48&&(k<2||!s.kv||35+s.kv<=48);
+    const over=gb>48;
+    h+=T(30,y+30,l,"var(--fg)",15,"start",1);
+    h+=R(X0,y,Math.min(gb,150)*PX,46,over?"var(--fail)":"var(--ok)","");
+    h+=T(X0+8,y+29,`weights ${gb} GB`,"#fff",14,"start",1);
+    if(k===2&&s.kv){const tot=gb+s.kv;h+=R(X0+gb*PX,y,s.kv*PX,46,"var(--undo)","");h+=T(X0+gb*PX+6,y+29,`KV ${s.kv}`,"#fff",14,"start",1);
+      h+=T(X0+tot*PX+10,y+29,`total ${tot} GB`,tot>48?"var(--fail)":"var(--ok)",15,"start",1);}
+    else if(k===2)h+=T(X0+gb*PX+10,y+29,"13 GB left","var(--ok)",15,"start",1);
+    if(over)h+=T(Math.min(X0+gb*PX-8,880),y-6,"does not fit","var(--fail)",13,"end",1);});
+  if(s.bad)h+=T(560,300,"requests queue or are rejected","var(--fail)",15,"start",1);
+  if(s.ok)h+=T(560,300,"context and users capped","var(--ok)",15,"start",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

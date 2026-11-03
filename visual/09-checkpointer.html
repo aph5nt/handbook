@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkpointer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Checkpointer: save the state after every node</h1>
+  <p class="lede">A checkpointer saves the graph's state after each node, under a thread id. A long investigation can then pause for a person, survive a crash, or be rewound. Watch a run crash and resume from its last checkpoint. Then switch tabs to see a checkpointer that lives only in memory.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Durable store, resume</button>
+    <button role="tab" aria-selected="false" data-mode="bad">In-memory only</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 490" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Graph nodes in a row, a checkpoint saved after each, and a store</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="a1" class="edge" d="M200 68 L236 68" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="a2" class="edge" d="M430 68 L466 68" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="a3" class="edge" d="M660 68 L696 68" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="s1" class="edge msg" d="M105 96 L105 136" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="s2" class="edge msg" d="M335 96 L335 136" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="s3" class="edge msg" d="M565 96 L565 136" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <g><rect id="n1" class="box" x="10" y="40" width="190" height="56" rx="10" fill="var(--line)"/><text id="n1-l" x="105.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">1 load wallet</text></g>
+      <g><rect id="n2" class="box" x="240" y="40" width="190" height="56" rx="10" fill="var(--line)"/><text id="n2-l" x="335.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">2 trace funders</text></g>
+      <g><rect id="n3" class="box" x="470" y="40" width="190" height="56" rx="10" fill="var(--line)"/><text id="n3-l" x="565.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">3 human approval</text></g>
+      <g><rect id="n4" class="box" x="700" y="40" width="190" height="56" rx="10" fill="var(--line)"/><text id="n4-l" x="795.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">4 write report</text></g>
+      <g id="c1-g" class="msg"><rect id="c1" class="box" x="40" y="140" width="130" height="40" rx="10" fill="var(--line)"/><text id="c1-l" x="105.0" y="164.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">cp 1</text></g>
+      <g id="c2-g" class="msg"><rect id="c2" class="box" x="270" y="140" width="130" height="40" rx="10" fill="var(--line)"/><text id="c2-l" x="335.0" y="164.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">cp 2</text></g>
+      <g id="c3-g" class="msg"><rect id="c3" class="box" x="500" y="140" width="130" height="40" rx="10" fill="var(--line)"/><text id="c3-l" x="565.0" y="164.2" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)">cp 3</text></g>
+      <g><rect id="db" class="box" x="200" y="220" width="500" height="56" rx="10" fill="var(--line)"/><text id="db-l" x="450.0" y="252.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <text x="10" y="286" font-size="14" font-weight="700" fill="var(--fg)">Thread inv-42</text>
+      <rect x="10" y="296" width="880" height="186" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-checkpointer/main.py</code> (<code>python3 main.py</code>). The LangGraph (shape only) view shows the framework shape of the same steps; it is not run (<code>shape_langgraph.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+      <button data-v="alt" aria-pressed="false" id="alttab">LangGraph (shape only)</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">running</span>
+    <span style="--c:var(--ok)">saved or resumed</span>
+    <span style="--c:var(--wait)">paused</span>
+    <span style="--c:var(--fail)">crashed or lost</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>LangGraph checkpointers (in memory, SQLite, Postgres) keyed by thread_id, which also power interrupt and time travel. Temporal and other durable workflow engines do the same for any code.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use a durable checkpointer (Postgres) in production and the in-memory one only in tests. Give every run a thread id. Make nodes safe to re-run, because a crash between a side effect and its checkpoint re-runs that node.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Durable checkpointer</th><th>In-memory</th></tr>
+      <tr><td>Survives a restart</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Pause for a person overnight</td><td>Yes</td><td>Lost if the process dies</td></tr>
+      <tr><td>Speed</td><td>A database write per node</td><td>Fastest</td></tr>
+      <tr><td>Use it for</td><td>Production</td><td>Tests and notebooks</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A checkpointer saves the state after every node under a thread id, so a run can pause, crash and resume from where it was, as long as the store is durable."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"t": "Node 1 runs and is saved", "b": "No checkpoint exists for thread inv-42, so the run starts at node 1. The load node runs. store.save writes the state and next = node 2 as checkpoint 1.", "w": "A checkpoint is a full snapshot of the state after one node.", "box": {"n1": "ok", "c1": "ok", "db": "coord"}, "show": ["c1", "s1"], "ed": {"s1": "ok"}, "rows": [["cp 1 saved", "ok"]], "pc": [2, 6, 8]},
+{"t": "Node 2 is saved too", "b": "The trace node finds 2 funders. store.save writes the state, with the funders, and next = node 3 as checkpoint 2.", "w": "Each node's work is now safe on disk.", "box": {"n2": "ok", "c2": "ok"}, "show": ["c1", "s1", "c2", "s2"], "ed": {"a1": "ok", "s2": "ok"}, "rows": [["cp 2 saved: 2 funders", "ok"]], "pc": [6, 8]},
+{"t": "Pause for a person", "b": "Next is human approval. The check: does the state hold an approval? No. So the graph saves checkpoint 3 with next = node 3, and returns.", "w": "The process can exit. The pause costs nothing.", "box": {"n3": "wait", "c3": "ok"}, "show": ["c1", "s1", "c2", "s2", "c3", "s3"], "ed": {"a2": "ok", "s3": "ok"}, "rows": [["cp 3 saved, waiting for approval", "wait"]], "pc": [4, 5]},
+{"t": "The server restarts overnight", "b": "The pod is replaced during the night. All memory is gone.", "w": "The state is not in memory. It is in Postgres.", "box": {}, "show": ["c1", "c2", "c3"], "txt": {"db-l": "Postgres store: 3 checkpoints"}, "rows": [["process restarted", "muted"]], "pc": []},
+{"t": "Resume from checkpoint 3", "b": "The analyst approves. The new process asks the store for the newest row of inv-42: checkpoint 3, next = node 3. The approval goes into the state. Node 3 passes, node 4 runs, and checkpoint 4 is saved.", "w": "Nothing re-runs. The funders are not traced twice.", "box": {"n3": "ok", "n4": "ok"}, "show": ["c1", "c2", "c3"], "ed": {"a3": "ok"}, "rows": [["resumed at node 4, report written", "ok"]], "pc": [9, 2, 8]},
+{"t": "Rewind if needed", "b": "Because every checkpoint is kept, the analyst can rewind to checkpoint 2 and try a different path.", "w": "Time travel comes free with checkpoints.", "box": {"c2": "coord"}, "show": ["c1", "c2", "c3"], "rows": [["rewind to cp 2 possible", "coord"]], "pc": [10]}],
+"bad":[
+{"t": "An in-memory checkpointer", "b": "The same graph uses the in-memory checkpointer. It works in every test.", "w": "Tests never restart the process, so they never see the gap.", "box": {"db": "wait"}, "txt": {"db-l": "in-memory store"}, "pc": [8]},
+{"t": "Paused for approval", "b": "Nodes 1 and 2 run. Node 3 pauses for a person.", "w": "The checkpoints exist, but only in this process's memory.", "box": {"n1": "ok", "n2": "ok", "n3": "wait"}, "show": ["c1", "c2", "c3"], "ed": {"a1": "ok", "a2": "ok"}, "rows": [["paused at node 3", "wait"]], "pc": [4, 5]},
+{"t": "The restart", "b": "The store was a dict inside the process. The pod is replaced overnight, so the dict and its 3 checkpoints go with it.", "w": "The pause outlived the store.", "box": {"c1": "fail", "c2": "fail", "c3": "fail", "db": "fail"}, "show": ["c1", "c2", "c3"], "txt": {"db-l": "in-memory store: empty"}, "rows": [["restart: all checkpoints lost", "fail"]], "pc": [8]},
+{"t": "The approval has nowhere to go", "b": "The analyst approves in the morning. The new process asks the store for inv-42 and gets nothing back: 'thread inv-42 not found'. The whole investigation must start again.", "w": "Lost work, and the funders are traced twice.", "box": {"n3": "fail"}, "rows": [["thread inv-42 not found", "fail"]], "pc": [9]},
+{"t": "The fix", "b": "A Postgres checkpointer in production. Nodes safe to re-run, because a crash after a side effect and before its checkpoint repeats that node.", "w": "Durable store, and idempotent nodes.", "box": {"db": "ok"}, "txt": {"db-l": "Postgres store"}, "rows": ["clear", ["durable checkpointer, nodes safe to re-run", "ok"]], "pc": [8]}]},
+"T0":{"db-l": "Postgres store"},"panel":{"x": 10, "y": 296, "w": 880, "h": 186, "title": "Thread inv-42", "rh": 28, "fs": 12},"code":{"_": {"label": "Python", "pc": ["run(thread, store):", "  state, next = last checkpoint of thread, or empty and the first node", "  while next is not the end:", "    if next needs a person and state has no approval:", "      store.save(thread, state, next); stop     # interrupt", "    state = next(state)                         # run the node", "    next = the following node", "    store.save(thread, state, next)             # one checkpoint per node", "approve(thread, who): load the last checkpoint, or fail 'thread not found'", "rewind(thread, n): load checkpoint n and continue from there"], "real": ["def run(thread, store, start=None):", "    state, nxt = start or store.get(thread) or ({}, 0)  # resume, or begin", "    while nxt < len(NODES):", "        name, fn = NODES[nxt]", "        if fn is None:  # needs a person", "            if not state.get(\"approved\"):", "                n = store.save(thread, state, nxt)  # interrupt: save, stop", "                print(f\"  checkpoint {n}: paused at '{name}'\")", "                return state", "            nxt += 1", "            continue", "        state = fn(state)  # run the node", "        nxt += 1", "        n = store.save(thread, state, nxt)  # a checkpoint per node", "        print(f\"  checkpoint {n}: saved after '{name}'\")", "    return state", "", "", "def approve(thread, store, who):", "    found = store.get(thread)  # the store must survive", "    if found is None:", "        raise LookupError(f\"thread {thread} not found\")", "    state, nxt = found", "    return run(thread, store, ({**state, \"approved\": who}, nxt))", "", "", "def rewind(thread, store, n):", "    return store.get(thread, n)  # load any old checkpoint"], "map": {"1": [1], "2": [2, 24], "3": [3], "4": [5, 6], "5": [7, 8, 9], "6": [12], "7": [13], "8": [14, 15], "9": [19, 20, 21, 22], "10": [27, 28]}, "path": "handbook/code/09-checkpointer/main.py", "cmd": "python3 main.py", "note": "The LangGraph (shape only) view shows the framework shape of the same steps; it is not run (<code>shape_langgraph.py</code>).", "alt": {"label": "LangGraph (shape only)", "lines": ["\"\"\"LangGraph shape only. Not run: it needs langgraph and a Postgres server.", "The runnable version of the same steps is main.py.\"\"\"", "from langgraph.checkpoint.memory import MemorySaver           # tests only", "from langgraph.checkpoint.postgres import PostgresSaver       # production", "from langgraph.types import Command, interrupt", "", "", "def human_approval(state):", "    answer = interrupt({\"question\": \"approve this report?\"})  # pause, state saved", "    return {\"approved\": answer}", "", "", "with PostgresSaver.from_conn_string(DB_URL) as saver:  # durable checkpoints", "    app = graph.compile(checkpointer=saver)", "    config = {\"configurable\": {\"thread_id\": \"inv-42\"}}", "    app.invoke({\"wallet\": address}, config)  # runs up to the interrupt", "    # Later, in a new process:", "    app.invoke(Command(resume=\"the analyst\"), config)  # loads the last checkpoint", "    history = list(app.get_state_history(config))  # every checkpoint, for a rewind"], "map": {"5": [9], "4": [10], "8": [13], "1": [15], "3": [16], "2": [18], "9": [18], "10": [19]}, "file": "shape_langgraph.py"}}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

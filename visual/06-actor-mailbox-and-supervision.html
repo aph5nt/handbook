@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actor Mailbox and Supervision</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+</style>
+</head>
+<body>
+<main>
+  <h1>One actor per device: mailbox and supervisor</h1>
+  <p class="lede">An IoT backend on Akka.NET runs one actor per thermostat. Device 42 sends readings into its mailbox, and one reading is a corrupt packet that makes the handler throw. Pick what the supervisor does, then press <b>Next</b>. The last tab shows the other failure: a mailbox that never stops growing.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="resume">Resume</button>
+    <button role="tab" aria-selected="false" data-mode="restart">Restart</button>
+    <button role="tab" aria-selected="false" data-mode="stop">Stop</button>
+    <button role="tab" aria-selected="false" data-mode="escalate">Escalate</button>
+    <button role="tab" aria-selected="false" data-mode="overflow">Mailbox overflow</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">A supervision tree of device actors with the mailbox of device 42</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="bx-root" class="box" x="360" y="8" width="180" height="44" rx="8" fill="var(--coord)"/><text x="450" y="36" fill="#fff">/user (top parent)</text>
+        <rect id="bx-sup" class="box" x="340" y="84" width="220" height="48" rx="8" fill="var(--coord)"/><text x="450" y="114" fill="#fff">Devices supervisor</text>
+        <rect id="bx-41" class="box" x="80" y="200" width="170" height="72" rx="8" fill="var(--svc)"/><text x="165" y="228" fill="#fff">device-41</text><text id="tx-41" x="165" y="254" fill="#fff" font-size="14"></text>
+        <rect id="bx-42" class="box" x="365" y="200" width="170" height="72" rx="8" fill="var(--svc)"/><text x="450" y="228" fill="#fff">device-42</text><text id="tx-42" x="450" y="254" fill="#fff" font-size="14"></text>
+        <rect id="bx-43" class="box" x="650" y="200" width="170" height="72" rx="8" fill="var(--svc)"/><text x="735" y="228" fill="#fff">device-43</text><text id="tx-43" x="735" y="254" fill="#fff" font-size="14"></text>
+        <text x="180" y="345" fill="var(--muted)" font-size="14">mailbox of device-42</text>
+        <rect x="290" y="318" width="330" height="44" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <line x1="450" y1="318" x2="450" y2="276" stroke="var(--line)" stroke-width="2.5" marker-end="url(#arr)"/>
+        <rect id="bx-dead" x="700" y="318" width="160" height="44" rx="8" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="6 4"/><text x="780" y="345" fill="var(--muted)" font-size="14">dead letters</text>
+        <text id="mem-lbl" x="180" y="388" fill="var(--muted)" font-size="14"></text>
+        <rect id="mem-bg" x="290" y="378" width="330" height="12" rx="6" fill="none"/>
+        <rect id="mem" class="box" x="290" y="378" width="0" height="12" rx="6" fill="var(--ok)"/>
+      </g>
+      <g id="mb" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">running</span>
+    <span style="--c:var(--fail)">failed, or a bad message</span>
+    <span style="--c:var(--undo)">fresh instance after a restart</span>
+    <span style="--c:var(--wait)">waiting in the mailbox</span>
+    <span style="--c:var(--line)">stopped</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet supervision</h2>
+      <p>Akka and Akka.NET, Erlang OTP (Open Telecom Platform) supervisors, Kubernetes restarting a pod. In the IoT backend, a corrupt packet resumed the device actor and a broken connection restarted it. Both rules lived in the parent, not in every handler. Always set a restart limit with backoff.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet overflow</h2>
+      <p>Any actor fed by a plain tell from a faster producer: telemetry, log lines, webhooks. Watch mailbox depth as a metric and alert on it. Bound the mailbox with a rule (drop oldest, drop newest), or move the flow to Akka Streams so the consumer's demand slows the producer.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Directive</th><th>State</th><th>Mailbox</th><th>Use it for</th></tr>
+      <tr><td>Resume</td><td>Kept</td><td>Kept, bad message dropped</td><td>A bad input that says nothing about the actor's state</td></tr>
+      <tr><td>Restart</td><td>Reset to fresh</td><td>Kept</td><td>State may be broken: a dead connection, a half update</td></tr>
+      <tr><td>Stop</td><td>Gone</td><td>Sent to dead letters</td><td>The thing is gone: a device was removed</td></tr>
+      <tr><td>Escalate</td><td>Parent decides for the whole subtree</td><td>Depends on the parent</td><td>The parent cannot judge: the failure is bigger than one child</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Let it crash moves error handling into the parent: resume, restart, stop or escalate. The mailbox survives a restart, a restart limit stops a poisoned message from looping, and mailbox depth is the metric I watch."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const R=(t)=>["readings "+t,"var(--svc)"];
+const base=[
+ {pc:[1],t:"Messages wait in the mailbox",b:"Device 42 has sent four messages. They wait in its mailbox in order. The second one is a corrupt packet from a firmware bug.",w:"The mailbox is a queue. The actor will take exactly one message at a time, so its state never needs a lock.",mb:[["21.5 C","w"],["corrupt","bad"],["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:R(4),43:R(9)}},
+ {pc:[1,2],t:"One message at a time",b:"The actor takes 21.5 C, stores it, and its count of readings goes from 4 to 5. The other messages keep waiting.",w:"Two threads may have delivered these messages. Only one handler ever runs for device 42 at a time.",mb:[["corrupt","bad"],["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:R(5),43:R(9)}},
+ {pc:[2,3],t:"The handler throws",b:"The actor takes the corrupt packet. Parsing throws, and the handler has no try and catch. The runtime catches the crash and tells the parent, the devices supervisor: Failed, parse error.",w:"Let it crash: the actor has no defensive code for this. The decision is the supervisor's.",mb:[["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:["failed","var(--fail)"],43:R(9)},ar:["fail"]}
+];
+const steps={
+"resume":[...base,
+ {pc:[4,5],t:"Supervisor says: resume",b:"The supervisor's decider looks at the error type. A parse error maps to Resume. The actor keeps its state, readings 5, and the bad message is already off the queue.",w:"A corrupt packet says nothing about the device's state, so throwing the state away would be wrong.",mb:[["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:R(5),43:R(9)},ar:["resume"]},
+ {pc:[1],t:"Processing continues",b:"The actor takes 21.7 C and then 21.9 C. Its count goes to 7. Nothing was lost but the bad packet.",w:"Resume is the lightest choice: one message is skipped and the actor carries on.",mb:[],a:{41:R(7),42:R(7),43:R(9)}}],
+"restart":[...base,
+ {pc:[4,6],t:"Supervisor says: restart",b:"Here the decider maps the error to Restart. The old instance is thrown away and a fresh one is built. Its readings start again from 0.",w:"Restart is for when the state itself may be broken, such as a half-open connection. A clean start is safer than patching.",mb:[["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:["fresh: readings 0","var(--undo)"],43:R(9)},ar:["restart"]},
+ {pc:[6,1],t:"The mailbox survived",b:"The new instance takes 21.7 C and 21.9 C from the same mailbox. Its count is 2. The five readings of the old instance are gone from memory.",w:"A restart keeps the mailbox and loses in-memory state. If that state matters, the actor persists events and replays them when it starts.",mb:[],a:{41:R(7),42:["readings 2","var(--undo)"],43:R(9)}},
+ {pc:[9],t:"The failure that matters: a poisoned message",b:"Suppose the bad message is retried on every start. The actor fails, restarts, fails again, many times a second. The supervisor counts restarts: 1 after 1 s, 2 after 2 s, 3 after 4 s. The 4th failure breaks the rule of 3 restarts in 1 minute, so and it stops the actor and raises an alert.",w:"Without a restart limit, one poisoned message is a tight loop and an outage. Always set the limit and the backoff.",mb:[["corrupt","bad"]],a:{41:R(7),42:["restart 3 of 3: stopped","var(--fail)"],43:R(9)},ar:["fail","restart"]}],
+"stop":[...base,
+ {pc:[4,7],t:"Supervisor says: stop",b:"Here the decider maps the error to Stop. Device 42 is removed from the tree. It will handle no more messages.",w:"Stop fits when the thing behind the actor is gone, for example the thermostat was unregistered.",mb:[["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:["stopped","var(--line)"],43:R(9)},ar:["stop"]},
+ {pc:[7],t:"Queued messages go to dead letters",b:"The two readings still in the mailbox have nobody to handle them. The runtime moves them to dead letters, where they are logged.",w:"Dead letters are a signal. A steady stream of them means senders still talk to actors that are gone.",mb:[],dead:2,a:{41:R(7),42:["stopped","var(--line)"],43:R(9)},ar:["dead"]}],
+"escalate":[...base,
+ {pc:[4,8],t:"Supervisor says: escalate",b:"The decider has no rule for this error, so it returns Escalate. The supervisor fails itself and passes the problem up to its own parent, /user.",w:"Escalate means: this is bigger than one child. Maybe the shared database client all device actors use is broken.",mb:[["21.7 C","w"],["21.9 C","w"]],a:{41:R(7),42:["failed","var(--fail)"],43:R(9)},sup:"var(--fail)",ar:["escalate"]},
+ {pc:[10],t:"The whole subtree restarts",b:"/user restarts the devices supervisor. A restarted parent restarts all its children: device 41 and device 43 start fresh too, though they did nothing wrong.",w:"Escalation has a wide blast radius. It is the right tool when siblings share broken state, and the wrong one for a single bad packet.",mb:[["21.7 C","w"],["21.9 C","w"]],a:{41:["fresh: readings 0","var(--undo)"],42:["fresh: readings 0","var(--undo)"],43:["fresh: readings 0","var(--undo)"]},sup:"var(--undo)",ar:["restartAll"]}],
+"overflow":[
+ {pc:[12,13],t:"A flood begins",b:"A firmware bug makes device 42 send 1,000 readings a second. The actor can store 200 a second. The sender uses a plain tell, which never checks the queue. So 1,000 minus 200 is 800 more messages each second.",w:"A tell has no back-pressure. A faster sender always wins.",q:"queued: 800 after 1 second",mem:.02,a:{41:R(7),42:["busy","var(--wait)"],43:R(9)}},
+ {pc:[13],t:"One minute later",b:"Every second adds 800 more messages than the actor can take. After a minute, 48,000 messages wait in the mailbox.",w:"Nothing has failed yet. Every reading looks fine. Only the queue length tells you something is wrong.",q:"queued: 48,000",mem:.25,a:{41:R(7),42:["busy","var(--wait)"],43:R(9)}},
+ {pc:[13],t:"An hour later",b:"800 times 3,600 seconds is 2,880,000 messages waiting. The process memory is almost full. Readings handled now are an hour old.",w:"Lock contention is gone, but overload did not go away. It moved into memory.",q:"queued: 2,880,000",mem:.95,a:{41:R(7),42:["an hour behind","var(--fail)"],43:R(9)}},
+ {pc:[13],t:"The failure that matters: out of memory",b:"The process runs out of memory and dies. Every actor in it dies, device 41 and 43 too. Every queued message is lost on restart.",w:"An unbounded mailbox hides overload until it takes the whole process down. This is the new failure mode of actor systems.",q:"all queued messages lost",mem:1,a:{41:["process died","var(--fail)"],42:["process died","var(--fail)"],43:["process died","var(--fail)"]},sup:"var(--fail)",root:"var(--fail)",crash:true},
+ {pc:[14],t:"The fix: bound it, or push back",b:"Give the mailbox a limit of 1,000 with drop-oldest. Each time the queue would pass 1,000, the oldest reading goes. Over the hour that drops 2,879,200 readings, and memory stays flat. Alert when depth stays high. Better, feed the actor from a stream: the writer asks for what it can take and the socket reads only that much.",w:"Memory stays flat. The device buffers on its own side or loses old readings, which a thermostat can afford. Mailbox depth becomes the metric you watch.",q:"queued: at most 1,000",mem:.05,a:{41:R(7),42:R(200),43:R(9)}}
+]};
+const ARROWS={
+ fail:`<line x1="425" y1="200" x2="425" y2="134" stroke="var(--fail)" marker-end="url(#arr)"/><text x="415" y="172" text-anchor="end" fill="var(--fail)">I failed: parse error</text>`,
+ resume:`<line x1="475" y1="134" x2="475" y2="198" stroke="var(--svc)" marker-end="url(#arr)"/><text x="485" y="172" fill="var(--svc)">resume</text>`,
+ restart:`<line x1="475" y1="134" x2="475" y2="198" stroke="var(--undo)" marker-end="url(#arr)"/><text x="485" y="172" fill="var(--undo)">restart</text>`,
+ stop:`<line x1="475" y1="134" x2="475" y2="198" stroke="var(--muted)" marker-end="url(#arr)"/><text x="485" y="172" fill="var(--muted)">stop</text>`,
+ dead:`<line x1="620" y1="340" x2="698" y2="340" stroke="var(--fail)" marker-end="url(#arr)"/><text x="780" y="310" text-anchor="middle" fill="var(--fail)">2 readings</text>`,
+ escalate:`<line x1="425" y1="84" x2="425" y2="54" stroke="var(--fail)" marker-end="url(#arr)"/><text x="415" y="74" text-anchor="end" fill="var(--fail)">escalate</text>`,
+ restartAll:`<line x1="475" y1="54" x2="475" y2="82" stroke="var(--undo)" marker-end="url(#arr)"/><text x="485" y="74" fill="var(--undo)">restart supervisor</text><line x1="380" y1="134" x2="200" y2="198" stroke="var(--undo)" marker-end="url(#arr)"/><line x1="450" y1="134" x2="450" y2="198" stroke="var(--undo)" marker-end="url(#arr)"/><line x1="520" y1="134" x2="700" y2="198" stroke="var(--undo)" marker-end="url(#arr)"/><text x="450" y="160" text-anchor="middle" fill="var(--undo)">restart all children</text>`
+};
+let mode="resume",i=0,timer=null,view="pc";
+const codePath="handbook/code/06-actor-mailbox-and-supervision/main.go";
+const code={_:{pc:`
+actor loop: m = mailbox.take()          # one message at a time
+  handle(m)                             # no try/catch: let it crash
+runtime: on a crash, tell parent Failed(child, error)
+parent decider(error):
+  ParseError      -> Resume             # keep state, drop the message
+  ConnectionError -> Restart            # fresh instance, same mailbox
+  DeviceRemoved   -> Stop               # queued messages to dead letters
+  unknown         -> Escalate           # the parent fails, its parent decides
+restart limit: 3 in 1 minute, backoff 1 s, 2 s, 4 s, then Stop and alert
+a restarted parent restarts all its children
+# overflow: a plain tell never waits
+sender: tell(device42, reading)         # 1,000 a second
+actor handles 200 a second              # the queue grows by 800 a second
+fix: mailbox capacity 1,000, drop oldest, alert on depth`,go:`
+for m := range c.mailbox { // the failing message is already off the queue //@1
+	if !runOne(c, m) { //@2
+		continue
+	}
+	switch d := decide(); d { //@4
+	case Resume: //@5
+		fmt.Printf("  supervisor: %v, state kept: readings %d\\n", d, c.readings) //@5
+	case Restart: //@6
+		c.readings = 0 // a fresh instance, the same mailbox //@6
+	case Stop: //@7
+		fmt.Printf("  supervisor: %v, %d queued messages to dead letters\\n", d, len(c.mailbox)) //@7
+		return
+	case Escalate: //@8
+		fmt.Printf("  supervisor: %v -> /user restarts the supervisor and all its children\\n", d) //@8
+		for _, s := range siblings { //@10
+			s.readings = 0 //@10
+		}
+		return
+	}
+}
+func runOne(c *Child, m string) (failed bool) {
+	defer func() { //@3
+		if r := recover(); r != nil { //@3
+			failed = true //@3
+		}
+	}()
+	c.handle(m) //@2
+	return false
+}
+if n > 3 { //@9
+	fmt.Println("  supervisor: limit reached, Stop device 42, raise an alert") //@9
+	break
+}
+backoff *= 2 //@9
+fmt.Printf("  after %4d s: queued %d\\n", t, (in-out)*t) //@12,13
+if queue > 1000 { //@14
+	dropped += queue - 1000 //@14
+	queue = 1000 //@14
+}`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET: the parent's strategy is the decider.
+protected override SupervisorStrategy SupervisorStrategy() => //@4
+    new OneForOneStrategy(maxNrOfRetries: 3, //@9
+        withinTimeRange: TimeSpan.FromMinutes(1), //@9
+        localOnlyDecider: ex => ex switch { //@4
+            ParseException      => Directive.Resume, //@5
+            ConnectionException => Directive.Restart, //@6
+            DeviceRemoved       => Directive.Stop, //@7
+            _                   => Directive.Escalate }); //@8
+// The child: no try/catch around the parse. //@1,2
+Receive<Packet>(p => _readings.Add(Parse(p))); //@1,2
+// The runtime catches the exception and tells the parent. //@3
+protected override void PreRestart(Exception e, object m) => base.PreRestart(e, m); // stops every child //@10
+var props = BackoffSupervisor.Props(BackoffOptions.CreateOnFailure(childProps, "device-42", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30), 0.2)); //@9
+bounded-mailbox { mailbox-type = "Akka.Dispatch.BoundedMailbox", mailbox-capacity = 1000 } //@14
+device42.Tell(reading); // never waits //@12,13`}};
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const k of[41,42,43]){const [txt,col]=s.a[k];$("tx-"+k).textContent=txt;$("bx-"+k).setAttribute("fill",col);$("tx-"+k).setAttribute("fill",col==="var(--line)"?"var(--fg)":"#fff");}
+  $("bx-sup").setAttribute("fill",s.sup||"var(--coord)");$("bx-root").setAttribute("fill",s.root||"var(--coord)");
+  let h="";
+  if(s.mb){s.mb.forEach((m,k)=>{const x=298+k*80;const col=m[1]==="bad"?"var(--fail)":"var(--wait)";
+    h+=`<rect class="box" x="${x}" y="324" width="72" height="32" rx="6" fill="${col}"/><text x="${x+36}" y="345" fill="#fff">${m[0]}</text>`;});
+    if(!s.mb.length)h+=`<text x="455" y="345" fill="var(--muted)">empty</text>`;}
+  else h+=`<text x="455" y="345" fill="${s.crash?"var(--fail)":"var(--fg)"}" font-size="15">${s.q}</text>`;
+  $("mb").innerHTML=h;
+  const om=mode==="overflow";
+  $("mem-lbl").textContent=om?"process memory":"";$("mem-bg").setAttribute("fill",om?"var(--line)":"none");
+  $("mem").setAttribute("width",om?330*s.mem:0);$("mem").setAttribute("fill",(s.mem||0)>.8?"var(--fail)":(s.mem||0)>.2?"var(--wait)":"var(--ok)");
+  $("bx-dead").setAttribute("stroke",s.dead?"var(--fail)":"var(--line)");
+  const g=$("msgs");g.innerHTML="";
+  (s.ar||[]).forEach((a,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=ARROWS[a];g.appendChild(el);
+    const show=()=>el.classList.add("on");matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,200*k+30);});
+  if(s.crash){const el=document.createElementNS(NS,"g");el.setAttribute("class","msg on");el.innerHTML=`<rect x="20" y="150" width="860" height="26" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="169" text-anchor="middle" fill="var(--fail)">out of memory: the whole process died</text>`;g.appendChild(el);}
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

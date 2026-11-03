@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clustered index and page splits</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Clustered index and page splits: why random keys hurt</h1>
+  <p class="lede">The <b>orders</b> table in MySQL InnoDB stores its rows inside the leaf pages of the primary key, four rows per page here. Watch where each new key lands.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="seq">Time-ordered key</button>
+    <button role="tab" aria-selected="false" data-mode="rand">Random UUID fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Four leaf pages of four rows each, and a new page that appears on append or split</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text id="pl0" data-t="leaf page 1" x="30" y="52" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">leaf page 1</text>
+<rect id="s0_0" class="box" data-f="var(--line)" x="32" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s0_0-t" data-t="" x="52" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s0_1" class="box" data-f="var(--line)" x="78" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s0_1-t" data-t="" x="98" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s0_2" class="box" data-f="var(--line)" x="124" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s0_2-t" data-t="" x="144" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s0_3" class="box" data-f="var(--line)" x="170" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s0_3-t" data-t="" x="190" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<text id="pf0" data-t="" x="30" y="124" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text id="pl1" data-t="leaf page 2" x="250" y="52" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">leaf page 2</text>
+<rect id="s1_0" class="box" data-f="var(--line)" x="252" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s1_0-t" data-t="" x="272" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s1_1" class="box" data-f="var(--line)" x="298" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s1_1-t" data-t="" x="318" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s1_2" class="box" data-f="var(--line)" x="344" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s1_2-t" data-t="" x="364" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s1_3" class="box" data-f="var(--line)" x="390" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s1_3-t" data-t="" x="410" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<text id="pf1" data-t="" x="250" y="124" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text id="pl2" data-t="leaf page 3" x="470" y="52" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">leaf page 3</text>
+<rect id="s2_0" class="box" data-f="var(--line)" x="472" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s2_0-t" data-t="" x="492" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s2_1" class="box" data-f="var(--line)" x="518" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s2_1-t" data-t="" x="538" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s2_2" class="box" data-f="var(--line)" x="564" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s2_2-t" data-t="" x="584" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s2_3" class="box" data-f="var(--line)" x="610" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s2_3-t" data-t="" x="630" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<text id="pf2" data-t="" x="470" y="124" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<text id="pl3" data-t="leaf page 4" x="690" y="52" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)">leaf page 4</text>
+<rect id="s3_0" class="box" data-f="var(--line)" x="692" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s3_0-t" data-t="" x="712" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s3_1" class="box" data-f="var(--line)" x="738" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s3_1-t" data-t="" x="758" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s3_2" class="box" data-f="var(--line)" x="784" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s3_2-t" data-t="" x="804" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s3_3" class="box" data-f="var(--line)" x="830" y="62" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s3_3-t" data-t="" x="850" y="87" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<text id="pf3" data-t="" x="690" y="124" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<g id="np" class="msg">
+<text id="pl4" data-t="new leaf page" x="690" y="190" text-anchor="start" font-size="13" font-weight="400" fill="var(--undo)">new leaf page</text>
+<rect id="s4_0" class="box" data-f="var(--line)" x="692" y="200" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s4_0-t" data-t="" x="712" y="225" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s4_1" class="box" data-f="var(--line)" x="738" y="200" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s4_1-t" data-t="" x="758" y="225" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s4_2" class="box" data-f="var(--line)" x="784" y="200" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s4_2-t" data-t="" x="804" y="225" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<rect id="s4_3" class="box" data-f="var(--line)" x="830" y="200" width="40" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="s4_3-t" data-t="" x="850" y="225" text-anchor="middle" font-size="11" fill="var(--fg)"></text>
+<text id="pf4" data-t="" x="690" y="262" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+</g>
+<path id="sp" class="msg" d="M340 130 Q 400 222 686 222" stroke="var(--fail)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="ap" class="msg" d="M780 130 L780 176" stroke="var(--ok)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="ins" data-t="" x="30" y="200" text-anchor="start" font-size="14" font-weight="400" fill="var(--fg)"></text>
+<rect x="20" y="290" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="316" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="315" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-clustered-page-split/main.go</code> (<code>go run .</code>). The program models the leaf pages in memory, and also runs a million sequence keys and a million random keys.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">stored row</span>
+    <span style="--c:var(--ok)">new row, cheap insert</span>
+    <span style="--c:var(--wait)">page affected</span>
+    <span style="--c:var(--fail)">page rewritten by a split or random insert</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>MySQL InnoDB and SQL Server: the primary key is the clustered key, so choose it for insert order. PostgreSQL stores a heap: <code>CLUSTER</code> reorders once, and new rows do not follow. StarRocks: the sort key is the column-store cousin.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use a narrow, time-ordered key: a sequence, UUIDv7 or ULID. Keep a random UUID as a secondary unique column if the outside world needs one. Leave a fill factor below 100 where updates grow rows.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Time-ordered key</th><th>Random UUID key</th></tr>
+      <tr><td>Insert lands</td><td>the last page</td><td>any page</td></tr>
+      <tr><td>Page splits</td><td>none, pages append</td><td>everywhere</td></tr>
+      <tr><td>Page fill</td><td>full</td><td>about half</td></tr>
+      <tr><td>Cache</td><td>one hot page</td><td>every page hot</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"A clustered index stores rows in key order, so a random key splits pages all over the tree and a time-ordered key appends at the end."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+seq:[
+ {"t": "Rows live in the leaves", "b": "The orders table is a clustered index: its leaf pages hold the rows themselves, in primary key order. The key here is a sequence, so new keys are always the biggest.", "w": "A table has one clustered index, because rows can be stored in only one order.", "x": {"s0_0-t": "101", "s0_1-t": "102", "s0_2-t": "103", "s0_3-t": "104", "pf0": "full", "s1_0-t": "105", "s1_1-t": "106", "s1_2-t": "107", "s1_3-t": "108", "pf1": "full", "s2_0-t": "109", "s2_1-t": "110", "s2_2-t": "111", "s2_3-t": "112", "pf2": "full", "pf3": "empty", "pf4": "empty", "big": "leaf pages hold the rows, in key order", "sql": "id BIGINT AUTO_INCREMENT"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c"}, "on": [], "pc": [1], "rl": [1, 2, 3, 4, 5, 6]},
+ {"t": "Insert 113: the last page", "b": "The engine finds the leaf by key: the last page whose first key is at or below 113. Page 3 is full and 113 is bigger than its last key, 112, so nothing splits. A fresh page goes at the end and takes 113.", "w": "Inserts with a growing key all land in one place.", "x": {"s0_0-t": "101", "s0_1-t": "102", "s0_2-t": "103", "s0_3-t": "104", "pf0": "full", "s1_0-t": "105", "s1_1-t": "106", "s1_2-t": "107", "s1_3-t": "108", "pf1": "full", "s2_0-t": "109", "s2_1-t": "110", "s2_2-t": "111", "s2_3-t": "112", "pf2": "full", "s3_0-t": "113", "pf3": "1 of 4 used", "pf4": "empty", "ins": "insert 113", "big": "append at the right edge"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "ok"}, "on": ["ap"], "pc": [1, 2, 5, 6, 7], "rl": [3, 8, 9]},
+ {"t": "Fill the last page", "b": "Keys 114, 115 and 116 each find the leaf the same way: page 4. The check is: is there room? Yes three times, so each is written in place and page 4 fills completely.", "w": "Pages end up full, so the table uses as few pages as possible.", "x": {"s0_0-t": "101", "s0_1-t": "102", "s0_2-t": "103", "s0_3-t": "104", "pf0": "full", "s1_0-t": "105", "s1_1-t": "106", "s1_2-t": "107", "s1_3-t": "108", "pf1": "full", "s2_0-t": "109", "s2_1-t": "110", "s2_2-t": "111", "s2_3-t": "112", "pf2": "full", "s3_0-t": "113", "s3_1-t": "114", "s3_2-t": "115", "s3_3-t": "116", "pf3": "full", "pf4": "empty", "ins": "insert 114, 115, 116", "big": "every page full"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "ok", "s3_1": "ok", "s3_2": "ok", "s3_3": "ok"}, "on": ["ap"], "pc": [2, 3, 4], "rl": [8, 9]},
+ {"t": "A new page at the end", "b": "Key 117 lands on page 4. Room? No. Is it bigger than the last key of the last page? Yes, 117 is above 116. So a fresh page is added after it, and nothing moves.", "w": "No split of an old page: growth only appends.", "x": {"s0_0-t": "101", "s0_1-t": "102", "s0_2-t": "103", "s0_3-t": "104", "pf0": "full", "s1_0-t": "105", "s1_1-t": "106", "s1_2-t": "107", "s1_3-t": "108", "pf1": "full", "s2_0-t": "109", "s2_1-t": "110", "s2_2-t": "111", "s2_3-t": "112", "pf2": "full", "s3_0-t": "113", "s3_1-t": "114", "s3_2-t": "115", "s3_3-t": "116", "pf3": "full", "s4_0-t": "117", "pf4": "1 of 4 used", "pl4": "new leaf page, appended at the end", "ins": "insert 117", "big": "append, nothing moves"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "c", "s3_1": "c", "s3_2": "c", "s3_3": "c", "s4_0": "ok"}, "on": ["np", "ap"], "pc": [2, 5, 6, 7], "rl": [8, 9]},
+ {"t": "Only the last page is hot", "b": "Every insert touches the newest page, which stays in memory. Old pages are never rewritten. In the program, one million sequence keys at 100 rows per page give 10,000 pages, 0 splits and 100 percent fill.", "w": "Choose a clustered key for insert order: a sequence, UUIDv7 or ULID.", "x": {"s0_0-t": "101", "s0_1-t": "102", "s0_2-t": "103", "s0_3-t": "104", "pf0": "full", "s1_0-t": "105", "s1_1-t": "106", "s1_2-t": "107", "s1_3-t": "108", "pf1": "full", "s2_0-t": "109", "s2_1-t": "110", "s2_2-t": "111", "s2_3-t": "112", "pf2": "full", "s3_0-t": "113", "s3_1-t": "114", "s3_2-t": "115", "s3_3-t": "116", "pf3": "full", "s4_0-t": "117", "pf4": "1 of 4 used", "pl4": "new leaf page, appended at the end", "big": "one hot page, the rest untouched"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "ok", "s3_1": "ok", "s3_2": "ok", "s3_3": "ok", "s4_0": "ok"}, "on": ["np"], "pc": [3, 4, 6, 7], "rl": [11, 12, 13, 14]}
+],
+rand:[
+ {"t": "A random UUID as the key", "b": "Now the key is a random UUID, drawn by its first two hex digits. Pages are full and in key order.", "w": "A random key can belong anywhere in the tree.", "x": {"s0_0-t": "0b", "s0_1-t": "1a", "s0_2-t": "2c", "s0_3-t": "3f", "pf0": "full", "s1_0-t": "41", "s1_1-t": "5d", "s1_2-t": "6e", "s1_3-t": "7a", "pf1": "full", "s2_0-t": "8c", "s2_1-t": "9b", "s2_2-t": "b4", "s2_3-t": "c7", "pf2": "full", "s3_0-t": "d2", "s3_1-t": "e5", "s3_2-t": "f0", "pf3": "3 of 4 used", "pf4": "empty", "big": "random keys, sorted pages", "sql": "id UUID DEFAULT uuid_v4()"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "c", "s3_1": "c", "s3_2": "c"}, "on": [], "pc": [1], "rl": [1, 2, 3, 4, 5]},
+ {"t": "Insert 4c: it belongs in page 2", "b": "The first key of page 2 is 41 and of page 3 is 8c, so 4c belongs in page 2. The check: room? No, it holds 4 of 4. Bigger than its last key? No. So the row cannot just be appended.", "w": "The row must go where its key belongs. There is no room.", "x": {"s0_0-t": "0b", "s0_1-t": "1a", "s0_2-t": "2c", "s0_3-t": "3f", "pf0": "full", "s1_0-t": "41", "s1_1-t": "5d", "s1_2-t": "6e", "s1_3-t": "7a", "pf1": "full", "s2_0-t": "8c", "s2_1-t": "9b", "s2_2-t": "b4", "s2_3-t": "c7", "pf2": "full", "s3_0-t": "d2", "s3_1-t": "e5", "s3_2-t": "f0", "pf3": "3 of 4 used", "pf4": "empty", "ins": "insert 4c into a full page", "big": "the target page is full"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "w", "s1_1": "w", "s1_2": "w", "s1_3": "w", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "c", "s3_1": "c", "s3_2": "c"}, "on": [], "pc": [2, 3, 5], "rl": [3, 6]},
+ {"t": "Page split", "b": "Page 2 splits. Its top half, 6e and 7a, moves to a new page. The parent gets a pointer to it. Now 4c fits in page 2 between 41 and 5d.", "w": "One insert rewrote two pages and the parent.", "x": {"s0_0-t": "0b", "s0_1-t": "1a", "s0_2-t": "2c", "s0_3-t": "3f", "pf0": "full", "s1_0-t": "41", "s1_1-t": "4c", "s1_2-t": "5d", "pf1": "3 of 4 used", "s2_0-t": "8c", "s2_1-t": "9b", "s2_2-t": "b4", "s2_3-t": "c7", "pf2": "full", "s3_0-t": "d2", "s3_1-t": "e5", "s3_2-t": "f0", "pf3": "3 of 4 used", "s4_0-t": "6e", "s4_1-t": "7a", "pf4": "2 of 4 used", "pl4": "new leaf page from the split", "ins": "split, half moved", "big": "1 insert, 3 pages written"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "ok", "s1_2": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "c", "s3_1": "c", "s3_2": "c", "s4_0": "f", "s4_1": "f"}, "on": ["np", "sp"], "pc": [8, 9, 10, 11], "rl": [8, 9, 10, 11]},
+ {"t": "Half-empty pages everywhere", "b": "A split leaves two half-full pages, and random keys only slowly fill them. In the program, one million random keys at 100 rows per page give 14,500 pages at 69 percent fill. The sequence gave 10,000 pages at 100 percent.", "w": "45 percent more pages for the same rows, so more disk reads and a cache that holds fewer rows.", "x": {"s0_0-t": "0b", "s0_1-t": "1a", "s0_2-t": "2c", "s0_3-t": "3f", "pf0": "full", "s1_0-t": "41", "s1_1-t": "4c", "s1_2-t": "5d", "pf1": "3 of 4 used", "s2_0-t": "8c", "s2_1-t": "9b", "s2_2-t": "b4", "s2_3-t": "c7", "pf2": "full", "s3_0-t": "d2", "s3_1-t": "e5", "s3_2-t": "f0", "pf3": "3 of 4 used", "s4_0-t": "6e", "s4_1-t": "7a", "pf4": "2 of 4 used", "pl4": "new leaf page from the split", "big": "14,500 pages at 69% fill, against 10,000 at 100%"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "w", "s1_1": "w", "s1_2": "w", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "c", "s3_1": "c", "s3_2": "c", "s4_0": "w", "s4_1": "w"}, "on": ["np"], "pc": [8, 9], "rl": [8, 9, 10, 11]},
+ {"t": "Every page is hot", "b": "The next insert, 52, lands in page 2 again, where there is now room. The one after lands anywhere. Any page can be the target, so old pages are loaded from disk just to insert one row.", "w": "The buffer cache churns, and inserts slow down as the table grows.", "x": {"s0_0-t": "0b", "s0_1-t": "1a", "s0_2-t": "2c", "s0_3-t": "3f", "pf0": "full", "s1_0-t": "41", "s1_1-t": "4c", "s1_2-t": "52", "s1_3-t": "5d", "pf1": "full", "s2_0-t": "8c", "s2_1-t": "9b", "s2_2-t": "b4", "s2_3-t": "c7", "pf2": "full", "s3_0-t": "d2", "s3_1-t": "e5", "s3_2-t": "f0", "pf3": "3 of 4 used", "s4_0-t": "6e", "s4_1-t": "7a", "pf4": "2 of 4 used", "pl4": "new leaf page from the split", "ins": "insert 52, then anywhere", "big": "random inserts touch every page"}, "f": {"s0_0": "f", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "f", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "f", "s2_3": "c", "s3_0": "c", "s3_1": "f", "s3_2": "c", "s4_0": "c", "s4_1": "c"}, "on": ["np"], "pc": [2, 3, 4], "rl": [1, 6]},
+ {"t": "Fix: a time-ordered key", "b": "Use a key that grows with time: a sequence, UUIDv7 or ULID. Inserts append at the right edge again.", "w": "Keep the key narrow too. InnoDB copies the primary key into every secondary index.", "x": {"s0_0-t": "101", "s0_1-t": "102", "s0_2-t": "103", "s0_3-t": "104", "pf0": "full", "s1_0-t": "105", "s1_1-t": "106", "s1_2-t": "107", "s1_3-t": "108", "pf1": "full", "s2_0-t": "109", "s2_1-t": "110", "s2_2-t": "111", "s2_3-t": "112", "pf2": "full", "s3_0-t": "113", "s3_1-t": "114", "s3_2-t": "115", "s3_3-t": "116", "pf3": "full", "s4_0-t": "117", "pf4": "1 of 4 used", "pl4": "new leaf page, appended at the end", "big": "time-ordered key: append only", "sql": "id UUIDv7"}, "f": {"s0_0": "c", "s0_1": "c", "s0_2": "c", "s0_3": "c", "s1_0": "c", "s1_1": "c", "s1_2": "c", "s1_3": "c", "s2_0": "c", "s2_1": "c", "s2_2": "c", "s2_3": "c", "s3_0": "c", "s3_1": "c", "s3_2": "c", "s3_3": "c", "s4_0": "ok"}, "on": ["np", "ap"], "pc": [12, 13], "rl": [13, 14, 15, 16, 17, 18, 19]}
+]
+};
+const base={};
+const code={
+"seq":{
+ label:"SQL",
+ pc:["insert(key, row):", "  leaf = the last page whose first key <= key   # walk from the root", "  if leaf has room:", "    put the row in key order; write leaf", "  else if leaf is the last page and key > its last key:", "    new page after it, holding the row           # nothing moves", "    write new page and parent", "  else:                                          # a full page in the middle", "    move the top half of leaf to a new page", "    add a pointer to the new page in the parent", "    put the row in key order; write 3 pages", "choice of key:", "  a key that grows with time always takes the second branch"],
+ real:["-- MySQL InnoDB: the primary key is the clustered index", "CREATE TABLE orders (", "  id      BIGINT AUTO_INCREMENT PRIMARY KEY,", "  buyer   BIGINT NOT NULL,", "  amount  DECIMAL(18, 2) NOT NULL", ");", "", "-- every insert takes a bigger id, so it lands in the last page", "INSERT INTO orders (buyer, amount) VALUES (7, 12.50);", "", "-- check the fill: data length against rows", "SELECT table_rows, avg_row_length, data_length", "FROM   information_schema.tables", "WHERE  table_name = 'orders';"],
+ map:{"1": [9], "2": [3, 8], "3": [9], "4": [9], "5": [3, 8], "6": [9], "7": [9], "12": [3], "13": [3, 8]}},
+"rand":{
+ label:"SQL",
+ pc:["insert(key, row):", "  leaf = the last page whose first key <= key   # walk from the root", "  if leaf has room:", "    put the row in key order; write leaf", "  else if leaf is the last page and key > its last key:", "    new page after it, holding the row           # nothing moves", "    write new page and parent", "  else:                                          # a full page in the middle", "    move the top half of leaf to a new page", "    add a pointer to the new page in the parent", "    put the row in key order; write 3 pages", "choice of key:", "  a key that grows with time always takes the second branch"],
+ real:["-- a random key: inserts land anywhere", "CREATE TABLE orders (", "  id      BINARY(16) PRIMARY KEY,    -- UUIDv4, random", "  buyer   BIGINT NOT NULL", ");", "INSERT INTO orders VALUES (UUID_TO_BIN(UUID()), 7);", "", "-- splits show here", "SELECT name, count", "FROM   information_schema.innodb_metrics", "WHERE  name = 'index_page_splits';", "", "-- fix: a time-ordered key. UUIDv7 and ULID start with the time", "CREATE TABLE orders_v2 (", "  id      BINARY(16) PRIMARY KEY,    -- UUIDv7, grows with time", "  buyer   BIGINT NOT NULL", ");", "-- or swap the time bits to the front of a UUIDv1", "INSERT INTO orders_v2 VALUES (UUID_TO_BIN(UUID(), 1), 7);"],
+ map:{"1": [6], "2": [3, 6], "3": [6], "4": [6], "5": [6], "8": [9, 10, 11], "9": [9, 10, 11], "10": [9, 10, 11], "11": [9, 10, 11], "12": [13, 14, 15, 16, 17], "13": [15, 18, 19]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

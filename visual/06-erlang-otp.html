@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Erlang OTP</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Erlang OTP: gen_server and supervisors</h1>
+  <p class="lede">In RabbitMQ, written in Erlang, every queue is one Erlang process built on OTP's <code>gen_server</code>. A client publishes with a call and waits for the reply. An acknowledgement is a cast. Press <b>Next</b> through call and cast, a supervisor restart, and the classic trap: one hot gen_server everyone calls.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="cc">call and cast</button>
+    <button role="tab" aria-selected="false" data-mode="sup">Supervisor restart</button>
+    <button role="tab" aria-selected="false" data-mode="hot">One hot gen_server</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A supervision tree of two queue processes, with client processes below</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g stroke="var(--line)" stroke-width="2.5"><line x1="450" y1="61" x2="450" y2="95"/><line x1="450" y1="141" x2="290" y2="185"/><line x1="450" y1="141" x2="610" y2="185"/></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-top" class="box" x="300" y="15" width="300" height="46" rx="8" fill="var(--coord)"/><text id="t-top" x="450" y="43" fill="#fff">Top supervisor</text>
+        <rect id="c-qs" class="box" x="300" y="95" width="300" height="46" rx="8" fill="var(--coord)"/><text id="t-qs" x="450" y="123" fill="#fff">Queue supervisor, one_for_one</text>
+        <rect id="c-q1" class="box" x="170" y="185" width="240" height="66" rx="8" fill="var(--svc)"/><text id="t-q1" x="290" y="211" fill="#fff">gen_server: orders</text><text id="s-q1" x="290" y="236" fill="#fff" font-size="13">mailbox: 0</text>
+        <rect id="c-q2" class="box" x="490" y="185" width="240" height="66" rx="8" fill="var(--svc)"/><text id="t-q2" x="610" y="211" fill="#fff">gen_server: emails</text><text id="s-q2" x="610" y="236" fill="#fff" font-size="13">mailbox: 0</text>
+        <rect id="c-cl" class="box" x="20" y="310" width="230" height="52" rx="8" fill="var(--line)"/><text id="t-cl" x="135" y="341" fill="var(--fg)" font-size="14">client process</text>
+        <rect id="c-cl2" class="box" x="335" y="310" width="230" height="52" rx="8" fill="var(--line)"/><text id="t-cl2" x="450" y="341" fill="var(--fg)" font-size="14"></text>
+        <rect id="c-cpu" class="box" x="650" y="310" width="230" height="52" rx="8" fill="var(--line)"/><text id="t-cpu" x="765" y="341" fill="var(--fg)" font-size="14"></text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">supervisor</span>
+    <span style="--c:var(--svc)">gen_server process</span>
+    <span style="--c:var(--wait)">waiting or busy</span>
+    <span style="--c:var(--ok)">done</span>
+    <span style="--c:var(--undo)">restarted</span>
+    <span style="--c:var(--fail)">crashed or overloaded</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet OTP</h2>
+      <p>RabbitMQ, WhatsApp, Discord's chat backend in Elixir, telephone switches. OTP (Open Telecom Platform) gives gen_server, supervisors, gen_statem and applications. Akka's supervision tree is a copy of OTP's.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>One process per key, never one process for everything: one per queue, per user, per device. Cast where no reply is needed. Set the restart intensity of each supervisor, so a crash loop escalates instead of spinning.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Erlang OTP</th><th>Akka</th></tr>
+      <tr><td>Standard actor</td><td><code>gen_server</code> callbacks</td><td>Actor class or typed behaviour</td></tr>
+      <tr><td>Ask</td><td><code>call</code>, 5 s timeout by default, caller crashes</td><td><code>Ask</code>, future fails at the timeout</td></tr>
+      <tr><td>Tell</td><td><code>cast</code></td><td><code>Tell</code></td></tr>
+      <tr><td>Supervisor strategies</td><td>one_for_one, one_for_all, rest_for_one</td><td>one-for-one, all-for-one</td></tr>
+      <tr><td>Memory</td><td>A heap and a garbage collector per process</td><td>One shared heap per JVM or .NET process</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"In OTP a gen_server is the standard actor, call is ask with a timeout and cast is tell, and supervisors restart children by strategy, but one gen_server everyone calls is a bottleneck."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-erlang-otp/main.go";
+const code={_:{pc:`
+gen_server loop: take one message, run its callback    # OTP runs this, you write the callbacks
+gen_server:call(Pid, Msg, 5 s): send it, block for the reply
+  no reply after 5 s: exit(timeout)                    # the caller crashes
+gen_server:cast(Pid, Msg): send it, return at once
+handle_call(publish, From, S) -> store; {reply, ok, S2}
+handle_cast(ack, S) -> {noreply, S2}
+handle_info(expire, S) -> expire old; {noreply, S2}    # timers, monitors, raw messages
+a callback crashes: an exit signal goes over the link
+one_for_one supervisor on an exit signal:
+  restarts = restarts in the last 10 s, plus this one
+  if restarts > intensity (10): exit too               # the top supervisor decides
+  else: start a fresh child, touch no sibling
+top supervisor on that exit: restart the whole subtree
+the hot process: 1,500 a second in, 1,000 a second out, backlog + 500 a second
+wait = backlog / 1,000. Past 5 s, calls time out
+fix: key A to M calls part 1, N to Z calls part 2      # one process per range
+fix: acknowledge with cast                             # no wait, no timeout
+one process runs on one core: at most 1,000 a second`,go:`
+for e := range g.mailbox { // one message at a time //@1
+	switch e.kind {
+	case "call": //@5
+		e.reply <- cb.HandleCall(e.msg) //@5
+	case "cast": //@6
+		cb.HandleCast(e.msg) //@6
+	case "info": //@7
+		cb.HandleInfo(e.msg) //@7
+	}
+}
+defer func() {
+	if r := recover(); r != nil && exit != nil { //@8
+		exit <- fmt.Errorf("%v", r) // the link carries the death //@8
+	}
+}()
+func (g *GenServer) Call(msg string) (string, error) { //@2
+	reply := make(chan string, 1)
+	g.mailbox <- envelope{"call", msg, reply} //@2
+	select {
+	case r := <-reply: //@2
+		return r, nil //@2
+	case <-time.After(callTimeout): //@3
+		return "", errCallTimeout //@3
+	}
+}
+func (g *GenServer) Cast(msg string) { g.mailbox <- envelope{kind: "cast", msg: msg} } //@4,17
+for reason := range exit { //@9
+	recent = append(kept, now) //@10
+	if len(recent) > intensity { //@11
+		return fmt.Errorf("%s: restart %d in 10 s is past the intensity of %d: %v", name, len(recent), intensity, reason) //@11
+	}
+	restart() // a fresh child, no sibling touched //@12
+}
+fmt.Println("  top supervisor: exit signal, restart the queue subtree: fresh orders, fresh emails") //@13
+in, capacity := 1500, 1000 // one process, one core, 1 ms per message //@14,18
+backlog := (in - capacity) * t //@14
+fmt.Printf("  after %2d s: mailbox %d, a new call waits %d s (timeout 5 s)\\n", t, backlog, backlog/capacity) //@15
+func partOf(key string) int { //@16
+	if key[0] <= 'M' { //@16
+		return 1 //@16
+	}
+	return 2 //@16
+}`}};
+const CL=[135,310],Q1=[290,251],Q2=[610,251];
+const tabInit={hot:{f:{"c-cl2":"line","c-cpu":"line"},x:{"t-cl":"publishers 1 to 500","t-cl2":"publishers 501 to 1,000","t-cpu":"CPU: 1 of 8 cores used"}}};
+const steps={
+cc:[
+ {pc:[1],t:"A queue is a process",b:"The orders queue and the emails queue are two gen_server processes under a queue supervisor. You write their callbacks: init, handle_call, handle_cast, handle_info.",w:"gen_server is the standard actor of OTP. The library runs the loop, you write the handlers."},
+ {pc:[2],t:"call: publish and wait",b:"A client publishes a message with gen_server:call. The message lands in the orders mailbox. The client blocks, waiting for the reply.",w:"call is ask. The caller waits, with a timeout of 5 seconds by default.",a:[[150,310,250,251,"call publish"]],f:{"c-cl":"wait","c-q1":"wait"},x:{"t-cl":"waiting for reply","s-q1":"mailbox: 1"}},
+ {pc:[5],t:"handle_call answers",b:"The orders process runs handle_call, stores the message, and returns a reply. The client gets ok and goes on.",w:"One message at a time, so the queue's state needs no lock.",a:[[260,251,170,310,"reply ok","ok"]],f:{"c-cl":"ok","c-q1":"svc"},x:{"t-cl":"published","s-q1":"1 message stored"}},
+ {pc:[4,6],t:"cast: acknowledge, no reply",b:"A consumer acknowledges a delivered message with gen_server:cast. It goes into the mailbox and the sender continues at once.",w:"cast is tell. Nothing comes back.",a:[[190,310,280,251,"cast ack"]],x:{"t-cl":"sent, not waiting","s-q1":"ack handled"}},
+ {pc:[7],t:"handle_info: everything else",b:"A timer message to expire old messages arrives as a plain Erlang message. handle_info takes it.",w:"Monitors, timers and raw messages arrive through handle_info.",a:[[700,200,410,215,"timer: expire","muted",true]],x:{"s-q1":"expired 0 messages"}},
+ {pc:[2,3],t:"The failure: the call timeout",b:"The orders process is busy with a job of 7.5 seconds, and 40 messages wait. The caller's timer checks at 5 seconds: did a reply arrive? No. So the calling process crashes with a timeout exit.",w:"A crashing caller is the Erlang way: its own supervisor decides what to do next.",a:[[150,310,250,251,"call publish"]],f:{"c-q1":"wait","c-cl":"fail"},x:{"s-q1":"busy, mailbox: 40","t-cl":"crashed: call timeout"}}
+],
+sup:[
+ {pc:[8],t:"A bad message",b:"The orders process gets a message it cannot handle and crashes.",w:"No defensive code. Let it crash: the supervisor decides.",f:{"c-q1":"fail"},x:{"s-q1":"crashed"}},
+ {pc:[8,9],t:"The exit reaches the supervisor",b:"The queue supervisor is linked to its children. It receives the exit signal of the orders process.",w:"Links carry the news of a death to the supervisor at once.",a:[[290,185,400,141,"exit signal","fail"]]},
+ {pc:[10,12],t:"one_for_one: restart only orders",b:"The supervisor counts restarts in the last 10 seconds: 1. That is not past the limit of 10, so it starts a fresh orders process. The strategy is one_for_one, so the emails process never notices.",w:"Each process has its own heap, so one crash cannot corrupt another.",a:[[420,141,300,185,"restart","undo"]],f:{"c-q1":"undo"},x:{"s-q1":"fresh process"}},
+ {pc:[10,11],t:"A crash loop",b:"The bad message keeps coming. Orders crashes and restarts again and again. The check runs on each exit: is the count past 10? Restart 11 within 10 seconds says yes.",w:"The restart intensity is the limit of restarts per period.",f:{"c-q1":"fail"},x:{"s-q1":"restart 11 in 10 s"}},
+ {pc:[11,13],t:"The supervisor gives up and escalates",b:"Past its intensity the queue supervisor exits too. The top supervisor sees it and restarts the whole queue subtree.",w:"A failure that restarts cannot fix climbs the tree until a bigger restart, or the node, deals with it.",a:[[450,95,450,61,"exit","fail"],[470,61,470,95,"restart subtree","undo"]],f:{"c-qs":"undo","c-q1":"undo","c-q2":"undo"},x:{"s-q1":"fresh process","s-q2":"fresh process"}}
+],
+hot:[
+ {pc:[14],t:"Everyone publishes to orders",b:"A thousand publishers send to the orders queue, and every one does a call. The program assumes 1,500 messages a second arrive.",w:"One queue, one process, one mailbox.",a:[[150,310,250,251,"call publish"],[430,310,300,251,"call publish"]],f:{"c-cl":"wait","c-cl2":"wait","c-q1":"wait"},x:{"s-q1":"mailbox: 1,000"}},
+ {pc:[18],t:"One process uses one core",b:"The orders process handles one message at a time, so it can use only one CPU core. At an assumed 1 ms a message, that is 1,000 a second. The backlog grows by 500 a second, and seven of eight cores sit idle.",w:"Adding cores does not help a single process.",f:{"c-cpu":"wait"},x:{"t-cpu":"core 1: 100 %, 7 cores idle"}},
+ {pc:[15],t:"The failure that matters: callers time out",b:"After 10 seconds the mailbox holds 5,000, so a new call waits 5 seconds: the timeout. After 50 seconds it holds 25,000 and the wait is 25 seconds. Publishers crash and retry, which makes the mailbox longer still.",w:"One gen_server everyone calls is the bottleneck of the whole node.",f:{"c-q1":"fail","c-cl":"fail","c-cl2":"fail"},x:{"s-q1":"mailbox: 25,000","t-cl":"call timeouts","t-cl2":"call timeouts"}},
+ {pc:[16],t:"Split the state across processes",b:"The orders queue is split into two processes by key. The check is the first letter: A to M calls part 1, N to Z calls part 2. Each part now gets 750 a second against 1,000 of capacity, so the backlog stays at 0.",w:"One process per key spreads the work over cores.",f:{"c-q1":"wait","c-q2":"wait","c-cl":"wait","c-cl2":"wait","c-cpu":"wait"},x:{"t-q1":"orders, part 1","t-q2":"orders, part 2","s-q1":"mailbox: 500","s-q2":"mailbox: 500","t-cl":"keys A to M","t-cl2":"keys N to Z","t-cpu":"2 cores busy"},a:[[150,310,250,251,"call"],[450,310,580,251,"call"]]},
+ {pc:[17],t:"Cast where no reply is needed",b:"Acknowledgements switch from call to cast. Publishers no longer wait on them.",w:"Fewer waits, fewer timeouts.",f:{"c-q1":"svc","c-q2":"svc","c-cl":"ok","c-cl2":"ok","c-cpu":"ok"},x:{"s-q1":"keeping up","s-q2":"keeping up","t-cl":"no timeouts","t-cl2":"no timeouts","t-cpu":"2 cores busy, room to split more"},a:[[190,310,280,251,"cast ack"],[480,310,600,251,"cast ack"]]}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

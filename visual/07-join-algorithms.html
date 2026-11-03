@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join algorithms</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.mv{transition:transform .5s}
+.mv.msg{transition:transform .5s,opacity .35s}
+@media (prefers-reduced-motion:reduce){.msg,.mv,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Join algorithms: how the engine pairs rows</h1>
+  <p class="lede">An indexer must join five <b>swaps</b> to four <b>pools</b> by pool id. The answer is the same every time. The work is not. Pick an algorithm and watch the <b>comparisons</b> counter: n×m against n+m.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="nl">Nested loop</button>
+    <button role="tab" aria-selected="false" data-mode="hash">Hash join</button>
+    <button role="tab" aria-selected="false" data-mode="merge">Sort-merge</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Two tables, a work area, and a comparison counter</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <text x="130" y="40" text-anchor="middle">swaps (n = 5)</text>
+        <text x="390" y="40" text-anchor="middle">pools (m = 4)</text>
+        <text id="wt" x="720" y="40" text-anchor="middle"></text>
+      </g>
+      <g id="links" stroke-width="2.5"></g>
+      <g id="rows" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+      <g id="work" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+      <path id="po" class="mv msg" d="M0 -8 L14 0 L0 8z" fill="var(--coord)"/>
+      <path id="pi" class="mv msg" d="M0 -8 L14 0 L0 8z" fill="var(--coord)"/>
+      <rect x="20" y="318" width="860" height="46" rx="8" fill="none" stroke="var(--line)"/>
+      <text id="cmp" x="40" y="347" font-family="Atkinson Hyperlegible,system-ui" font-size="17" font-weight="700" fill="var(--fg)"></text>
+      <text x="860" y="347" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="15" fill="var(--muted)">n×m = 20 · n+m = 9</text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">row being worked on</span>
+    <span style="--c:var(--wait)">compared, no match</span>
+    <span style="--c:var(--ok)">matched</span>
+    <span style="--c:var(--undo)">in memory (hash table)</span>
+    <span style="--c:var(--fail)">the failure</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL loading one customer's orders: a nested loop over an index, a few page reads per row. StarRocks joining one day of swaps to a 30-million-row address table: a hash join that builds on the small day. Two tables both sorted by block height: a merge join that never builds anything.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>You do not choose the algorithm. The planner does, from its row estimates. Your job is to keep statistics fresh, and to check estimated against actual rows in <code>EXPLAIN ANALYZE</code> when a join is slow. A wrong estimate picks a nested loop over millions, or builds the hash on the big side.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Nested loop</th><th>Hash join</th><th>Sort-merge</th></tr>
+      <tr><td>Work</td><td>n×m, or n×(a few reads) with an index</td><td>n+m</td><td>n+m after sorting, n log n to sort</td></tr>
+      <tr><td>Memory</td><td>Almost none</td><td>The whole build side</td><td>Little, if inputs arrive sorted</td></tr>
+      <tr><td>Wins when</td><td>Outer side tiny, inner side indexed</td><td>Smaller side fits in memory</td><td>Both sides already sorted on the key</td></tr>
+      <tr><td>Fails when</td><td>Both sides large, no index</td><td>Build side too big: spills or runs out of memory</td><td>Big unsorted inputs: the sort spills</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Nested loop for tiny or indexed, hash when one side fits in memory, merge when both are sorted. The planner picks from estimates, so a slow join usually means a wrong row estimate."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const O=["p2","p4","p1","p2","p3"], I=["p3","p1","p5","p2"];
+const nat5=[0,1,2,3,4], nat4=[0,1,2,3], sO=[2,0,3,4,1], sI=[1,3,0,2];
+const all4={0:"look",1:"look",2:"look",3:"look"};
+const steps={
+nl:[
+ {t:"Start",b:"Five swaps on the left. Four pools on the right. Each swap names a pool. We want every swap with its pool.",w:"A nested loop is the simplest plan: two for-loops, one inside the other.",o:{},i:{},L:[],c:0},
+ {t:"Swap 1 (p2): scan every pool",b:"The engine takes swap 1 and compares it with all four pools. Three are not p2. The fourth is. That is four comparisons for one row.",w:"Every outer row pays for the whole inner table.",o:{0:"cur"},i:{0:"look",1:"look",2:"look",3:"ok"},L:[[0,3]],c:4},
+ {t:"Swap 2 (p4): scan every pool again",b:"Swap 2 names p4. The engine compares it with all four pools again. None match. Four more comparisons, nothing found.",w:"A row with no partner costs exactly as much as a row with one.",o:{0:"ok",1:"cur"},i:all4,L:[[0,3]],c:8},
+ {t:"Swaps 3 to 5: same again",b:"Three more swaps, four comparisons each. Four rows matched in the end, and the counter reads 20.",w:"20 = 5 × 4. Double both tables and the work goes up four times.",o:{0:"ok",1:"look",2:"ok",3:"ok",4:"ok"},i:{0:"ok",1:"ok",3:"ok"},L:[[0,3],[2,1],[3,3],[4,0]],c:20},
+ {t:"With an index on pools.pool",b:"Now pools has a B-tree index on its id. For each swap the engine walks root to leaf in a few page reads instead of scanning all pools. Five swaps, five short lookups.",w:"This is when the nested loop wins: a tiny outer side and an indexed inner side. It needs no memory at all.",o:{0:"ok",1:"look",2:"ok",3:"ok",4:"ok"},i:{0:"ok",1:"ok",3:"ok"},L:[[0,3],[2,1],[3,3],[4,0]],c:5,wt:"index on pools.pool",w2:[["root → leaf","var(--coord)"],["1 lookup per swap","var(--ok)"]]},
+ {t:"The failure that matters",b:"The planner estimated 10 swaps, so it chose a nested loop. In fact there were 10,000 swaps, joined to 30 million addresses with no index. Every swap scans every address.",w:"A wrong row estimate turns seconds into hours. Refresh statistics and compare estimated with actual rows in the plan.",o:{0:"bad",1:"bad",2:"bad",3:"bad",4:"bad"},i:{0:"bad",1:"bad",2:"bad",3:"bad"},L:[],c:-1,ctxt:"10,000 × 30,000,000 = 300,000,000,000 comparisons"}
+],
+hash:[
+ {t:"Start",b:"Same five swaps, same four pools. A hash join works in two phases: build, then probe.",w:"The trick is to read each table only once.",o:{},i:{},L:[],c:0},
+ {t:"Build: load the small side into memory",b:"The engine reads the four pools once and puts each into a hash table, filed by its number mod 4. p1 and p5 both land in bucket 1.",w:"Always build on the smaller side. It must fit in memory.",o:{},i:{0:"mem",1:"mem",2:"mem",3:"mem"},L:[],c:4,wt:"hash table of pools",w2:[["bucket 2: p2","var(--undo)"],["bucket 1: p1, p5","var(--undo)"],["bucket 3: p3","var(--undo)"]]},
+ {t:"Probe: swap 1 (p2)",b:"The engine hashes p2, jumps straight to bucket 2 and finds pool p2. One look-up, not four comparisons.",w:"The probe side streams past. It never needs to fit in memory.",o:{0:"cur"},i:{0:"mem",1:"mem",2:"mem",3:"ok"},L:[[0,3]],c:5,wt:"hash table of pools",w2:[["bucket 2: p2","var(--ok)"],["bucket 1: p1, p5","var(--undo)"],["bucket 3: p3","var(--undo)"]]},
+ {t:"Probe: swap 2 (p4)",b:"p4 hashes to bucket 0 (4 mod 4). Bucket 0 is empty. No match, and the engine moves on at once.",w:"A miss costs one bucket look-up, not a scan of the table.",o:{0:"ok",1:"cur"},i:{0:"mem",1:"mem",2:"mem",3:"ok"},L:[[0,3]],c:6,wt:"hash table of pools",w2:[["bucket 0: empty","var(--wait)"],["bucket 1: p1, p5","var(--undo)"],["bucket 2: p2","var(--undo)"]]},
+ {t:"Probe the rest",b:"Swaps 3, 4 and 5 each take one look-up. Four matches. The counter reads 9: four inserts and five probes.",w:"9 = 4 + 5. Double both tables and the work only doubles. That is why big joins are hash joins.",o:{0:"ok",1:"look",2:"ok",3:"ok",4:"ok"},i:{0:"ok",1:"ok",3:"ok"},L:[[0,3],[2,1],[3,3],[4,0]],c:9,wt:"hash table of pools",w2:[["bucket 2: p2","var(--ok)"],["bucket 1: p1, p5","var(--ok)"],["bucket 3: p3","var(--ok)"]]},
+ {t:"The failure that matters",b:"Stale statistics said the address table was small, so the planner built the hash on 30 million addresses instead of on one day of swaps. The hash table does not fit in memory.",w:"It spills to disk in pieces, or the query dies out of memory. In a distributed engine the same mistake broadcasts gigabytes to every node. Put the small side on the build side.",o:{},i:{0:"bad",1:"bad",2:"bad",3:"bad"},L:[],c:-1,ctxt:"build side: 30,000,000 rows, memory full",wt:"hash table",w2:[["30,000,000 addresses","var(--fail)"],["memory full","var(--fail)"],["spill to disk","var(--fail)"]]}
+],
+merge:[
+ {t:"Start",b:"Same tables, unsorted. A sort-merge join first sorts both sides on the pool id, then walks them together.",w:"If both sides already arrive sorted, the first phase is free.",o:{},i:{},L:[],c:0},
+ {t:"Sort both sides",b:"Swaps become p1, p2, p2, p3, p4. Pools become p1, p2, p3, p5. Watch the rows move.",w:"Sorting costs about n log n. A sort key or an index gives you this order for free.",o:{},i:{},L:[],c:0,so:1},
+ {t:"Two pointers: p1 meets p1",b:"One pointer on each side, both at the top. p1 equals p1: a match. The swap pointer moves down.",w:"The rule: if equal, match. If one is smaller, move that pointer.",o:{2:"cur"},i:{1:"ok"},L:[[2,1]],c:1,so:1,wt:"the merge rule",w2:[["keys equal: match","var(--ok)"],["one smaller: move that pointer","var(--coord)"],["pointers never go back","var(--svc)"]],p:[0,0]},
+ {t:"p2 is bigger than p1: move the pool pointer",b:"Swap p2 against pool p1. p1 is smaller, so the pool pointer moves to p2. Match. The next swap is p2 again: another match.",w:"Neither pointer ever goes back. Each row is passed once.",o:{2:"ok",0:"ok",3:"cur"},i:{1:"ok",3:"ok"},L:[[2,1],[0,3],[3,3]],c:4,so:1,wt:"the merge rule",w2:[["keys equal: match","var(--ok)"],["one smaller: move that pointer","var(--coord)"],["pointers never go back","var(--svc)"]],p:[2,1]},
+ {t:"Walk to the end",b:"Swap p3 against pool p2: the pool is smaller, so the pool pointer moves. p3 meets p3: match. Swap p4 against pool p3 moves the pool pointer again. Then p4 against p5: p4 is smaller, so the swap pointer moves past the end. Done. Four matches in 8 comparisons.",w:"About n+m steps after the sort. And very little memory: only the current rows.",o:{2:"ok",0:"ok",3:"ok",4:"ok",1:"look"},i:{1:"ok",3:"ok",0:"ok",2:"look"},L:[[2,1],[0,3],[3,3],[4,0]],c:8,so:1,wt:"the merge rule",w2:[["keys equal: match","var(--ok)"],["one smaller: move that pointer","var(--coord)"],["pointers never go back","var(--svc)"]],p:[4,3]},
+ {t:"The failure that matters",b:"Two huge tables, neither sorted on the key. The sort phase has to order millions of rows. They do not fit in memory, so the sort spills to disk and runs as an external sort.",w:"Merge join shines only when the order is already there: a clustered index, or a warehouse sort key on the join column. Otherwise the planner prefers a hash join.",o:{0:"bad",1:"bad",2:"bad",3:"bad",4:"bad"},i:{0:"bad",1:"bad",2:"bad",3:"bad"},L:[],c:-1,ctxt:"sort of millions of rows: spilled to disk"}
+]};
+const fill=s=>({cur:"var(--coord)",look:"var(--wait)",ok:"var(--ok)",mem:"var(--undo)",bad:"var(--fail)"}[s]||"var(--line)");
+const Y=p=>78+p*46;
+let mode="nl",i=0,timer=null;
+const $=id=>document.getElementById(id);
+// Draw rows once, then move them with a CSS transform so the sort is visible.
+(function draw(){let h="";
+  O.forEach((k,d)=>h+=`<g class="mv" id="o${d}"><rect class="box" id="or${d}" x="50" y="-17" width="160" height="34" rx="6"/><text id="ot${d}" x="130" y="5" text-anchor="middle">swap ${d+1} · ${k}</text></g>`);
+  I.forEach((k,d)=>h+=`<g class="mv" id="i${d}"><rect class="box" id="ir${d}" x="310" y="-17" width="160" height="34" rx="6"/><text id="it${d}" x="390" y="5" text-anchor="middle">pool ${k}</text></g>`);
+  $("rows").innerHTML=h;})();
+function render(){
+  const s=steps[mode][i], oo=s.so?sO:nat5, io=s.so?sI:nat4;
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const pos={o:{},i:{}};oo.forEach((d,p)=>pos.o[d]=p);io.forEach((d,p)=>pos.i[d]=p);
+  O.forEach((_,d)=>{$("o"+d).style.transform=`translate(0px,${Y(pos.o[d])}px)`;$("or"+d).setAttribute("fill",fill(s.o[d]));$("ot"+d).setAttribute("fill",s.o[d]?"#fff":"var(--fg)");});
+  I.forEach((_,d)=>{$("i"+d).style.transform=`translate(0px,${Y(pos.i[d])}px)`;$("ir"+d).setAttribute("fill",fill(s.i[d]));$("it"+d).setAttribute("fill",s.i[d]?"#fff":"var(--fg)");});
+  const lk=$("links");lk.innerHTML="";
+  s.L.forEach(([a,b],k)=>{const el=document.createElementNS("http://www.w3.org/2000/svg","line");
+    el.setAttribute("x1",210);el.setAttribute("y1",Y(pos.o[a]));el.setAttribute("x2",310);el.setAttribute("y2",Y(pos.i[b]));
+    el.setAttribute("stroke","var(--ok)");el.setAttribute("class","msg");lk.appendChild(el);
+    const show=()=>el.classList.add("on");matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,500+80*k);});
+  $("wt").textContent=s.wt||"";
+  let w="";(s.w2||[]).forEach(([lab,c],k)=>w+=`<rect class="box" x="590" y="${62+k*50}" width="260" height="38" rx="6" fill="${c}"/><text x="720" y="${86+k*50}" text-anchor="middle" fill="#fff">${lab}</text>`);
+  $("work").innerHTML=w;
+  const c=$("cmp");c.textContent=s.c<0?s.ctxt:`comparisons: ${s.c}`;c.setAttribute("fill",s.c<0?"var(--fail)":"var(--fg)");
+  for(const [id,x,p] of [["po",30,s.p?.[0]],["pi",290,s.p?.[1]]]){const el=$(id);
+    if(p===undefined)el.classList.remove("on");else{el.style.transform=`translate(${x}px,${Y(p)}px)`;el.classList.add("on");}}
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-join-algorithms/main.go</code> joins the same five swaps and four pools three ways and prints every counter quoted here (<code>go run .</code>).";
+const CODE={
+nl:{pc:["for each swap s:                 # outer: 5 rows",
+"  for each pool p:               # inner: all 4, every time",
+"    comparisons += 1",
+"    if s.pool == p.pool: emit (s, p)",
+"work = 5 x 4 = 20 comparisons",
+"with an index: per swap, index.lookup(s.pool)   # 5 lookups",
+"wrong estimate, no index: 10,000 x 30,000,000 comparisons"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// nestedLoop compares every swap with every pool.", "func nestedLoop() {", "\tcmp, found := 0, 0", "\tfor n, s := range swaps { // outer loop: each swap once", "\t\tfor _, p := range pools { // inner loop: every pool, every time", "\t\t\tcmp++", "\t\t\tif s == p {", "\t\t\t\tfound++", "\t\t\t}", "\t\t}", "\t\tfmt.Printf(\"nested loop: swap %d (%s) done, comparisons %d\\n\", n+1, s, cmp)", "\t}", "\tfmt.Printf(\"nested loop: %d matches, %d comparisons = %d x %d\\n\", found, cmp, len(swaps), len(pools))", "}"],[""],["// indexedLoop looks each swap up in an index on pools.pool.", "func indexedLoop() {", "\tindex := map[string]bool{} // stands for the B-tree on pools.pool", "\tfor _, p := range pools {", "\t\tindex[p] = true", "\t}", "\tlookups, found := 0, 0", "\tfor _, s := range swaps {", "\t\tlookups++ // one root-to-leaf walk per swap", "\t\tif index[s] {", "\t\t\tfound++", "\t\t}", "\t}", "\tfmt.Printf(\"indexed loop: %d matches, %d lookups\\n\", found, lookups)", "\tfmt.Printf(\"no index, wrong estimate: %d x %d = %d comparisons\\n\", 10000, 30000000, 10000*30000000)", "}"]),
+  map:[["for each swap s:","for n, s := range swaps"],["for each pool p:","for _, p := range pools { // inner"],["comparisons += 1","cmp++"],
+   ["if s.pool == p.pool","if s == p {..found++"],["work = 5 x 4","nested loop: swap %d","nested loop: %d matches"],
+   ["with an index","index := map..indexed loop:"],["wrong estimate, no index","no index, wrong estimate"]]}]},
+hash:{pc:["build: for each pool p:              # the small side, read once",
+"  table[hash(p.pool)].append(p)      # hash = number mod 4",
+"probe: for each swap s:              # the big side streams past",
+"  for p in table[hash(s.pool)]:      # one bucket, not the table",
+"    if p.pool == s.pool: emit (s, p)",
+"work = 4 inserts + 5 probes = 9",
+"wrong build side: 30,000,000 rows must fit in memory"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// bucket is the hash function: the number in the key, modulo 4.", "func bucket(key string) int {", "\tn, _ := strconv.Atoi(key[1:])", "\treturn n % 4", "}"],[""],["// hashJoin builds a table on pools, then probes it with each swap.", "func hashJoin() {", "\twork, found := 0, 0", "\ttable := map[int][]string{}", "\tfor _, p := range pools { // build: read the small side once", "\t\ttable[bucket(p)] = append(table[bucket(p)], p)", "\t\twork++", "\t}", "\tfmt.Printf(\"hash build: bucket 1 %v, bucket 2 %v, bucket 3 %v, work %d\\n\", table[1], table[2], table[3], work)", "\tfor n, s := range swaps { // probe: stream the big side past", "\t\twork++", "\t\thit := false", "\t\tfor _, p := range table[bucket(s)] { // only the keys in one bucket", "\t\t\tif p == s {", "\t\t\t\thit = true", "\t\t\t}", "\t\t}", "\t\tif hit {", "\t\t\tfound++", "\t\t}", "\t\tfmt.Printf(\"hash probe: swap %d (%s) -> bucket %d %v, match %v, work %d\\n\", n+1, s, bucket(s), table[bucket(s)], hit, work)", "\t}", "\tfmt.Printf(\"hash join: %d matches, work %d = %d inserts + %d probes\\n\", found, work, len(pools), len(swaps))", "\tfmt.Printf(\"wrong build side: %d rows must fit in memory\\n\", 30000000)", "}"]),
+  map:[["build: for each pool p:","for _, p := range pools { // build"],["table[hash(p.pool)]","func bucket(key string) int..return n % 4","table[bucket(p)] = append..hash build:"],
+   ["probe: for each swap s:","for n, s := range swaps { // probe..hit := false"],["for p in table[hash(s.pool)]","for _, p := range table[bucket(s)]"],
+   ["if p.pool == s.pool","if p == s {..found++"],["work = 4 inserts","hash probe:","hash join: %d matches"],["wrong build side","wrong build side"]]}]},
+merge:{pc:["sort swaps by pool, sort pools by pool   # about n log n",
+"a, b = 0, 0                              # one pointer per side",
+"while a < len(swaps) and b < len(pools):",
+"  if swaps[a] == pools[b]: emit, a += 1   # equal: match",
+"  elif swaps[a] < pools[b]: a += 1        # the smaller side moves",
+"  else: b += 1                            # pointers never go back",
+"unsorted and huge: the sort spills to disk"],
+ views:[{v:"real",label:"Go",lines:["// mergeJoin sorts both sides, then walks two pointers.", "func mergeJoin() {", "\to := append([]string{}, swaps...)", "\tin := append([]string{}, pools...)", "\tsort.Strings(o) // costs about n log n", "\tsort.Strings(in)", "\tfmt.Printf(\"merge sorted: swaps %v, pools %v\\n\", o, in)", "\ta, b, cmp, found := 0, 0, 0, 0", "\tfor a < len(o) && b < len(in) {", "\t\tcmp++", "\t\tswitch {", "\t\tcase o[a] == in[b]: // keys equal: match, move the swap pointer", "\t\t\tfound++", "\t\t\tfmt.Printf(\"merge: %s = %s match, comparisons %d\\n\", o[a], in[b], cmp)", "\t\t\ta++", "\t\tcase o[a] < in[b]: // swap smaller: move the swap pointer", "\t\t\tfmt.Printf(\"merge: %s < %s move swap pointer, comparisons %d\\n\", o[a], in[b], cmp)", "\t\t\ta++", "\t\tdefault: // pool smaller: move the pool pointer", "\t\t\tfmt.Printf(\"merge: %s > %s move pool pointer, comparisons %d\\n\", o[a], in[b], cmp)", "\t\t\tb++", "\t\t}", "\t}", "\tfmt.Printf(\"merge join: %d matches, %d comparisons\\n\", found, cmp)", "}"],
+  map:[["sort swaps by pool","sort.Strings(o)","sort.Strings(in)","merge sorted"],["a, b = 0, 0","a, b, cmp, found := 0, 0, 0, 0"],
+   ["while a < len(swaps)","for a < len(o) && b < len(in) {","cmp++"],["if swaps[a] == pools[b]","case o[a] == in[b]..a++"],
+   ["elif swaps[a] < pools[b]","case o[a] < in[b]..a++"],["else: b += 1","default: // pool smaller..b++"],["unsorted and huge","sort.Strings(o)","sort.Strings(in)"]]}]}};
+const PCS={
+nl:[["for each swap s:"],["for each swap s:","for each pool p:","comparisons += 1","if s.pool == p.pool"],["for each pool p:","comparisons += 1"],["work = 5 x 4"],["with an index"],["wrong estimate, no index"]],
+hash:[["build: for each pool p:","probe: for each swap s:"],["build: for each pool p:","table[hash(p.pool)]"],["probe: for each swap s:","for p in table[hash(s.pool)]","if p.pool == s.pool"],["probe: for each swap s:","for p in table[hash(s.pool)]"],["probe: for each swap s:","for p in table[hash(s.pool)]","if p.pool == s.pool","work = 4 inserts"],["build: for each pool p:","wrong build side"]],
+merge:[["sort swaps by pool"],["sort swaps by pool"],["a, b = 0, 0","while a < len(swaps)","if swaps[a] == pools[b]"],["while a < len(swaps)","else: b += 1","if swaps[a] == pools[b]"],["while a < len(swaps)","if swaps[a] == pools[b]","else: b += 1","elif swaps[a] < pools[b]"],["sort swaps by pool","unsorted and huge"]]};
+const curPc=()=>PCS[mode][i]||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+{const r0=render;render=function(){r0();drawCode();};}
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

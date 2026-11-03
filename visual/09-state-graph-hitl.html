@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>State graph and approval</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>State graph and a human in the loop</h1>
+  <p class="lede">A graph query helper writes a statement, runs it and grades the rows. The server refuses it with a reason. A conditional edge sends the state to a rewrite node. After three tries it stops and reports. Before the answer leaves, the run pauses and a human approves. Watch the shared state on the right change after every node.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Refused, rewritten, approved</button>
+    <button role="tab" aria-selected="false" data-mode="bad">State kept as chat history</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 410" aria-labelledby="stage-title">
+      <title id="stage-title">Nodes Generate, Run, Grade, Rewrite, Report, Answer, Approve and End, with a panel of shared state</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g fill="none" stroke-width="3" marker-end="url(#arr)">
+        <path id="e-gen-run" class="edge" stroke="var(--line)" d="M150 61 L196 61"/>
+        <path id="e-run-grade" class="edge" stroke="var(--line)" d="M330 61 L376 61"/>
+        <path id="e-grade-rw" class="edge" stroke="var(--line)" d="M410 82 L410 191 L334 191"/>
+        <path id="e-grade-ans" class="edge" stroke="var(--line)" d="M485 82 L485 166"/>
+        <path id="e-rw-run" class="edge" stroke="var(--line)" d="M265 170 L265 86"/>
+        <path id="e-rw-rep" class="edge" stroke="var(--line)" d="M198 191 L154 191"/>
+        <path id="e-ans-app" class="edge" stroke="var(--line)" d="M485 212 L485 296"/>
+        <path id="e-app-end" class="edge" stroke="var(--line)" d="M418 321 L334 321"/>
+        <path id="e-app-gen" class="edge" stroke="var(--line)" d="M485 342 L485 392 L8 392 L8 61 L16 61"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="12" fill="var(--muted)">
+        <text x="404" y="132" text-anchor="end">refused or empty</text>
+        <text x="492" y="132">rows look right</text>
+        <text x="258" y="132" text-anchor="end">attempts &lt; 3</text>
+        <text x="176" y="230" text-anchor="middle">attempts = 3</text>
+        <text x="376" y="358" text-anchor="middle">human approves</text>
+        <text x="246" y="386" text-anchor="middle">human edits</text>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="n-gen" class="box" x="20" y="40" width="130" height="42" rx="21" fill="var(--line)"/><text x="85" y="66" fill="var(--fg)">Generate</text>
+        <rect id="n-run" class="box" x="200" y="40" width="130" height="42" rx="21" fill="var(--line)"/><text x="265" y="66" fill="var(--fg)">Run</text>
+        <rect id="n-grade" class="box" x="380" y="40" width="130" height="42" rx="21" fill="var(--line)"/><text x="445" y="66" fill="var(--fg)">Grade</text>
+        <rect id="n-rw" class="box" x="200" y="170" width="130" height="42" rx="21" fill="var(--line)"/><text x="265" y="196" fill="var(--fg)">Rewrite</text>
+        <rect id="n-rep" class="box" x="20" y="170" width="130" height="42" rx="21" fill="var(--line)"/><text x="85" y="196" fill="var(--fg)">Report</text>
+        <rect id="n-ans" class="box" x="420" y="170" width="130" height="42" rx="21" fill="var(--line)"/><text x="485" y="196" fill="var(--fg)">Answer</text>
+        <rect id="n-app" class="box" x="420" y="300" width="130" height="42" rx="21" fill="var(--line)"/><text x="485" y="326" fill="var(--fg)">Approve</text>
+        <rect id="n-end" class="box" x="200" y="300" width="130" height="42" rx="21" fill="var(--line)"/><text x="265" y="326" fill="var(--fg)">End</text>
+      </g>
+      <text id="loopc" x="140" y="132" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" fill="var(--fail)"></text>
+      <g id="pause" class="msg" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" fill="var(--wait)"><rect x="556" y="306" width="22" height="30" rx="3" fill="var(--wait)"/><rect x="562" y="312" width="4" height="18" fill="var(--panel)"/><rect x="569" y="312" width="4" height="18" fill="var(--panel)"/></g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13">
+        <rect x="590" y="14" width="300" height="384" rx="8" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <text id="st-title" x="604" y="40" font-size="15" font-weight="700" fill="var(--fg)"></text>
+        <g fill="var(--muted)">
+          <text x="604" y="72">question</text><text x="604" y="112">statement</text><text x="604" y="152">rows</text><text x="604" y="192">reason</text>
+          <text x="604" y="232">attempts</text><text id="k-x" x="604" y="272"></text><text x="604" y="312">checkpoint</text><text x="604" y="352">status</text>
+        </g>
+        <g id="vals" fill="var(--fg)" font-weight="700">
+          <text id="f-q" x="604" y="90"></text><text id="f-s" x="604" y="130"></text><text id="f-r" x="604" y="170"></text><text id="f-why" x="604" y="210"></text>
+          <text id="f-att" x="604" y="250"></text><text id="f-x" x="604" y="290"></text><text id="f-cp" x="604" y="330"></text><text id="f-st" x="604" y="370"></text>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-state-graph-hitl/main.py</code> (<code>python3 main.py</code>). The LangGraph (shape only) view shows the framework shape of the same steps; it is not run (<code>shape_langgraph.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+      <button data-v="alt" aria-pressed="false" id="alttab">LangGraph (shape only)</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">node running, or field just read</span>
+    <span style="--c:var(--undo)">rewrite and its loop back</span>
+    <span style="--c:var(--wait)">paused, waiting for a human</span>
+    <span style="--c:var(--ok)">passed, or done</span>
+    <span style="--c:var(--fail)">refused, endless loop, leaked secret</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>LangGraph is the standard name for this pattern: nodes, conditional edges, a checkpointer and an interrupt. A production change behind a pull request is the same shape: the merge is the human approval that resumes the flow. When something breaks, you replay from any saved checkpoint with a changed input.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep the state as typed fields, so an edge can read <code>attempts</code> as a number. Save a checkpoint after every node, so a pause can last a night. Keep tokens and keys out of the state: the checkpoint is written to a database, so treat it like a log anyone may read.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>State graph</th><th>Chain</th></tr>
+      <tr><td>Shape</td><td>Nodes with branches and loops</td><td>A straight line of steps</td></tr>
+      <tr><td>Next step decided by</td><td>A conditional edge that reads the state</td><td>The fixed order of the code</td></tr>
+      <tr><td>Retry</td><td>A loop back with a typed attempt count</td><td>Not possible without leaving the chain</td></tr>
+      <tr><td>Human approval</td><td>An interrupt at a node, resumed from a checkpoint</td><td>The whole run waits, or starts again</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A chain is a straight line, and a state graph adds loops, branches and a saved pause where a human can step in."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const T0={"st-title":"Shared state (typed fields)","k-x":"","f-q":"who sent money to 0xabc?","f-s":"","f-r":"","f-why":"","f-att":"0","f-x":"","f-cp":"","f-st":"running",loopc:""};
+const steps={
+"ok":[
+ {t:"Generate writes a statement",b:"The first node reads the question from the state and writes a statement: walk every sender of 0xabc. It stores the statement back in the state.",w:"A node is a plain function. It reads the state and returns an update.",box:{"n-gen":"coord"},ed:{},hl:["f-s"],txt:{"f-s":"v1: every sender, all time","f-cp":"saved after Generate"}},
+ {t:"Run: the server refuses",b:"The Run node sends the statement. The server refuses it with a reason: query_timeout. No rows come back.",w:"The refusal is data. It goes into the state as a field, not into a log line nobody reads.",box:{"n-run":"fail"},ed:{"e-gen-run":"coord"},hl:["f-why"],bad:["f-why"],txt:{"f-r":"none","f-why":"query_timeout","f-cp":"saved after Run"}},
+ {t:"Grade picks the next node",b:"Grade reads the state. Reason is set and rows are empty, so its conditional edge returns the name Rewrite. In the code, Grade is the edge function after_run, so no checkpoint is saved for it.",w:"A conditional edge is code that reads typed fields and names the next node. No model guesses the route.",box:{"n-grade":"coord"},ed:{"e-run-grade":"coord","e-grade-rw":"undo"},hl:["f-why","f-r"],txt:{"f-cp":"saved after Run"}},
+ {t:"Rewrite, and loop back",b:"Rewrite reads the reason and narrows the statement to the last 30 days. It adds 1 to attempts. Attempts is below 3, so the edge goes back to Run.",w:"A cycle. A chain cannot go backwards. A state graph can, and the attempt count keeps the cycle finite.",box:{"n-rw":"undo"},ed:{"e-rw-run":"undo"},hl:["f-att","f-s"],txt:{"f-s":"v2: senders, last 30 days","f-att":"1","f-cp":"saved after Rewrite"}},
+ {t:"Run again, Grade passes",b:"Run sends version 2. The server returns 42 rows. Grade sees rows that look right and takes the other edge, to Answer.",w:"Same node, same edge code, different state, different route.",box:{"n-run":"ok","n-grade":"ok"},ed:{"e-run-grade":"ok","e-grade-ans":"ok"},hl:["f-r"],txt:{"f-r":"42 rows","f-why":"none","f-cp":"saved after Run"}},
+ {t:"Answer drafts the reply",b:"Answer turns the 42 rows into a short reply with full addresses. The checkpointer saves the state again.",w:"A checkpoint after every node means the run can stop anywhere and lose nothing.",box:{"n-ans":"ok"},ed:{"e-ans-app":"coord"},hl:["f-cp"],txt:{"f-cp":"saved after Answer"}},
+ {t:"Interrupt: the run pauses",b:"Approve is an interrupt. The run stops, the process can even exit. The saved state waits in the database for a human.",w:"The pause costs nothing. It can last a minute or a night.",box:{"n-app":"wait"},ed:{},show:["pause"],hl:["f-st"],txt:{"f-st":"paused: waiting for a human"}},
+ {t:"A human approves, the run resumes",b:"The investigator reads the draft and approves. The run loads the checkpoint and goes on from Approve to End. Had they edited it, the edge would go back to Generate.",w:"The human sits inside the flow at a named node, not outside it as an afterthought.",box:{"n-app":"ok","n-end":"ok"},ed:{"e-app-end":"ok"},hl:["f-st"],txt:{"f-st":"resumed from checkpoint: done"}}
+],
+"bad":[
+ {t:"The state is a list of messages",b:"Same graph, but the state holds only the chat history: twelve messages of text. There is no attempts field.",w:"Text is easy to append and hard to read back as a number.",box:{"n-gen":"coord"},ed:{},hl:["f-att"],bad:["f-att"],txt:{"st-title":"State: chat history only","f-s":"(inside message 9)","f-att":"(no field)","f-cp":"saved after Generate"}},
+ {t:"Refused, so Rewrite",b:"Run is refused with query_timeout. Grade sends the state to Rewrite, as before.",w:"So far nothing is different. The difference is at the next edge.",box:{"n-run":"fail","n-grade":"coord","n-rw":"undo"},ed:{"e-grade-rw":"undo"},bad:["f-why"],txt:{"f-r":"none","f-why":"(inside message 11)"}},
+ {t:"The edge cannot count",b:"The edge out of Rewrite must ask: attempts below 3? There is no number to read. The code treats it as zero, every time. Run, Grade, Rewrite, again and again.",w:"An endless loop with no error. Report is never reached, and every lap costs a query.",box:{"n-run":"fail","n-grade":"coord","n-rw":"fail"},ed:{"e-rw-run":"fail","e-grade-rw":"fail","e-run-grade":"fail"},bad:["f-att","f-st"],txt:{"f-att":"unknown, read as 0",loopc:"lap 7 and counting","f-st":"looping"}},
+ {t:"The fix: typed fields",b:"The state gains real fields: statement, rows, reason and attempts as a number. On the third refusal the edge reads attempts = 3 and goes to Report.",w:"Report tells the user what was tried and why it failed. A finite answer beats an endless loop.",box:{"n-rw":"undo","n-rep":"ok"},ed:{"e-rw-rep":"ok"},hl:["f-att"],txt:{"st-title":"Shared state (typed fields)","f-s":"v3: senders, last 7 days","f-why":"query_timeout","f-att":"3",loopc:"","f-st":"reported after 3 tries"}},
+ {t:"A second failure: a secret in the state",b:"Someone puts the database token in the state so Run can read it. The checkpointer saves the state after every node, token included.",w:"The checkpoint table now holds a live credential, copied once per node.",box:{"n-run":"fail"},ed:{},show:[],bad:["f-x","f-cp"],txt:{"k-x":"token","f-x":"sk-live-… (a real key)","f-cp":"saved to the database, 8 copies"}},
+ {t:"The fix: the host holds the secret",b:"Run gets the token from the host at call time. The state keeps only what you would show in a log.",w:"Treat a checkpoint like a log: assume someone will read it.",box:{"n-run":"ok"},ed:{},hl:["f-x"],txt:{"f-x":"none: the host holds it","f-cp":"safe to read, like a log"}}
+]};
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");r.nextElementSibling.setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){const r=$(k);r.setAttribute("fill",`var(--${s.box[k]})`);r.nextElementSibling.setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  document.querySelectorAll(".msg").forEach(m=>m.classList.toggle("on",(s.show||[]).includes(m.id)));
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});for(const k in tx)$(k).textContent=tx[k];
+  document.querySelectorAll("#vals text").forEach(t=>t.setAttribute("fill",(s.bad||[]).includes(t.id)?"var(--fail)":(s.hl||[]).includes(t.id)?"var(--coord)":"var(--fg)"));
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+
+const CODE={"label": "Python", "pc": ["State: statement, rows, reason, attempts    # typed fields", "generate: state.statement = written from the question", "run: state.rows, state.reason = server(statement)", "after_run: rows? answer. else attempts < 3? rewrite. else report", "rewrite: narrow the statement, attempts += 1", "answer: state.draft = a reply from the rows", "approve: interrupt, the state waits, stop", "a human approves: load the checkpoint, go on to END", "after every node: save a checkpoint"], "real": ["@dataclass", "class State:  # typed fields, not chat text", "    question: str", "    statement: str = \"\"", "    rows: list = field(default_factory=list)", "    reason: str = \"\"", "    attempts: int = 0  # a number an edge can read", "    draft: str = \"\"", "    approved: bool = False", "", "", "def generate(s):", "    s.statement = f\"walk every sender of {s.question}\"", "", "", "def run_query(s):", "    s.rows, s.reason = fake_server(s.statement)", "", "", "def rewrite(s):", "    days = [30, 14, 7][min(s.attempts, 2)]          # narrower on each try", "    s.statement = f\"walk the senders of {s.question}, last {days} days\"", "    s.attempts += 1", "", "", "def answer(s):", "    s.draft = f\"{len(s.rows)} senders, full addresses\"", "", "", "def after_run(s):  # a conditional edge", "    if s.rows:", "        return \"answer\"", "    return \"rewrite\" if s.attempts < 3 else \"report\"  # attempts stops the loop", "", "", "def run_graph(s, save, node=\"generate\"):", "    while True:", "        if node == \"generate\":", "            generate(s); node = \"run\"", "        elif node == \"run\":", "            run_query(s); node = after_run(s)", "        elif node == \"rewrite\":", "            rewrite(s); node = \"run\"", "        elif node == \"answer\":", "            answer(s); node = \"approve\"", "        elif node == \"approve\":", "            if not s.approved:  # interrupt", "                save(s)  # the state waits in the store", "                return \"paused for a human\"", "            return \"END\"", "        elif node == \"report\":", "            return f\"report: gave up after {s.attempts} tries\"", "        save(s)  # a checkpoint per node"], "map": {"1": [2, 7], "2": [13], "3": [17, 41], "5": [22, 23, 33, 43], "6": [27, 45], "4": [30, 31, 32, 33, 41], "7": [47, 48, 49], "8": [50], "9": [53]}, "path": "handbook/code/09-state-graph-hitl/main.py", "cmd": "python3 main.py", "note": "", "alt": {"label": "LangGraph (shape only)", "lines": ["\"\"\"LangGraph shape only. Not run: it needs the langgraph package.", "The runnable version of the same steps is main.py.\"\"\"", "from typing import TypedDict", "from langgraph.graph import StateGraph, END", "from langgraph.checkpoint.postgres import PostgresSaver", "from langgraph.types import interrupt", "", "", "class State(TypedDict):  # typed fields, not chat text", "    statement: str", "    rows: list", "    reason: str", "    attempts: int", "", "", "def approve(state):", "    interrupt({\"draft\": state[\"draft\"]})  # the run stops here", "", "", "def after_run(state) -> str:", "    if state[\"rows\"]:", "        return \"answer\"", "    return \"rewrite\" if state[\"attempts\"] < 3 else \"report\"", "", "", "g = StateGraph(State)", "g.add_node(\"generate\", generate)", "g.add_node(\"run\", run_query)", "g.add_node(\"rewrite\", rewrite)", "g.add_node(\"answer\", answer)", "g.add_node(\"approve\", approve)", "g.set_entry_point(\"generate\")", "g.add_edge(\"generate\", \"run\")", "g.add_conditional_edges(\"run\", after_run)", "g.add_edge(\"rewrite\", \"run\")", "g.add_edge(\"answer\", \"approve\")", "g.add_edge(\"approve\", END)", "app = g.compile(checkpointer=PostgresSaver.from_conn_string(DB_URL))"], "map": {"1": [9, 13], "7": [17, 31], "4": [20, 23, 34], "2": [27], "3": [28], "5": [29, 35], "6": [30], "8": [37], "9": [38]}, "file": "shape_langgraph.py"}},PCS={"ok": [[2, 9], [3], [4], [5, 4], [3, 4], [6, 9], [7], [8]], "bad": [[1], [3, 4], [4], [1, 4], [9], [9]]};
+for(const t in PCS)PCS[t].forEach((p,k)=>{steps[t][k].pc=p;});
+let codeView="pc";
+function cesc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE,pc=(steps[mode][i].pc)||[];
+  const v=(codeView==="alt"&&!c.alt)?"real":codeView;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=cesc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const __render=render;render=function(){__render();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{codeView=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

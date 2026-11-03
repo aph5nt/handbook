@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planner and statistics</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>The planner guesses from statistics</h1>
+  <p class="lede">A report joins <b>transfers</b> to <b>addresses</b>. The optimiser picks between a nested loop and a hash join, using only what the <b>statistics</b> box says. Watch the estimated and actual rows in the bottom bar.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="nostats">No statistics</button>
+    <button role="tab" aria-selected="false" data-mode="analyze">After ANALYZE</button>
+    <button role="tab" aria-selected="false" data-mode="corr">Correlated columns fail</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">SQL text flows through the parser and optimiser, which reads statistics and picks plan A or plan B for the executor</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="sqlb" class="box" data-f="var(--line)" x="20" y="150" width="120" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="sqlb-t" data-t="SQL text" x="80" y="177" text-anchor="middle" font-size="13" fill="var(--fg)">SQL text</text>
+<rect id="parse" class="box" data-f="var(--line)" x="180" y="150" width="110" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="parse-t" data-t="Parser" x="235" y="177" text-anchor="middle" font-size="13" fill="var(--fg)">Parser</text>
+<rect id="opt" class="box" data-f="var(--line)" x="330" y="150" width="140" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="opt-t" data-t="Optimiser" x="400" y="177" text-anchor="middle" font-size="13" fill="var(--fg)">Optimiser</text>
+<rect id="stats" class="box" data-f="var(--line)" x="250" y="26" width="300" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="stats-t" data-t="Statistics" x="400" y="53" text-anchor="middle" font-size="13" fill="var(--fg)">Statistics</text>
+<text id="stats-u" data-t="addresses: no statistics" x="400" y="73" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">addresses: no statistics</text>
+<rect id="pa" class="box" data-f="var(--line)" x="580" y="50" width="300" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="pa-t" data-t="Plan A: nested loop" x="730" y="77" text-anchor="middle" font-size="13" fill="var(--fg)">Plan A: nested loop</text>
+<text id="pa-u" data-t="cost: not scored yet" x="730" y="97" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">cost: not scored yet</text>
+<rect id="pb" class="box" data-f="var(--line)" x="580" y="190" width="300" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="pb-t" data-t="Plan B: hash join" x="730" y="217" text-anchor="middle" font-size="13" fill="var(--fg)">Plan B: hash join</text>
+<text id="pb-u" data-t="cost: not scored yet" x="730" y="237" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">cost: not scored yet</text>
+<rect id="ex" class="box" data-f="var(--line)" x="300" y="278" width="260" height="60" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="ex-t" data-t="Executor" x="430" y="303" text-anchor="middle" font-size="13" fill="var(--fg)">Executor</text>
+<text id="ex-u" data-t="waiting for a plan" x="430" y="323" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">waiting for a plan</text>
+<path id="a1" class="msg" d="M140 172 L176 172" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="a2" class="msg" d="M290 172 L326 172" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="a3" class="msg" d="M400 90 L400 146" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="a4" class="msg" d="M470 162 L576 92" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="a5" class="msg" d="M470 182 L576 216" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="a6" class="msg" d="M580 104 Q 520 210 562 290" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="a7" class="msg" d="M730 254 Q 720 308 564 308" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect x="20" y="352" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="estimated rows: ? · actual rows: ?" x="38" y="378" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)">estimated rows: ? · actual rows: ?</text>
+<text id="sql" data-t="transfers JOIN addresses" x="862" y="377" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)">transfers JOIN addresses</text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-planner-statistics/main.go</code> (<code>go run .</code>). </p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">working on it</span>
+    <span style="--c:var(--ok)">true estimate, good plan</span>
+    <span style="--c:var(--fail)">wrong estimate, bad plan</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>After a bulk load or a new day partition in a warehouse: collect statistics before the first report. StarRocks chooses broadcast or shuffle for <code>swaps JOIN pools</code> from the estimated size of <code>pools</code>. An engine upgrade can change plans, so diff the plans of hot queries.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Run <code>ANALYZE</code> after every load. When a plan is slow, compare estimated with actual rows first. Where two columns move together, such as city and postcode, add multi-column statistics instead of a hint.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No statistics</th><th>Fresh statistics</th><th>Correlated columns</th></tr>
+      <tr><td>The planner believes</td><td>the table is empty</td><td>the true row count</td><td>each filter cuts rows on its own</td></tr>
+      <tr><td>Estimate is</td><td>far too low</td><td>close</td><td>too low, more so after each join</td></tr>
+      <tr><td>Damage</td><td>nested loop on a huge inner side</td><td>none</td><td>wrong join or join order</td></tr>
+      <tr><td>Fix</td><td><code>ANALYZE</code> after every load</td><td>keep it a habit</td><td>multi-column statistics</td></tr>
+      <tr><td>Interview line</td><td colspan=3>"The planner picks from estimates, so a slow plan is usually a wrong guess. I check estimated against actual rows first."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+nostats:[
+ {"t": "A big bulk load, and no ANALYZE", "b": "Last night 30 million rows were bulk loaded into the addresses table. Nobody ran ANALYZE, the command that collects statistics. Now a report joins the 200,000 transfers of 1 October to addresses.", "w": "The planner never looks at the data itself. It only reads the statistics.", "f": {"sqlb": "c"}, "pc": []},
+ {"t": "The parser builds a tree", "b": "The parser turns the SQL text into a tree of operators: scan, filter, join. The tree goes to the optimiser.", "w": "The tree says what to do. How to do it is the optimiser's choice.", "f": {"sqlb": "c", "parse": "c", "opt": "c"}, "on": ["a1", "a2"], "pc": [1, 2]},
+ {"t": "The optimiser reads statistics: there are none", "b": "The cost-based optimiser reads two row counts. Transfers of that day: 200,000, from fresh statistics. Addresses: no statistics row exists, so the count it reads is 0.", "w": "Cardinality, the estimated row count out of each operator, is wrong at the very first leaf.", "f": {"opt": "c", "stats": "f"}, "on": ["a1", "a2", "a3"], "x": {"stats-u": "addresses: 0 rows (never analysed)", "big": "estimated rows of addresses: 0"}, "pc": [3, 4]},
+ {"t": "Two plans are scored", "b": "The cost model counts row touches. Nested loop: 200,000 + 200,000 × 0 = 200,000. Hash join: 200,000 + 2 × 0 + 1,000 to set up the hash = 201,000. The rule is: run the cheaper one. The nested loop wins by 1,000.", "w": "Both scores come from a guess of 0 rows. A wrong input gives a confident wrong answer.", "f": {"opt": "c", "stats": "f", "pa": "c"}, "on": ["a3", "a4", "a5"], "x": {"stats-u": "addresses: 0 rows (never analysed)", "pa-u": "cost: near zero, chosen", "pb-u": "cost: higher, rejected", "big": "estimated rows of addresses: 0"}, "pc": [5, 6, 7]},
+ {"t": "Plan A runs for an hour", "b": "The executor runs the nested loop. For each of the 200,000 transfers it walks the addresses table, which really holds 30 million rows. That is 6 million million row touches, not 200,000.", "w": "Nothing was wrong with the SQL or the index. The guess was wrong, and the query ran for an hour.", "f": {"stats": "f", "pa": "f", "ex": "f"}, "on": ["a6"], "x": {"stats-u": "addresses: 0 rows (never analysed)", "pa-u": "cost: near zero, chosen", "ex-u": "nested loop: running for an hour", "big": "estimated rows: 0 · actual rows: 30,000,000"}, "pc": [8]},
+ {"t": "First check: estimated against actual", "b": "EXPLAIN ANALYZE prints estimated and actual rows side by side. Zero against 30 million is the whole diagnosis.", "w": "A slow plan is usually a wrong guess. Compare estimated with actual rows before anything else.", "f": {"stats": "f", "ex": "f"}, "x": {"stats-u": "addresses: 0 rows (never analysed)", "ex-u": "EXPLAIN ANALYZE: 0 vs 30,000,000", "big": "estimated rows: 0 · actual rows: 30,000,000", "sql": "EXPLAIN ANALYZE …"}, "pc": [9, 10]}
+],
+analyze:[
+ {"t": "Run ANALYZE", "b": "ANALYZE reads a sample of the table. It stores the row count, the distinct values and histograms of values per column.", "w": "It costs one short read. It saves an hour on every query that touches the table.", "f": {"stats": "ok"}, "x": {"stats-u": "addresses: 30,000,000 rows, histograms", "sql": "ANALYZE addresses"}, "pc": [11, 12, 13]},
+ {"t": "Same SQL, real numbers", "b": "The same report runs again. The parser builds the same tree. The optimiser now reads 200,000 for transfers and 30,000,000 for addresses.", "w": "Only the statistics changed. The SQL did not.", "f": {"sqlb": "c", "parse": "c", "opt": "c", "stats": "ok"}, "on": ["a1", "a2", "a3"], "x": {"stats-u": "addresses: 30,000,000 rows, histograms", "big": "estimated rows of addresses: 30,000,000"}, "pc": [1, 2, 3, 4]},
+ {"t": "The scores flip", "b": "Nested loop: 200,000 + 200,000 × 30,000,000 = about 6 million million. Hash join: 200,000 + 2 × 30,000,000 + 1,000 = 60,201,000. The same rule, run the cheaper one, now picks the hash join by a factor of 100,000.", "w": "Same cost model, true input, right answer.", "f": {"opt": "c", "stats": "ok", "pb": "ok"}, "on": ["a3", "a4", "a5"], "x": {"stats-u": "addresses: 30,000,000 rows, histograms", "pa-u": "cost: very high, rejected", "pb-u": "cost: low, chosen", "big": "estimated rows of addresses: 30,000,000"}, "pc": [5, 6, 7]},
+ {"t": "The hash join runs in seconds", "b": "The executor reads addresses once into a hash table keyed by address. Then each transfer looks up its address in one step.", "w": "Estimated rows match actual rows, so every operator above them is sized right.", "f": {"stats": "ok", "pb": "ok", "ex": "ok"}, "on": ["a7"], "x": {"stats-u": "addresses: 30,000,000 rows, histograms", "pb-u": "cost: low, chosen", "ex-u": "hash join: seconds", "big": "estimated rows: 30,000,000 · actual rows: 30,000,000"}, "pc": [8]},
+ {"t": "Make it a habit", "b": "Analyse after every bulk load, and collect statistics for each new day partition in a warehouse. After an engine upgrade, diff the plans of hot queries, because plans can change.", "w": "Fresh statistics are cheap. A table nobody analysed is the first suspect for a slow plan.", "f": {"stats": "ok", "ex": "ok"}, "x": {"stats-u": "refreshed after every load", "ex-u": "hash join: seconds", "big": "analyse after every load", "sql": "ANALYZE after load"}, "pc": [11, 12]}
+],
+corr:[
+ {"t": "Two filters that move together", "b": "A users table has 30 million rows. Statistics say one user in 10 lives in Warsaw, and one in 1,000 has postcode 00-950.", "w": "Every postcode 00-950 is in Warsaw. Statistics kept per column cannot know that.", "f": {"stats": "c"}, "x": {"stats-u": "Warsaw: 1 in 10 · 00-950: 1 in 1,000", "sql": "city='Warsaw' AND postcode='00-950'"}, "pc": [1]},
+ {"t": "The planner multiplies", "b": "The planner assumes the two filters are independent. So it multiplies: 30 million times one tenth times one thousandth is 3,000 rows.", "w": "Multiplying is right only when the columns are unrelated.", "f": {"stats": "c", "opt": "c"}, "on": ["a3"], "x": {"stats-u": "Warsaw: 1 in 10 · 00-950: 1 in 1,000", "big": "estimate: 30M × 1/10 × 1/1,000 = 3,000", "sql": "city='Warsaw' AND postcode='00-950'"}, "pc": [2, 3, 4, 5]},
+ {"t": "The real count is ten times more", "b": "Every 00-950 user lives in Warsaw, so the city filter removes nobody. The true count is 30 million times one thousandth: 30,000 rows.", "w": "Correlated columns make the planner under-estimate.", "f": {"stats": "f", "opt": "f"}, "on": ["a3"], "x": {"stats-u": "Warsaw: 1 in 10 · 00-950: 1 in 1,000", "big": "estimated 3,000 · actual 30,000: 10 times off"}, "pc": [5]},
+ {"t": "The error compounds in the join", "b": "These rows then join to their transfers. The join estimate is built on the wrong 3,000, and a second misjudged filter multiplies the error again.", "w": "Estimates compound. A 10 times error on one filter becomes 100 times after a join.", "f": {"opt": "f", "pa": "c"}, "on": ["a4", "a5"], "x": {"pa-u": "chosen: the inner side looks small", "pb-u": "rejected", "big": "after the join: about 100 times off"}, "pc": [4, 5]},
+ {"t": "The wrong plan runs", "b": "The nested loop was chosen for a small inner side. The inner side is a hundred times bigger than planned.", "w": "One bad guess low in the tree breaks every operator above it.", "f": {"pa": "f", "ex": "f"}, "on": ["a6"], "x": {"pa-u": "chosen: the inner side looks small", "ex-u": "nested loop on the real rows: slow", "big": "estimated far below actual"}, "pc": [5]},
+ {"t": "Fix: multi-column statistics", "b": "Tell the planner the columns move together. In PostgreSQL: CREATE STATISTICS s (dependencies) ON city, postcode FROM users, then ANALYZE.", "w": "Now the estimate matches, and the hash join wins.", "f": {"stats": "ok", "opt": "ok", "pb": "ok", "ex": "ok"}, "on": ["a3", "a5", "a7"], "x": {"stats-u": "city and postcode stored together", "pb-u": "cost: low, chosen", "ex-u": "hash join: seconds", "big": "estimated 30,000 · actual 30,000", "sql": "CREATE STATISTICS ON city, postcode"}, "pc": [6, 7, 8]}
+]
+};
+const base={};
+const code={
+"nostats":{
+ label:"SQL",
+ pc:["plan(sql):", "  tree = parse(sql)                     # scan, join, group", "  n_out = stats.rows(transfers)         # 200,000 for 1 October", "  n_in  = stats.rows(addresses)         # 0 when never analysed", "  cost_nl   = n_out + n_out * n_in      # walk the inner side per outer row", "  cost_hash = n_out + 2 * n_in + 1000   # build a hash once, probe once", "  plan = the cheaper of the two", "  run(plan)", "explain_analyze(plan):", "  print estimated rows next to actual rows, per operator", "analyze(table):", "  stats.rows(table) = row count from a sample", "  stats.histogram(table, column) = buckets from a sample"],
+ real:["-- the report", "SELECT a.label, sum(t.amount)", "FROM   transfers t", "JOIN   addresses a ON a.address = t.to_address", "WHERE  t.block_day = '2026-10-01'", "GROUP  BY a.label;", "", "-- EXPLAIN ANALYZE, the shape it prints", "EXPLAIN ANALYZE SELECT ...;", "-- Nested Loop        est rows 200,000", "--   Scan transfers   est 200,000   actual 200,000", "--   Scan addresses   est 0         actual 30,000,000  loops 200,000", "", "-- statistics that exist for addresses: none", "SELECT count(*) FROM pg_stats WHERE tablename = 'addresses';  -- 0"],
+ map:{"1": [1, 2, 3, 4, 5, 6], "2": [2, 3, 4, 5, 6], "3": [5, 11], "4": [12, 14, 15], "5": [10, 12], "6": [10], "7": [10], "8": [10, 11, 12], "9": [9], "10": [11, 12]}},
+"analyze":{
+ label:"SQL",
+ pc:["plan(sql):", "  tree = parse(sql)                     # scan, join, group", "  n_out = stats.rows(transfers)         # 200,000 for 1 October", "  n_in  = stats.rows(addresses)         # 0 when never analysed", "  cost_nl   = n_out + n_out * n_in      # walk the inner side per outer row", "  cost_hash = n_out + 2 * n_in + 1000   # build a hash once, probe once", "  plan = the cheaper of the two", "  run(plan)", "explain_analyze(plan):", "  print estimated rows next to actual rows, per operator", "analyze(table):", "  stats.rows(table) = row count from a sample", "  stats.histogram(table, column) = buckets from a sample"],
+ real:["-- collect statistics after the bulk load", "ANALYZE addresses;", "SELECT count(*) FROM pg_stats WHERE tablename = 'addresses';  -- one row per column", "", "-- the report", "SELECT a.label, sum(t.amount)", "FROM   transfers t", "JOIN   addresses a ON a.address = t.to_address", "WHERE  t.block_day = '2026-10-01'", "GROUP  BY a.label;", "", "EXPLAIN ANALYZE SELECT ...;", "-- Hash Join          est rows 200,000", "--   Hash Cond: t.to_address = a.address", "--   Scan transfers   est 200,000      actual 200,000", "--   Hash", "--     Scan addresses est 30,000,000   actual 30,000,000"],
+ map:{"1": [5, 6, 7, 8, 9, 10], "2": [6, 7, 8, 9, 10], "3": [15], "4": [17], "5": [13], "6": [13, 14, 16], "7": [13], "8": [13, 14, 15, 16, 17], "9": [12], "10": [15, 17], "11": [2], "12": [2, 3], "13": [2, 3]}},
+"corr":{
+ label:"SQL",
+ pc:["estimate(table, filters):", "  sel = 1", "  for f in filters:", "    sel = sel * stats.selectivity(f)    # Warsaw 1/10, 00-950 1/1,000", "  return stats.rows(table) * sel        # 30M x 1/10 x 1/1,000 = 3,000", "with dependency statistics:", "  if stats.depends(postcode, city):     # every 00-950 is in Warsaw", "    skip the city factor                # 30M x 1/1,000 = 30,000"],
+ real:["-- the filter", "SELECT * FROM users", "WHERE  city = 'Warsaw' AND postcode = '00-950';", "", "-- EXPLAIN ANALYZE before", "-- Scan users   est rows 3,000    actual rows 30,000", "", "-- the fix: tell the planner the two columns move together", "CREATE STATISTICS users_city_post (dependencies)", "  ON city, postcode FROM users;", "ANALYZE users;", "", "-- EXPLAIN ANALYZE after", "-- Scan users   est rows 30,000   actual rows 30,000"],
+ map:{"1": [2, 3], "2": [3], "3": [3], "4": [3, 6], "5": [6], "6": [9, 10, 11], "7": [9, 10, 11], "8": [14]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

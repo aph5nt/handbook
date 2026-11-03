@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event-driven architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Event-driven architecture</h1>
+  <p class="lede">The indexer writes rows and moves a checkpoint forward. The graph sync reads from its own position. Later a validator joins as a second reader, and the indexer does not change at all. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="add" id="tab-add">Add a reader</button>
+    <button role="tab" aria-selected="false" data-mode="reset" id="tab-reset">Bad rows and the reset</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">The indexer writes rows and a checkpoint; the graph sync and the validator each read from their own position</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-ed">
+          <g class="node" id="n-ix" data-c="c"><rect class="box" id="r-ix" x="20" y="150" width="170" height="70" rx="8"/><text id="t-ixl" x="105.0" y="182" text-anchor="middle" font-size="15">Indexer</text><text id="t-ixs" x="105.0" y="198" text-anchor="middle" font-size="12" font-weight="400">wrote up to 9400</text></g>
+          <g class="node" id="n-rows" data-c="v"><rect class="box" id="r-rows" x="250" y="140" width="210" height="90" rx="8"/><text id="t-rowsl" x="355.0" y="182" text-anchor="middle" font-size="15">Rows + checkpoint</text><text id="t-rowss" x="355.0" y="198" text-anchor="middle" font-size="12" font-weight="400">checkpoint: 9400</text></g>
+          <g class="node" id="n-gs" data-c="c"><rect class="box" id="r-gs" x="540" y="60" width="190" height="70" rx="8"/><text id="t-gsl" x="635.0" y="92" text-anchor="middle" font-size="15">Graph sync</text><text id="t-gss" x="635.0" y="108" text-anchor="middle" font-size="12" font-weight="400">position: 9400</text></g>
+          <g class="node" id="n-va" data-c="h"><rect class="box" id="r-va" x="540" y="250" width="190" height="70" rx="8"/><text id="t-val" x="635.0" y="282" text-anchor="middle" font-size="15">Validator</text><text id="t-vas" x="635.0" y="298" text-anchor="middle" font-size="12" font-weight="400">position: 9300</text></g>
+          <g class="node" id="n-gr" data-c="v"><rect class="box" id="r-gr" x="780" y="60" width="100" height="70" rx="8"/><text id="t-grl" x="830.0" y="100" text-anchor="middle" font-size="15">Graph</text></g>
+          <g class="arrow" id="a-w" data-c="ok"><path class="route" d="M190 185 L246 185" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-rg" data-c="x"><path class="route" d="M460 170 C500 170 500 95 536 95" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-rv" data-c="x"><path class="route" d="M460 200 C500 200 500 285 536 285" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-gg" data-c="x"><path class="route" d="M730 95 L776 95" marker-end="url(#arr)"/></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-event-driven/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a producer or a consumer</span>
+    <span style="--c:var(--svc)">stored rows or graph</span>
+    <span style="--c:var(--ok)">moving forward</span>
+    <span style="--c:var(--wait)">crashed, reading again</span>
+    <span style="--c:var(--fail)">bad data</span>
+    <span style="--c:var(--undo)">rewound</span>
+    <span style="--c:var(--line)">stopped</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a checkpoint table</h2>
+      <p>A Go indexer writes rows to StarRocks and moves a checkpoint row. Each reader stores its own position. Kafka does the same with a consumer group offset. The practical choice: make every consumer idempotent, because a restart will read some rows again.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: the outbox and sagas</h2>
+      <p>The outbox pattern writes the event in the same database transaction as the change, so the two never disagree. Choreography suits a few steps. When the flow needs a visible owner, use an orchestrator (a saga). Draw the flow: the code will not show it.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Event-driven</th><th>Direct calls</th></tr>
+      <tr><td>Producer knows the consumers</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Add a consumer</td><td>No change to the producer</td><td>Change the caller</td></tr>
+      <tr><td>A slow consumer</td><td>Falls behind on its own</td><td>Slows the caller</td></tr>
+      <tr><td>Delivery</td><td>At least once, so idempotent</td><td>Once per call, with retries</td></tr>
+      <tr><td>Ordering</td><td>Per key, not global</td><td>The call order</td></tr>
+      <tr><td>A bad fact</td><td>Reaches every consumer, so a reset rewinds all</td><td>Reaches only the caller</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Producers publish facts and never wait, so consumers must be idempotent and a reset rewinds everyone."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+add:[
+ {"t": "The indexer writes rows and a checkpoint", "b": "The indexer decodes blocks up to 9400 and writes one row per block. Only then does it move the checkpoint to 9400. The graph sync keeps its own position, also 9400.", "w": "The checkpoint says: everything up to here is written. That is the fact being published.", "m": "readers: 1", "pc": [1, 2, 3]},
+ {"t": "The producer moves on, alone", "b": "write runs from the checkpoint plus 1 to 9506: 106 blocks. Then the checkpoint becomes 9506. No line in write calls a reader. The indexer does not know who reads.", "w": "The producer never waits for a consumer. A slow reader cannot slow the writer.", "n": {"ix": "ok"}, "x": {"ixs": "wrote up to 9506", "rowss": "checkpoint: 9506"}, "pc": [2, 3]},
+ {"t": "The graph sync reads from its own position", "b": "read starts after the graph sync's own position, 9400. It takes blocks 9401 to 9506, 106 blocks, and projects them into the graph. Then it saves position 9506.", "w": "Each consumer owns its position. That lets each one go at its own pace.", "n": {"gs": "ok"}, "a": {"rg": "ok", "gg": "ok"}, "x": {"gss": "position: 9506"}, "pc": [4, 5, 6, 7]},
+ {"t": "A validator joins", "b": "Later a validator is added as a second reader. It gets its own position, 9300. Nothing in write changed, so the indexer did not change at all.", "w": "Adding a consumer cost the producer nothing. That is the point of event-driven design.", "n": {"va": "c", "ix": "c"}, "a": {"rv": "c"}, "x": {"ixs": "no change"}, "m": "readers: 2", "pc": [3, 4]},
+ {"t": "A crash, and some rows arrive twice", "b": "The validator checks blocks 9301 to 9400, 100 blocks. It crashes before the line that saves its position. So its position is still 9300. On restart, read starts at 9301 again, and those 100 blocks arrive a second time.", "w": "Delivery is at least once. Every consumer must expect repeats.", "n": {"va": "w"}, "a": {"rv": "w"}, "x": {"vas": "crashed, re-reads from 9301"}, "pc": [7]},
+ {"t": "Both readers caught up", "b": "The validator reaches 9506. It had 306 deliveries for 206 distinct blocks: 100 repeats. Its store is keyed by block, so a repeat writes the same value again. Wrong values: 0.", "w": "A check that runs twice gives the same answer. That is idempotency. A replay is only moving a consumer's position back.", "n": {"va": "ok"}, "a": {"rv": "ok"}, "x": {"vas": "position: 9506"}, "m": "indexer 9506, graph sync 9506, validator 9506", "pc": [6, 7]}
+],
+reset:[
+ {"t": "A decoder bug writes bad rows", "b": "A bug in decode returns wrong values for blocks 9500 to 9506: 7 blocks. write does not know. It still moves the checkpoint to 9506.", "w": "The bad rows are now a published fact. Every reader trusts them.", "n": {"ix": "f", "rows": "f", "va": "c"}, "a": {"rg": "ok", "rv": "ok", "gg": "ok"}, "x": {"ixs": "decoder bug", "rowss": "9500 to 9506: bad rows", "gss": "position: 9506", "vas": "position: 9506"}, "m": "bad blocks: 9500 to 9506", "pc": [8, 3]},
+ {"t": "Every reader already consumed them", "b": "The graph sync and the validator each read up to 9506 and saved that position. Each now holds 7 wrong blocks. Both positions are past the bad blocks.", "w": "A bad fact spreads to every consumer before anyone notices.", "n": {"gs": "f", "gr": "f", "va": "f"}, "a": {"rg": "f", "rv": "f", "gg": "f"}, "m": "wrong blocks: graph 7, validator 7", "pc": [5, 6, 7]},
+ {"t": "Wrong fix: repair the rows in place", "b": "The decoder is fixed. The indexer writes on to 9600, and both readers follow to 9600. Then rows 9500 to 9506 are rewritten in place. read only takes blocks after its position, 9600. So it never reads 9500 again, and the graph keeps 7 wrong blocks.", "w": "The writer that passed never comes back, and the reader that read the bad rows never rewinds. The graph stays wrong for good.", "n": {"ix": "ok", "rows": "w", "va": "ok"}, "a": {"rg": "ok", "rv": "ok"}, "x": {"ixs": "kept writing, now 9600", "rowss": "9500 to 9506 rewritten", "gss": "position: 9600, graph wrong", "vas": "position: 9600"}, "m": "graph wrong blocks: 7", "pc": [10, 5]},
+ {"t": "Right fix: stop every writer and every reader", "b": "From that state, the indexer, the graph sync and the validator all stop. The rows are right now, but the graph still holds 7 wrong blocks. Nothing reads or writes while the fix runs.", "w": "A reset stops everyone. A fix made while one part still runs is a new problem.", "n": {"ix": "o", "gs": "o", "va": "o", "rows": "w"}, "a": {"w": "x", "rg": "x", "rv": "x", "gg": "x"}, "x": {"ixs": "stopped", "gss": "stopped", "vas": "stopped", "rowss": "rows after 9499: redo"}, "m": "running: nothing", "pc": [12]},
+ {"t": "Rewind everyone together", "b": "reset deletes the rows after 9499: 101 blocks, 9500 to 9600. The checkpoint goes back to 9499. Each reader drops what it built after 9499, and its position becomes 9499.", "w": "Rewinding is moving positions back. It works only if all of them move together.", "n": {"rows": "u", "gr": "u"}, "x": {"rowss": "checkpoint: 9499", "gss": "rewound to 9499", "vas": "rewound to 9499"}, "m": "every position: 9499", "pc": [13, 14]},
+ {"t": "Start together, read the right rows", "b": "The indexer writes 9500 to 9600 with the fixed decoder. Both readers read from 9499 to 9600. The graph now holds 0 wrong blocks.", "w": "A reset rewinds everyone, then lets the producer and every consumer move forward together.", "n": {"ix": "ok", "rows": "v", "gs": "ok", "va": "ok", "gr": "v"}, "a": {"w": "ok", "rg": "ok", "rv": "ok", "gg": "ok"}, "x": {"ixs": "fixed decoder", "rowss": "checkpoint: 9600", "gss": "position: 9600", "vas": "position: 9600"}, "m": "indexer 9600, graph sync 9600, validator 9600", "pc": [15]}
+]};
+const SCENE={"add": "ed", "reset": "ed"};
+const CODE={
+ add:{label:"Go",why:"",
+  pc:[
+   "write(to):                                    # the indexer",
+   "  for each block b after the checkpoint, up to to: rows[b] = decode(b)",
+   "  checkpoint = to                             # no call to any reader",
+   "read(reader, stop):                           # each reader, alone",
+   "  for each block b after reader.position, up to stop and the checkpoint:",
+   "    store[b] = rows[b]                        # keyed by block: a repeat is harmless",
+   "  save reader.position = stop                 # a crash skips this line",
+   "decode(b): a wrong value if the decoder bug touches b",
+   "# wrong fix: rewrite rows in place while everyone runs",
+   "for b in 9500..9506: rows[b] = the right value  # readers past 9506 never come back",
+   "# right fix: the reset",
+   "stop the indexer, the graph sync and the validator",
+   "delete rows after 9499, checkpoint = 9499",
+   "every reader: drop what it built after 9499, position = 9499",
+   "start all: write(9600), then each reader read(9600)"],
+  real:[
+   "func (ix *Indexer) decode(block int) int {",
+   "\tif block >= ix.bugFrom && block <= ix.bugTo {",
+   "\t\treturn -1 // the bug: a wrong row",
+   "\t}",
+   "\treturn correct(block)",
+   "}",
+   "",
+   "func (ix *Indexer) write(log *Log, to int) {",
+   "\tfor b := log.checkpoint + 1; b <= to; b++ {",
+   "\t\tlog.rows[b] = ix.decode(b)",
+   "\t}",
+   "\tlog.checkpoint = to // then the checkpoint: all up to here is written",
+   "}",
+   "",
+   "func (r *Reader) read(log *Log, stop int, crash bool) {",
+   "\tfor b := r.position + 1; b <= stop && b <= log.checkpoint; b++ {",
+   "\t\tr.store[b] = log.rows[b] // same block, same value: a repeat is harmless",
+   "\t\tr.reads++",
+   "\t}",
+   "\tif !crash { // a crash skips the save",
+   "\t\tr.position = min(stop, log.checkpoint) // save my own position",
+   "\t}",
+   "}",
+   "",
+   "func reset(log *Log, to int, readers ...*Reader) (deleted int) {",
+   "\tfor b := range log.rows {",
+   "\t\tif b > to {",
+   "\t\t\tdelete(log.rows, b)",
+   "\t\t\tdeleted++",
+   "\t\t}",
+   "\t}",
+   "\tlog.checkpoint = to",
+   "\tfor _, r := range readers {",
+   "\t\tfor b := range r.store {",
+   "\t\t\tif b > to {",
+   "\t\t\t\tdelete(r.store, b)",
+   "\t\t\t}",
+   "\t\t}",
+   "\t\tr.position = to",
+   "\t}",
+   "\treturn",
+   "}"],
+  map:{"12": [25, 33], "10": [10], "1": [8], "2": [9, 10, 11], "3": [12], "4": [15], "5": [16], "6": [17, 18], "7": [20, 21, 22], "8": [1, 2, 3, 4, 5], "13": [25, 26, 27, 28, 29, 30, 31, 32], "14": [33, 34, 35, 36, 37, 38, 39, 40], "15": [8, 15]}},
+ reset:{label:"Go",why:"",
+  pc:[
+   "write(to):                                    # the indexer",
+   "  for each block b after the checkpoint, up to to: rows[b] = decode(b)",
+   "  checkpoint = to                             # no call to any reader",
+   "read(reader, stop):                           # each reader, alone",
+   "  for each block b after reader.position, up to stop and the checkpoint:",
+   "    store[b] = rows[b]                        # keyed by block: a repeat is harmless",
+   "  save reader.position = stop                 # a crash skips this line",
+   "decode(b): a wrong value if the decoder bug touches b",
+   "# wrong fix: rewrite rows in place while everyone runs",
+   "for b in 9500..9506: rows[b] = the right value  # readers past 9506 never come back",
+   "# right fix: the reset",
+   "stop the indexer, the graph sync and the validator",
+   "delete rows after 9499, checkpoint = 9499",
+   "every reader: drop what it built after 9499, position = 9499",
+   "start all: write(9600), then each reader read(9600)"],
+  real:[
+   "func (ix *Indexer) decode(block int) int {",
+   "\tif block >= ix.bugFrom && block <= ix.bugTo {",
+   "\t\treturn -1 // the bug: a wrong row",
+   "\t}",
+   "\treturn correct(block)",
+   "}",
+   "",
+   "func (ix *Indexer) write(log *Log, to int) {",
+   "\tfor b := log.checkpoint + 1; b <= to; b++ {",
+   "\t\tlog.rows[b] = ix.decode(b)",
+   "\t}",
+   "\tlog.checkpoint = to // then the checkpoint: all up to here is written",
+   "}",
+   "",
+   "func (r *Reader) read(log *Log, stop int, crash bool) {",
+   "\tfor b := r.position + 1; b <= stop && b <= log.checkpoint; b++ {",
+   "\t\tr.store[b] = log.rows[b] // same block, same value: a repeat is harmless",
+   "\t\tr.reads++",
+   "\t}",
+   "\tif !crash { // a crash skips the save",
+   "\t\tr.position = min(stop, log.checkpoint) // save my own position",
+   "\t}",
+   "}",
+   "",
+   "func reset(log *Log, to int, readers ...*Reader) (deleted int) {",
+   "\tfor b := range log.rows {",
+   "\t\tif b > to {",
+   "\t\t\tdelete(log.rows, b)",
+   "\t\t\tdeleted++",
+   "\t\t}",
+   "\t}",
+   "\tlog.checkpoint = to",
+   "\tfor _, r := range readers {",
+   "\t\tfor b := range r.store {",
+   "\t\t\tif b > to {",
+   "\t\t\t\tdelete(r.store, b)",
+   "\t\t\t}",
+   "\t\t}",
+   "\t\tr.position = to",
+   "\t}",
+   "\treturn",
+   "}"],
+  map:{"12": [25, 33], "10": [10], "1": [8], "2": [9, 10, 11], "3": [12], "4": [15], "5": [16], "6": [17, 18], "7": [20, 21, 22], "8": [1, 2, 3, 4, 5], "13": [25, 26, 27, 28, 29, 30, 31, 32], "14": [33, 34, 35, 36, 37, 38, 39, 40], "15": [8, 15]}}};
+let mode="add";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

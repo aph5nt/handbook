@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join order and hints</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Join order and join hints: keep every middle result small</h1>
+  <p class="lede">A report joins <b>swaps</b>, <b>pools</b> and <b>tokens</b>, filtered to one day of swaps. Watch the bar: it is the size of the middle result after the first join.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good">Selective table first</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Wrong order fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Three tables feeding two joins and a result, with a bar for the middle result size</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="sw" class="box" data-f="var(--line)" x="30" y="40" width="180" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="sw-t" data-t="swaps" x="120" y="63" text-anchor="middle" font-size="13" fill="var(--fg)">swaps</text>
+<text id="sw-u" data-t="filtered to one day" x="120" y="83" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">filtered to one day</text>
+<rect id="po" class="box" data-f="var(--line)" x="30" y="140" width="180" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="po-t" data-t="pools" x="120" y="163" text-anchor="middle" font-size="13" fill="var(--fg)">pools</text>
+<text id="po-u" data-t="all pools" x="120" y="183" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">all pools</text>
+<rect id="tk" class="box" data-f="var(--line)" x="30" y="240" width="180" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="tk-t" data-t="tokens" x="120" y="263" text-anchor="middle" font-size="13" fill="var(--fg)">tokens</text>
+<text id="tk-u" data-t="all tokens" x="120" y="283" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">all tokens</text>
+<rect id="j1" class="box" data-f="var(--line)" x="330" y="80" width="200" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="j1-t" data-t="join 1" x="430" y="103" text-anchor="middle" font-size="13" fill="var(--fg)">join 1</text>
+<text id="j1-u" data-t="" x="430" y="123" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="j2" class="box" data-f="var(--line)" x="330" y="210" width="200" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="j2-t" data-t="join 2" x="430" y="233" text-anchor="middle" font-size="13" fill="var(--fg)">join 2</text>
+<text id="j2-u" data-t="" x="430" y="253" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<rect id="out" class="box" data-f="var(--line)" x="650" y="145" width="200" height="56" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="out-t" data-t="result" x="750" y="168" text-anchor="middle" font-size="13" fill="var(--fg)">result</text>
+<text id="out-u" data-t="" x="750" y="188" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)"></text>
+<path id="g1" class="msg" d="M210 68 L326 100" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="g2" class="msg" d="M210 168 L326 118" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="g3" class="msg" d="M430 136 L430 206" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="g4" class="msg" d="M210 268 L326 240" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="g5" class="msg" d="M530 238 L646 176" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="b1" class="msg" d="M210 168 L326 104" stroke="var(--fail)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="b2" class="msg" d="M210 262 L326 126" stroke="var(--fail)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="b4" class="msg" d="M210 72 L326 226" stroke="var(--fail)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text x="330" y="316" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">size of the middle result after join 1</text>
+<rect x="330" y="324" width="540" height="22" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="mr" class="box" data-f="var(--ok)" data-a='{"width":"0"}' x="330" y="324" width="0" height="22" rx="4" fill="var(--ok)"/>
+<rect x="20" y="362" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="388" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="387" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-join-order/main.go</code> (<code>go run .</code>). It scores all 6 orders in memory with the estimated and the true row counts.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">input table</span>
+    <span style="--c:var(--ok)">small and fast</span>
+    <span style="--c:var(--wait)">misjudged or stale</span>
+    <span style="--c:var(--fail)">large middle result</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>StarRocks: <code>JOIN [broadcast]</code> or <code>[shuffle]</code> on a join whose estimate is known to be wrong. PostgreSQL with 10 or more joined tables: past <code>join_collapse_limit</code> it stops searching every order. ORM queries joining many tables: read the order in the plan, not in the code.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Fix the estimate first: collect statistics for the new partition. Use a hint only as a dated, commented exception, and diff the plan whenever data or the engine changes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Planner chooses</th><th>Hint chooses</th></tr>
+      <tr><td>Adapts to data</td><td>yes, through statistics</td><td>no, frozen</td></tr>
+      <tr><td>Fails when</td><td>an estimate is wrong</td><td>the data changes</td></tr>
+      <tr><td>Fix lives in</td><td>statistics, histograms</td><td>the SQL text</td></tr>
+      <tr><td>Use for</td><td>everything by default</td><td>a known, documented exception</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"Join order decides the size of every middle result, so the selective table goes first, and a hint is the last resort, not the fix."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+good:[
+ {"t": "Three tables, many orders", "b": "A report joins swaps, pools and tokens, filtered to 1 October. swaps holds 2,000,000,000 rows, that day 3,000,000. pools has 50,000, tokens 20,000. The planner scores every order and keeps the cheapest.", "w": "N tables have N! orders: 3 give 6, 10 give over 3 million. Big searches are cut short.", "f": {"sw": "c", "po": "c", "tk": "c"}, "x": {"big": "3 tables: 3! = 6 possible orders", "sql": "WHERE swaps.day = '2026-10-01'"}, "pc": [1, 2, 3]},
+ {"t": "Selective table first", "b": "The cost of a join is rows in on both sides plus rows out. swaps carries both keys, pool and token_in, so a join with swaps gives one row per swap: 3,000,000. Order swaps, pools, tokens scores 12,070,000.", "w": "The goal of join order: keep every middle result small.", "f": {"sw": "ok"}, "x": {"j1-t": "join 1: swaps ⋈ pools", "j2-t": "join 2: + tokens", "big": "start with the smallest filtered input"}, "pc": [11, 12]},
+ {"t": "Join pools", "b": "Join 1: 3,000,000 swaps + 50,000 pools in, 3,000,000 rows out. The smaller side, pools, builds the hash table. The swaps probe it.", "w": "The middle result is about the size of the filtered swaps.", "f": {"sw": "ok", "po": "c", "j1": "ok", "mr": "ok"}, "on": ["g1", "g2"], "a": {"mr": {"width": "70"}}, "x": {"j1-t": "join 1: swaps ⋈ pools", "j2-t": "join 2: + tokens", "j1-u": "3,000,000 rows", "big": "middle result: small"}, "pc": [4, 5, 6, 7, 8]},
+ {"t": "Join tokens", "b": "Join 2: 3,000,000 + 20,000 in, 3,000,000 out. Total 6,050,000 + 6,020,000 = 12,070,000.", "w": "Each join stays the size of the slice you started with.", "f": {"sw": "ok", "j1": "ok", "tk": "c", "j2": "ok", "mr": "ok"}, "on": ["g1", "g2", "g3", "g4"], "a": {"mr": {"width": "70"}}, "x": {"j1-t": "join 1: swaps ⋈ pools", "j2-t": "join 2: + tokens", "j1-u": "3,000,000 rows", "j2-u": "small", "big": "still small"}, "pc": [5, 6, 7, 8]},
+ {"t": "Seconds", "b": "The two orders that join pools to tokens first score 2,006,070,000. The rule keeps the cheapest, 12,070,000, about 166 times less work.", "w": "Order the joins by selectivity, and the big tables are only probed, never multiplied.", "f": {"sw": "ok", "j1": "ok", "j2": "ok", "out": "ok", "mr": "ok"}, "on": ["g1", "g2", "g3", "g4", "g5"], "a": {"mr": {"width": "70"}}, "x": {"j1-t": "join 1: swaps ⋈ pools", "j2-t": "join 2: + tokens", "j1-u": "3,000,000 rows", "j2-u": "small", "out-u": "seconds", "big": "every middle result small"}, "pc": [9, 10]}
+],
+bad:[
+ {"t": "The day filter is misjudged", "b": "The statistics for the new day partition were never collected. With no row count, the planner uses a default guess: 1,500,000,000 rows for that day. The truth is 3,000,000.", "w": "One wrong estimate decides the order of every join.", "f": {"sw": "w"}, "x": {"j1-t": "join 1: pools ⋈ tokens", "j2-t": "join 2: + swaps", "sw-u": "est 1.5 billion, true 3M", "big": "swaps looks big to the planner"}, "pc": [11, 13]},
+ {"t": "It joins pools to tokens first", "b": "Scored with the guess, swaps first costs 6,000,070,000. pools and tokens share no key, so joining them first is a cross product: 50,000 × 20,000 = 1,000,000,000 rows. That order scores 5,000,070,000, so the cheapest-wins rule picks it.", "w": "The middle result is far bigger than either input.", "f": {"sw": "w", "po": "c", "tk": "c", "j1": "f", "mr": "f"}, "on": ["b1", "b2"], "a": {"mr": {"width": "540"}}, "x": {"j1-t": "join 1: pools ⋈ tokens", "j2-t": "join 2: + swaps", "sw-u": "est 1.5 billion, true 3M", "j1-u": "1,000,000,000 rows", "big": "middle result: large"}, "pc": [3, 4, 5, 6, 7, 9, 10]},
+ {"t": "Then swaps, against the big result", "b": "Then the 3,000,000 real swaps probe the 1,000,000,000-row middle result. The true cost is 2,006,070,000, 166 times the good order. The SQL did not change.", "w": "The report runs for minutes. The SQL did not change.", "f": {"sw": "w", "j1": "f", "j2": "f", "out": "f", "mr": "f"}, "on": ["b1", "b2", "g3", "b4", "g5"], "a": {"mr": {"width": "540"}}, "x": {"j1-t": "join 1: pools ⋈ tokens", "j2-t": "join 2: + swaps", "j1-u": "1,000,000,000 rows", "j2-u": "large probe", "out-u": "minutes", "big": "minutes, same SQL"}, "pc": [5, 6, 7, 8]},
+ {"t": "A hint forces the order", "b": "The hint LEADING(swaps pools tokens) skips the search. The order is fixed, so the true cost is 12,070,000 again. Next: ANALYZE the day partition, so the search is right on its own.", "w": "A hint fixes this query today. It does not fix the wrong estimate.", "f": {"sw": "ok", "j1": "ok", "j2": "ok", "out": "ok", "mr": "ok"}, "on": ["g1", "g2", "g3", "g4", "g5"], "a": {"mr": {"width": "70"}}, "x": {"j1-t": "join 1: swaps ⋈ pools", "j2-t": "join 2: + tokens", "j1-u": "3,000,000 rows", "out-u": "seconds", "sql": "/*+ LEADING(swaps pools tokens) */", "big": "fast again, by force"}, "pc": [14, 15]},
+ {"t": "The hint outlives its reason", "b": "A year later swaps per day has grown and tokens has shrunk. The forced order is now the slow one, and nobody remembers why the hint is there.", "w": "Repair statistics first. Keep a hint only as a dated, commented exception with the plan diff in its ticket.", "f": {"sw": "w", "j1": "w", "j2": "w", "mr": "w"}, "on": ["g1", "g2", "g3", "g4", "g5"], "a": {"mr": {"width": "300"}}, "x": {"j1-t": "join 1: swaps ⋈ pools", "j2-t": "join 2: + tokens", "j1-u": "forced, no longer best", "sql": "/*+ LEADING(...) */ since 2025", "big": "a frozen choice goes stale"}, "pc": [14, 15]}
+]
+};
+const base={};
+const code={
+"good":{
+ label:"SQL",
+ pc:["choose_order(tables):", "  best = none", "  for order in all orders of tables:      # 3 tables: 6 orders", "    rows = est_rows(order[0]); cost = 0", "    for next in order[1:]:", "      out = join_size(rows, next)         # no shared key: rows x next", "      cost += rows + est_rows(next) + out", "      rows = out", "    if cost < best.cost: best = order", "  return best", "est_rows(swaps where day = d):", "  if partition d has statistics: its row count     # 3,000,000", "  else: a default guess                            # 1,500,000,000", "with a hint LEADING(a b c):", "  return [a, b, c]                        # no search, frozen"],
+ real:["SELECT t.symbol, p.dex, sum(s.amount_usd)", "FROM   swaps s", "JOIN   pools  p ON p.pool  = s.pool", "JOIN   tokens t ON t.token = s.token_in", "WHERE  s.block_day = '2026-10-01'", "GROUP  BY t.symbol, p.dex;", "", "-- statistics exist for the day partition", "ANALYZE TABLE swaps PARTITION (p20261001);", "", "-- EXPLAIN shape, read from the bottom up", "-- HASH JOIN  build: tokens 20,000          out 3,000,000", "--   HASH JOIN  build: pools 50,000         out 3,000,000", "--     SCAN swaps  partition p20261001      est 3,000,000", "--     SCAN pools                           est 50,000", "--   SCAN tokens                            est 20,000"],
+ map:{"1": [1, 2, 3, 4, 5, 6], "2": [11], "3": [12, 13, 14, 15, 16], "4": [14], "5": [12, 13], "6": [12, 13], "7": [12, 13], "8": [12], "9": [12, 13, 14], "10": [12, 13, 14, 15, 16], "11": [5, 9], "12": [9, 14]}},
+"bad":{
+ label:"SQL",
+ pc:["choose_order(tables):", "  best = none", "  for order in all orders of tables:      # 3 tables: 6 orders", "    rows = est_rows(order[0]); cost = 0", "    for next in order[1:]:", "      out = join_size(rows, next)         # no shared key: rows x next", "      cost += rows + est_rows(next) + out", "      rows = out", "    if cost < best.cost: best = order", "  return best", "est_rows(swaps where day = d):", "  if partition d has statistics: its row count     # 3,000,000", "  else: a default guess                            # 1,500,000,000", "with a hint LEADING(a b c):", "  return [a, b, c]                        # no search, frozen"],
+ real:["SELECT t.symbol, p.dex, sum(s.amount_usd)", "FROM   swaps s", "JOIN   pools  p ON p.pool  = s.pool", "JOIN   tokens t ON t.token = s.token_in", "WHERE  s.block_day = '2026-10-01'", "GROUP  BY t.symbol, p.dex;", "", "-- no statistics for the new day partition: a default guess", "", "-- EXPLAIN shape, read from the bottom up", "-- HASH JOIN  probe: swaps                  out 3,000,000", "--   NESTED LOOP (CROSS JOIN)               out 1,000,000,000", "--     SCAN pools                           est 50,000", "--     SCAN tokens                          est 20,000", "--   SCAN swaps  partition p20261001  est 1,500,000,000  actual 3,000,000", "", "-- a hint: force the order while statistics are repaired", "-- PostgreSQL with pg_hint_plan, dated and commented:", "/*+ Leading((s p) t) */  -- 2026-10-02, stats missing, ticket 1234", "SELECT ...;", "-- StarRocks: SELECT ... FROM swaps s JOIN [broadcast] pools p ..."],
+ map:{"1": [1, 2, 3, 4, 5, 6], "3": [11, 12, 13, 14, 15], "4": [15], "5": [11, 12], "6": [12], "7": [11, 12], "8": [12], "9": [11], "10": [11], "11": [5, 8], "13": [8, 15], "14": [17, 18, 19, 20, 21], "15": [19]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

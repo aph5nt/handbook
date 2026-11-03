@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TTFT, TPS and p95</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>TTFT, TPS and p95: split the wait</h1>
+  <p class="lede">A dashboard says the agent has an average time to first token of 1.04 seconds. Users still complain. Press <b>Next</b> and split one request into its parts. Then open the second tab and see what the average hides.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="split">Split one request</button>
+    <button role="tab" aria-selected="false" data-mode="p95">The average hides it</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">One request&#x27;s time split into queue, prefill and decode, then many requests sorted into p50 and p95</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-ttft-tps-p95/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">queue wait</span>
+    <span style="--c:var(--coord)">prefill: reading the prompt</span>
+    <span style="--c:var(--svc)">decode: tokens streaming</span>
+    <span style="--c:var(--fail)">slow tail: p95</span>
+    <span style="--c:var(--ok)">after the fix</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A streaming chat or agent UI (user interface): TTFT (time to first token) is what the user feels first, so it gets the target. A batch job that writes reports cares about total tokens per hour, not TTFT. Load tests on vLLM or a hosted API show p95 TTFT rising first under overload.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Measure from the client side, under realistic peak load. Report TTFT and TPS (tokens per second) at p50 and p95, split by prompt size. When p95 TTFT is bad and TPS is steady, the fix is in the queue and the prompt, not the model.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>TTFT</th><th>TPS</th></tr>
+      <tr><td>What it measures</td><td>Wait until the first token</td><td>Speed of the stream after that</td></tr>
+      <tr><td>Made of</td><td>Queue wait plus prefill</td><td>Decode steps</td></tr>
+      <tr><td>Raised by</td><td>Long prompts, busy server</td><td>Bigger model, more live requests</td></tr>
+      <tr><td>The user feels it as</td><td>"Is it doing anything?"</td><td>"How fast does it type?"</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"TTFT is the wait for the first word, TPS is how fast the rest streams, and I report both at p95, never as one average."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={"split":{pc:["on each request r:",
+"  r.ttft = r.queue_wait + r.prefill_time   # time to first token",
+"  r.decode = r.output_tokens / tps         # 200 / 50 = 4 s",
+"  r.total = r.ttft + r.decode              # 1.2 + 4 = 5.2 s",
+"",
+"report for one peak window:",
+"  average = sum(ttft) / n                  # hides the tail",
+"  sorted_ttft = sort(ttft of all requests)",
+"  p50 = sorted_ttft[ceil(0.50 * n) - 1]    # request 10 of 20",
+"  p95 = sorted_ttft[ceil(0.95 * n) - 1]    # request 19 of 20",
+"  report p50 and p95 of TTFT, and TPS, by prompt size",
+"  if p95 > target: trim prompts, cache the prefix, cap live requests"],real:["import math",
+"",
+"def ttft(queue_s, prefill_s):",
+"    \"\"\"Time to first token: queue wait plus prefill.\"\"\"",
+"    return queue_s + prefill_s",
+"",
+"def end_to_end(ttft_s, output_tokens, tps):",
+"    \"\"\"TTFT plus the time decode needs for the answer.\"\"\"",
+"    return ttft_s + output_tokens / tps",
+"",
+"def percentile(values, p):",
+"    \"\"\"Nearest rank: the smallest value with p% of values at or below it.\"\"\"",
+"    ordered = sorted(values)",
+"    rank = math.ceil(p / 100 * len(ordered))",
+"    return ordered[rank - 1]",
+"",
+"t = ttft(queue_s=0.6, prefill_s=0.6)              # 1.2 s",
+"print(f\"end-to-end = {end_to_end(t, 200, 50):.1f} s\")       # 5.2 s",
+"",
+"before = [.3, .35, .4, .4, .45, .45, .5, .5, .5, .55,",
+"          .55, .6, .6, .7, .8, .9, 1.2, 2.5, 4, 4.6]",
+"print(f\"average TTFT = {sum(before) / len(before):.2f} s\")  # 1.04 s",
+"print(f\"p50 = {percentile(before, 50)} s (request 10 of 20, sorted)\")  # 0.55 s",
+"print(f\"p95 = {percentile(before, 95)} s (request 19 of 20, sorted)\")  # 4 s",
+"# the fix: trimmed prompts, cached prefix, capped queue",
+"print(f\"after trim and queue cap: p50 = {percentile(after, 50)} s, p95 = {percentile(after, 95)} s\")  # p95 1.2 s"],map:{"1": [17], "2": [3, 4, 5, 17], "3": [9, 18], "4": [7, 8, 9, 18], "6": [20, 21], "7": [22], "8": [13], "9": [11, 14, 15, 23], "10": [11, 14, 15, 24], "11": [23, 24], "12": [25, 26]}},"p95":{pc:["on each request r:",
+"  r.ttft = r.queue_wait + r.prefill_time   # time to first token",
+"  r.decode = r.output_tokens / tps         # 200 / 50 = 4 s",
+"  r.total = r.ttft + r.decode              # 1.2 + 4 = 5.2 s",
+"",
+"report for one peak window:",
+"  average = sum(ttft) / n                  # hides the tail",
+"  sorted_ttft = sort(ttft of all requests)",
+"  p50 = sorted_ttft[ceil(0.50 * n) - 1]    # request 10 of 20",
+"  p95 = sorted_ttft[ceil(0.95 * n) - 1]    # request 19 of 20",
+"  report p50 and p95 of TTFT, and TPS, by prompt size",
+"  if p95 > target: trim prompts, cache the prefix, cap live requests"],real:["import math",
+"",
+"def ttft(queue_s, prefill_s):",
+"    \"\"\"Time to first token: queue wait plus prefill.\"\"\"",
+"    return queue_s + prefill_s",
+"",
+"def end_to_end(ttft_s, output_tokens, tps):",
+"    \"\"\"TTFT plus the time decode needs for the answer.\"\"\"",
+"    return ttft_s + output_tokens / tps",
+"",
+"def percentile(values, p):",
+"    \"\"\"Nearest rank: the smallest value with p% of values at or below it.\"\"\"",
+"    ordered = sorted(values)",
+"    rank = math.ceil(p / 100 * len(ordered))",
+"    return ordered[rank - 1]",
+"",
+"t = ttft(queue_s=0.6, prefill_s=0.6)              # 1.2 s",
+"print(f\"end-to-end = {end_to_end(t, 200, 50):.1f} s\")       # 5.2 s",
+"",
+"before = [.3, .35, .4, .4, .45, .45, .5, .5, .5, .55,",
+"          .55, .6, .6, .7, .8, .9, 1.2, 2.5, 4, 4.6]",
+"print(f\"average TTFT = {sum(before) / len(before):.2f} s\")  # 1.04 s",
+"print(f\"p50 = {percentile(before, 50)} s (request 10 of 20, sorted)\")  # 0.55 s",
+"print(f\"p95 = {percentile(before, 95)} s (request 19 of 20, sorted)\")  # 4 s",
+"# the fix: trimmed prompts, cached prefix, capped queue",
+"print(f\"after trim and queue cap: p50 = {percentile(after, 50)} s, p95 = {percentile(after, 95)} s\")  # p95 1.2 s"],map:{"1": [17], "2": [3, 4, 5, 17], "3": [9, 18], "4": [7, 8, 9, 18], "6": [20, 21], "7": [22], "8": [13], "9": [11, 14, 15, 23], "10": [11, 14, 15, 24], "11": [23, 24], "12": [25, 26]}}};
+//ENDCODE
+const X0=120,PX=120;
+const steps={
+"split":[
+ {t:"The request is sent",b:"An investigator asks the agent a question. The clock starts when the request leaves the client.",w:"Everything that follows is part of the time the user waits.",seg:[],pc:[1]},
+ {t:"Queue wait",b:"The server is busy. The request waits 0.6 seconds in a queue until a decode slot is free.",w:"Queue wait is invisible inside the model, but it is part of TTFT (time to first token).",seg:[["queue",0.6,"wait"]],pc:[2]},
+ {t:"Prefill reads the prompt",b:"The server reads the whole prompt in one pass: 0.6 seconds here. A long system prompt and many tool results make this longer.",w:"Prefill grows with prompt length. This is the second half of TTFT.",seg:[["queue",0.6,"wait"],["prefill",0.6,"coord"]],pc:[2]},
+ {t:"The first token: TTFT ends",b:"The first token reaches the client. The rule: TTFT = queue wait + prefill = 0.6 + 0.6 = 1.2 seconds.",w:"TTFT is what the user feels first: is anything happening?",seg:[["queue",0.6,"wait"],["prefill",0.6,"coord"]],ttft:1,pc:[2]},
+ {t:"Decode streams at TPS",b:"The answer streams one token at a time. TPS (tokens per second) is how fast it comes. Here, 200 tokens at 50 tokens per second take 4 seconds.",w:"TPS is set by decode, a different part of the server than TTFT.",seg:[["queue",0.6,"wait"],["prefill",0.6,"coord"],["decode: 200 tokens",4,"svc"]],ttft:1,pc:[3]},
+ {t:"End-to-end time",b:"End-to-end time is about TTFT plus output tokens divided by TPS: 1.2 + 200 / 50 = 5.2 seconds.",w:"Three numbers, three causes. One total hides which part is slow.",seg:[["queue",0.6,"wait"],["prefill",0.6,"coord"],["decode: 200 tokens",4,"svc"]],ttft:1,end:1,pc:[4]}
+],
+"p95":[
+ {t:"One average",b:"The dashboard shows one number: the average TTFT of 20 peak requests, sum divided by 20 = 1.04 seconds. It looks fine.",w:"An average mixes fast and slow calls into one number.",avg:1,pc:[6, 7],pc:[6, 7]},
+ {t:"Split out TTFT for 20 requests",b:"Plot the TTFT of 20 requests at peak, fastest to slowest. Most are quick.",w:"Example numbers, not a measurement. Each bar is one request.",bars:1,pc:[6, 8]},
+ {t:"p50 is fine",b:"p50 is the time half of the requests stay under. Sort the 20 times. The rule takes rank ceil(0.50 x 20) = 10, the 10th time: 0.55 seconds.",w:"Half the users have a good time. That is all p50 says.",bars:1,p50:1,pc:[8, 9],pc:[8, 9]},
+ {t:"The failure: p95 is slow",b:"p95 is the time 95% stay under. Rank ceil(0.95 x 20) = 19: the 19th sorted time is 4 seconds, four times the average. The slow ones all had long prompts that queued behind each other at peak.",w:"A good average hides a slow tail, and the users in the tail leave.",bars:1,p50:1,p95:1,pc:[10]},
+ {t:"TPS is steady",b:"Tokens per second is about the same for every request. Decode is not the problem.",w:"Split numbers point at the cause: the queue and the prompt, not the model.",bars:1,p50:1,p95:1,tps:1,pc:[11]},
+ {t:"The fix: trim the prompt, cap the queue",b:"Tool results are trimmed and the stable prefix is cached, so prefill is short. Live requests are capped. Same rule, same rank 19: p95 TTFT falls to 1.2 seconds.",w:"Report TTFT and TPS at p50 and p95, split by prompt size, at peak load.",bars:1,p50:1,p95:1,fixed:1,pc:[12]}
+]};
+const TT=[.3,.35,.4,.4,.45,.45,.5,.5,.5,.55,.55,.6,.6,.7,.8,.9,1.2,2.5,4,4.6];
+const TF=[.3,.35,.4,.4,.45,.45,.5,.5,.5,.55,.55,.6,.6,.65,.7,.75,.8,.9,1.2,1.3];
+function scene(s,mode){
+  let h="";
+  if(mode==="split"){
+    h+=T(30,40,"One request",null,15,"start",1);
+    h+=`<line x1="${X0}" x2="${X0+6*PX}" y1="140" y2="140" stroke="var(--line)" stroke-width="2"/>`;
+    for(let k=0;k<=6;k++)h+=T(X0+k*PX,160,k+" s","var(--muted)",12,"middle");
+    let x=X0;s.seg.forEach(([l,d,c])=>{h+=R(x,80,d*PX-2,50,`var(--${c})`,d>0.5?l:"","#fff",13);x+=d*PX;});
+    h+=`<circle cx="${X0}" cy="105" r="6" fill="var(--fg)"/>`+T(X0-10,110,"sent","var(--fg)",13,"end",1);
+    if(s.ttft){const tx=X0+1.2*PX;h+=`<line x1="${tx}" x2="${tx}" y1="60" y2="190" stroke="var(--fail)" stroke-width="2.5"/>`+T(tx,56,"first token","var(--fail)",13,"middle",1);
+      h+=A(X0,200,tx,200,"var(--wait)","TTFT 1.2 s");}
+    if(s.seg.length>2)h+=A(X0+1.2*PX,240,X0+5.2*PX,240,"var(--svc)","200 tokens at 50 TPS = 4 s");
+    if(s.end)h+=A(X0,290,X0+5.2*PX,290,"var(--fg)","end-to-end 5.2 s");
+    return h;}
+  if(s.avg){h+=O(250,80,400,160);h+=T(450,130,"Average TTFT, 20 requests","var(--muted)",18,"middle",1)+T(450,195,"1.04 s","var(--ok)",54,"middle",1);return h;}
+  const v=s.fixed?TF:TT,base=320,ph=50;
+  h+=T(30,30,"TTFT of 20 requests at peak, sorted (example numbers)",null,15,"start",1);
+  v.forEach((t,k)=>{const x=60+k*38,hh=t*ph,slow=t>2;h+=`<rect class="box" x="${x}" y="${base-hh}" width="28" height="${hh}" rx="3" fill="${s.fixed?"var(--ok)":slow&&s.p95?"var(--fail)":"var(--coord)"}"/>`;});
+  h+=`<line x1="50" x2="830" y1="${base}" y2="${base}" stroke="var(--line)" stroke-width="2"/>`;
+  for(let k=0;k<=5;k++)h+=T(44,base-k*ph+4,k+" s","var(--muted)",12,"end");
+  if(s.p50){const y=base-.55*ph;h+=`<line x1="50" x2="830" y1="${y}" y2="${y}" stroke="var(--ok)" stroke-width="2" stroke-dasharray="6 4"/>`+T(836,y+4,"p50","var(--ok)",13,"start",1);}
+  if(s.p95){const t=s.fixed?1.2:4,y=base-t*ph;h+=`<line x1="50" x2="830" y1="${y}" y2="${y}" stroke="${s.fixed?"var(--ok)":"var(--fail)"}" stroke-width="2" stroke-dasharray="6 4"/>`+T(836,y+4,"p95","var(--fail)",13,"start",1);
+    if(!s.fixed)h+=T(620,base-4.6*ph-8,"long prompts, queued","var(--fail)",13,"end",1);}
+  if(s.tps)h+=R(90,44,300,30,"var(--svc)","TPS: steady, about 50 for all","#fff",13);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

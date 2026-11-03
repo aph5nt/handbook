@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyset pages and probes</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Keyset pages and bounded probes</h1>
+  <p class="lede">Twenty rows of <b>transfers</b>, each labelled with its key <code>block_height:log_index</code>. Watch how many rows each query reads compared with how many it returns.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="offset">OFFSET versus keyset</button>
+    <button role="tab" aria-selected="false" data-mode="probe">Bounded probes</button>
+    <button role="tab" aria-selected="false" data-mode="anti">Wide anti join fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">A strip of twenty rows in day partitions, and a memory bar for a hash build</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text id="hdr" data-t="transfers of one busy address, ordered by (block_height, log_index)" x="30" y="32" text-anchor="start" font-size="13" font-weight="400" fill="var(--muted)">transfers of one busy address, ordered by (block_height, log_index)</text>
+<g id="pt" class="msg">
+<rect x="30" y="44" width="162" height="22" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+<text x="111" y="60" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">day 1</text>
+<rect x="198" y="44" width="162" height="22" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+<text x="279" y="60" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">day 2</text>
+<rect x="366" y="44" width="162" height="22" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+<text x="447" y="60" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">day 3</text>
+<rect x="534" y="44" width="162" height="22" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+<text x="615" y="60" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">day 4</text>
+<rect x="702" y="44" width="162" height="22" rx="4" fill="none" stroke="var(--muted)" stroke-dasharray="4 3"/>
+<text x="783" y="60" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">day 5 (newest)</text>
+</g>
+<rect id="r0" class="box" data-f="var(--line)" x="30" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r0-t" data-t="101:0" x="49" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">101:0</text>
+<rect id="r1" class="box" data-f="var(--line)" x="72" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r1-t" data-t="101:1" x="91" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">101:1</text>
+<rect id="r2" class="box" data-f="var(--line)" x="114" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r2-t" data-t="102:0" x="133" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">102:0</text>
+<rect id="r3" class="box" data-f="var(--line)" x="156" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r3-t" data-t="103:0" x="175" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">103:0</text>
+<rect id="r4" class="box" data-f="var(--line)" x="198" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r4-t" data-t="103:1" x="217" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">103:1</text>
+<rect id="r5" class="box" data-f="var(--line)" x="240" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r5-t" data-t="103:2" x="259" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">103:2</text>
+<rect id="r6" class="box" data-f="var(--line)" x="282" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r6-t" data-t="104:0" x="301" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">104:0</text>
+<rect id="r7" class="box" data-f="var(--line)" x="324" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r7-t" data-t="104:1" x="343" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">104:1</text>
+<rect id="r8" class="box" data-f="var(--line)" x="366" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r8-t" data-t="105:0" x="385" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">105:0</text>
+<rect id="r9" class="box" data-f="var(--line)" x="408" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r9-t" data-t="106:0" x="427" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">106:0</text>
+<rect id="r10" class="box" data-f="var(--line)" x="450" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r10-t" data-t="106:1" x="469" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">106:1</text>
+<rect id="r11" class="box" data-f="var(--line)" x="492" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r11-t" data-t="107:0" x="511" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">107:0</text>
+<rect id="r12" class="box" data-f="var(--line)" x="534" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r12-t" data-t="107:1" x="553" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">107:1</text>
+<rect id="r13" class="box" data-f="var(--line)" x="576" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r13-t" data-t="107:2" x="595" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">107:2</text>
+<rect id="r14" class="box" data-f="var(--line)" x="618" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r14-t" data-t="108:0" x="637" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">108:0</text>
+<rect id="r15" class="box" data-f="var(--line)" x="660" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r15-t" data-t="108:1" x="679" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">108:1</text>
+<rect id="r16" class="box" data-f="var(--line)" x="702" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r16-t" data-t="109:0" x="721" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">109:0</text>
+<rect id="r17" class="box" data-f="var(--line)" x="744" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r17-t" data-t="110:0" x="763" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">110:0</text>
+<rect id="r18" class="box" data-f="var(--line)" x="786" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r18-t" data-t="110:1" x="805" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">110:1</text>
+<rect id="r19" class="box" data-f="var(--line)" x="828" y="76" width="38" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r19-t" data-t="111:0" x="847" y="106" text-anchor="middle" font-size="11" fill="var(--fg)">111:0</text>
+<text id="note" data-t="" x="450" y="160" text-anchor="middle" font-size="14" font-weight="400" fill="var(--muted)"></text>
+<g id="mem" class="msg">
+<text x="30" y="194" text-anchor="start" font-size="13" font-weight="400" fill="var(--muted)">memory for the hash build</text>
+<rect x="30" y="204" width="840" height="30" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="memf" class="box" data-f="var(--wait)" data-a='{"width":"0"}' x="30" y="204" width="0" height="30" rx="6" fill="var(--wait)"/>
+<line x1="730" y1="196" x2="730" y2="242" stroke="var(--fg)" stroke-width="3" stroke-dasharray="5 4"/>
+<text x="736" y="258" text-anchor="start" font-size="12" font-weight="400" fill="var(--fail)">memory limit</text>
+</g>
+<rect x="20" y="292" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="318" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="317" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-keyset-probes/main.go</code> (<code>go run .</code>). The program models the table in memory as a sorted list, and counts rows read.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">read</span>
+    <span style="--c:var(--ok)">read and returned</span>
+    <span style="--c:var(--wait)">read, narrower</span>
+    <span style="--c:var(--fail)">read and thrown away</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Walking every transfer of a busy address: keyset on <code>(block_height, log_index)</code>. A writer finding where it stopped: newest partition, <code>ORDER BY block_height DESC LIMIT 1</code>. A screen with page numbers: offset for the first few pages, keyset for deep walks.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Bound every probe to what the question needs. Keyset for pages, <code>LIMIT 1</code> for existence and for the newest row. Run anti joins per day partition or per writer page, never over the whole table.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>OFFSET n LIMIT k</th><th>Keyset</th><th>Bounded probe</th></tr>
+      <tr><td>Rows read</td><td>n + k</td><td>k</td><td>1</td></tr>
+      <tr><td>Deep pages</td><td>slower each page</td><td>same cost every page</td><td>not a pager</td></tr>
+      <tr><td>Needs</td><td>nothing</td><td>a unique, ordered key</td><td>a sorted key, or LIMIT 1</td></tr>
+      <tr><td>Breaks when</td><td>pages go deep</td><td>the key has ties</td><td>written as COUNT or MAX</td></tr>
+      <tr><td>Interview line</td><td colspan=3>"Bound every probe to what the question needs: keyset for pages, LIMIT 1 for existence and for the newest row."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+offset:[
+ {"t": "Page 1: OFFSET 0 LIMIT 3", "b": "A screen walks every transfer of a busy address, three rows per page. The engine counts rows from the start of the sort: skip 0, keep 3. It reads three rows and returns them.", "w": "The first pages are cheap. That is why offset looks fine in tests.", "f": {"r0": "ok", "r1": "ok", "r2": "ok"}, "x": {"big": "read 3 · returned 3", "sql": "ORDER BY key OFFSET 0 LIMIT 3"}, "pc": [1, 2]},
+ {"t": "Page 4: OFFSET 9", "b": "Page 4 is OFFSET 9. The engine has no way to jump to row 10 of a filtered, sorted result, so its counter starts at 0. It reads 12 rows, throws away 9 and returns 3.", "w": "OFFSET is not a jump. It is read and discard.", "f": {"r0": "f", "r1": "f", "r2": "f", "r3": "f", "r4": "f", "r5": "f", "r6": "f", "r7": "f", "r8": "f", "r9": "ok", "r10": "ok", "r11": "ok"}, "x": {"big": "read 12 · returned 3 · thrown away 9", "sql": "OFFSET 9 LIMIT 3"}, "pc": [1, 2, 3]},
+ {"t": "Page 6: OFFSET 15", "b": "The same counter runs from 0 again: read 18, throw away 15, return 3. Every page reads all the pages before it.", "w": "At 1,000 rows per page, page 1,000 reads a million rows to return a thousand.", "f": {"r0": "f", "r1": "f", "r2": "f", "r3": "f", "r4": "f", "r5": "f", "r6": "f", "r7": "f", "r8": "f", "r9": "f", "r10": "f", "r11": "f", "r12": "f", "r13": "f", "r14": "f", "r15": "ok", "r16": "ok", "r17": "ok"}, "x": {"big": "read 18 · returned 3 · thrown away 15", "sql": "OFFSET 15 LIMIT 3"}, "pc": [1, 2, 3]},
+ {"t": "Keyset: remember the last key", "b": "Keyset pagination remembers the last key it showed, (108, 0), and asks for the next three after it. The key is sorted, so binary search lands on (108, 1). It reads 3 rows and stops at LIMIT 3.", "w": "Every page is one seek and a short read, however deep you go.", "f": {"r14": "c", "r15": "ok", "r16": "ok", "r17": "ok"}, "x": {"big": "read 3 · returned 3", "sql": "WHERE key > (108, 0) LIMIT 3", "note": "last key shown: (108, 0)"}, "pc": [4, 5, 6]},
+ {"t": "Failure: a key that is not unique", "b": "Now use block_height alone as the key. Page 5 ended on (108, 0), so it remembers 108. Two transfers share that height. The next page asks for block_height above 108, and (108, 1) fails that check.", "w": "A row is lost, and nothing reports an error. The key must be unique.", "f": {"r14": "c", "r15": "f", "r16": "ok", "r17": "ok", "r18": "ok"}, "x": {"big": "row (108, 1) is never shown", "sql": "WHERE block_height > 108 LIMIT 3", "note": "last height shown: 108"}, "pc": [7]},
+ {"t": "Fix: add a tiebreaker", "b": "Order and compare by the pair (block_height, log_index). The pair is unique, so the next page starts exactly after the last row.", "w": "Keyset pages need a unique, ordered key.", "f": {"r14": "c", "r15": "ok", "r16": "ok", "r17": "ok"}, "x": {"big": "nothing lost, nothing read twice", "sql": "WHERE (block_height, log_index) > (108, 0)", "note": "last key shown: (108, 0)"}, "pc": [5, 6, 8]}
+],
+probe:[
+ {"t": "Where did the writer stop? MAX", "b": "A sync finds its position with MAX(block_height) over the whole table. MAX cannot know a later row is not bigger, so it reads all 20 rows here.", "w": "As the table grew to a billion rows, this went from seconds to minutes.", "f": {"r0": "f", "r1": "f", "r2": "f", "r3": "f", "r4": "f", "r5": "f", "r6": "f", "r7": "f", "r8": "f", "r9": "f", "r10": "f", "r11": "f", "r12": "f", "r13": "f", "r14": "f", "r15": "f", "r16": "f", "r17": "f", "r18": "f", "r19": "f"}, "x": {"big": "reads every row: grows with the table", "sql": "SELECT MAX(block_height) FROM transfers"}, "pc": [9]},
+ {"t": "Prune to the newest day", "b": "Name the newest day partition. The planner prunes to one day, and MAX reads its 4 rows.", "w": "Better, but it still reads a whole day of rows.", "f": {"r16": "w", "r17": "w", "r18": "w", "r19": "w"}, "x": {"big": "reads one day", "sql": "… WHERE day = today"}, "pc": [9, 10], "rl": [4, 5]},
+ {"t": "Bounded: ORDER BY DESC LIMIT 1", "b": "Ask the newest day for its top row in sorted order. The sort key already holds the order, so the engine reads the last entry, reaches LIMIT 1 and stops: 1 row.", "w": "Constant time, however big the table gets.", "f": {"r19": "ok"}, "x": {"big": "reads 1 row", "sql": "ORDER BY block_height DESC LIMIT 1"}, "pc": [11]},
+ {"t": "Is there any? COUNT(*) > 0", "b": "To ask whether an address ever received a transfer, COUNT(*) > 0 must finish the count before the comparison runs. It reads all 4 matches.", "w": "You wanted one bit of answer and paid for the full count.", "f": {"r3": "f", "r8": "f", "r12": "f", "r17": "f"}, "x": {"big": "reads all 4 matches, then says yes", "sql": "SELECT COUNT(*) > 0 … WHERE to = :a"}, "pc": [12]},
+ {"t": "Bounded: SELECT 1 LIMIT 1", "b": "SELECT 1 with LIMIT 1 has one stop rule: LIMIT reached. It stops on the first match, row 4.", "w": "Bound every probe to what the question needs.", "f": {"r3": "ok"}, "x": {"big": "stops at the first match", "sql": "SELECT 1 … WHERE to = :a LIMIT 1"}, "pc": [13]}
+],
+anti:[
+ {"t": "The goal: addresses not yet known", "b": "Find every address in transfers that is not yet in the addresses table. An anti join keeps the rows that have no match.", "w": "The answer is small. The work depends on how wide the range is.", "x": {"big": "transfers ANTI JOIN addresses", "sql": "NOT EXISTS (… addresses …)"}, "pc": [14]},
+ {"t": "The whole table at once", "b": "Run over the whole table, the join builds a hash of every distinct address in history. In the program: 700 days × 1,000,000 new addresses = 700,000,000 entries, against a limit of 500,000,000.", "w": "The build side grows with all of history, not with the new rows.", "f": {"r0": "c", "r1": "c", "r2": "c", "r3": "c", "r4": "c", "r5": "c", "r6": "c", "r7": "c", "r8": "c", "r9": "c", "r10": "c", "r11": "c", "r12": "c", "r13": "c", "r14": "c", "r15": "c", "r16": "c", "r17": "c", "r18": "c", "r19": "c"}, "a": {"memf": {"width": "560"}}, "x": {"big": "hash of every distinct address: growing", "sql": "all days at once"}, "pc": [14, 15]},
+ {"t": "Out of memory", "b": "The build check runs per entry: is the hash under the limit? At 500,000,000 it is not. The query dies with OOM, out of memory, and takes the other queries on the same nodes with it.", "w": "Run once \"to catch up\", a wide anti join takes the warehouse down.", "f": {"r0": "f", "r1": "f", "r2": "f", "r3": "f", "r4": "f", "r5": "f", "r6": "f", "r7": "f", "r8": "f", "r9": "f", "r10": "f", "r11": "f", "r12": "f", "r13": "f", "r14": "f", "r15": "f", "r16": "f", "r17": "f", "r18": "f", "r19": "f", "memf": "f"}, "a": {"memf": {"width": "840"}}, "x": {"big": "OOM: the query and its neighbours fail", "sql": "all days at once"}, "pc": [15, 16]},
+ {"t": "Fix: one day partition at a time", "b": "Run the same anti join per day partition. Each build side holds one day of addresses: 1,000,000 entries, far under the limit.", "w": "Memory now depends on one day, never on the whole history.", "f": {"r0": "c", "r1": "c", "r2": "c", "r3": "c", "memf": "ok"}, "a": {"memf": {"width": "120"}}, "x": {"big": "day 1: small hash, done", "sql": "WHERE day = :d"}, "pc": [17]},
+ {"t": "Next day, same small size", "b": "Day 2 builds its own small hash. So does every day after it.", "w": "Each run is small, so none of them can take the warehouse down.", "f": {"r0": "ok", "r1": "ok", "r2": "ok", "r3": "ok", "r4": "c", "r5": "c", "r6": "c", "r7": "c", "memf": "ok"}, "a": {"memf": {"width": "120"}}, "x": {"big": "day 2: small hash", "sql": "WHERE day = :d"}, "pc": [17]},
+ {"t": "Best: per page of the writer", "b": "The writer checks the new addresses of its own page as it writes them. A page of 10,000 rows has at most 10,000 entries.", "w": "A writer's per-page cost must depend on the page, never on the size of the table.", "f": {"r0": "ok", "r1": "ok", "r2": "ok", "r3": "ok", "r4": "ok", "r5": "ok", "r6": "ok", "r7": "ok", "r8": "ok", "r9": "ok", "r10": "ok", "r11": "ok", "r12": "ok", "r13": "ok", "r14": "ok", "r15": "ok", "r18": "c", "r19": "c", "memf": "ok"}, "a": {"memf": {"width": "40"}}, "x": {"big": "per writer page: tiny", "sql": "page of new rows only"}, "pc": [18]}
+]
+};
+const base={"probe": {"on": ["pt"], "x": {"hdr": "transfers: a billion rows, one partition per day"}}, "anti": {"on": ["pt", "mem"], "x": {"hdr": "transfers, one partition per day"}}};
+const code={
+"offset":{
+ label:"SQL",
+ pc:["offset_page(offset, limit):", "  read rows from the start of the sort; keep after offset", "  stop at offset + limit                    # read = offset + limit", "keyset_page(last, limit):", "  pos = binary search for the first key > last", "  read limit rows from pos                  # read = limit", "  the key must be unique, or rows that tie are lost", "  so the key is (block_height, log_index)", "max_probe: read every matching row, keep the biggest", "  prune to the newest partition first", "  better: ORDER BY key DESC LIMIT 1         # read one sorted entry", "exists_probe: COUNT(*) > 0 reads every match", "  better: SELECT 1 LIMIT 1                  # stop at the first match", "anti_join(range):", "  build a hash of every distinct address in the range", "  if the hash passes the memory limit: out of memory", "  fix: one day partition at a time", "  best: one writer page at a time"],
+ real:["-- offset: every page reads the pages before it", "SELECT block_height, log_index, amount", "FROM   transfers", "WHERE  to_address = :a", "ORDER  BY block_height, log_index", "LIMIT  3 OFFSET 15;", "", "-- keyset: one seek", "SELECT block_height, log_index, amount", "FROM   transfers", "WHERE  to_address = :a", "  AND  (block_height, log_index) > (108, 0)", "ORDER  BY block_height, log_index", "LIMIT  3;", "", "-- the wrong key: a tie at 108 is lost", "-- WHERE to_address = :a AND block_height > 108"],
+ map:{"1": [2, 3, 4, 5], "2": [6], "3": [6], "4": [9, 10, 11], "5": [12, 13], "6": [14], "7": [16, 17], "8": [12, 13]}},
+"probe":{
+ label:"SQL",
+ pc:["offset_page(offset, limit):", "  read rows from the start of the sort; keep after offset", "  stop at offset + limit                    # read = offset + limit", "keyset_page(last, limit):", "  pos = binary search for the first key > last", "  read limit rows from pos                  # read = limit", "  the key must be unique, or rows that tie are lost", "  so the key is (block_height, log_index)", "max_probe: read every matching row, keep the biggest", "  prune to the newest partition first", "  better: ORDER BY key DESC LIMIT 1         # read one sorted entry", "exists_probe: COUNT(*) > 0 reads every match", "  better: SELECT 1 LIMIT 1                  # stop at the first match", "anti_join(range):", "  build a hash of every distinct address in the range", "  if the hash passes the memory limit: out of memory", "  fix: one day partition at a time", "  best: one writer page at a time"],
+ real:["-- reads every row", "SELECT MAX(block_height) FROM transfers;", "", "-- prunes to one day, still reads the day", "SELECT MAX(block_height) FROM transfers WHERE day = CURRENT_DATE;", "", "-- bounded: one sorted entry", "SELECT block_height FROM transfers", "WHERE  day = CURRENT_DATE", "ORDER  BY block_height DESC LIMIT 1;", "", "-- counts every match first", "SELECT COUNT(*) > 0 FROM transfers WHERE to_address = :a;", "", "-- bounded: stops at the first match", "SELECT 1 FROM transfers WHERE to_address = :a LIMIT 1;"],
+ map:{"9": [2], "10": [5], "11": [8, 9, 10], "12": [13], "13": [16]}},
+"anti":{
+ label:"SQL",
+ pc:["offset_page(offset, limit):", "  read rows from the start of the sort; keep after offset", "  stop at offset + limit                    # read = offset + limit", "keyset_page(last, limit):", "  pos = binary search for the first key > last", "  read limit rows from pos                  # read = limit", "  the key must be unique, or rows that tie are lost", "  so the key is (block_height, log_index)", "max_probe: read every matching row, keep the biggest", "  prune to the newest partition first", "  better: ORDER BY key DESC LIMIT 1         # read one sorted entry", "exists_probe: COUNT(*) > 0 reads every match", "  better: SELECT 1 LIMIT 1                  # stop at the first match", "anti_join(range):", "  build a hash of every distinct address in the range", "  if the hash passes the memory limit: out of memory", "  fix: one day partition at a time", "  best: one writer page at a time"],
+ real:["-- the whole table: the build side is all of history", "INSERT INTO addresses (address)", "SELECT DISTINCT t.to_address", "FROM   transfers t", "LEFT ANTI JOIN addresses a ON a.address = t.to_address;", "", "-- one day partition: the build side is one day", "INSERT INTO addresses (address)", "SELECT DISTINCT t.to_address", "FROM   transfers t", "LEFT ANTI JOIN addresses a ON a.address = t.to_address", "WHERE  t.day = :d;", "", "-- the writer's page: only the addresses it holds", "SELECT address FROM addresses WHERE address IN (:page_addresses);"],
+ map:{"14": [2, 3, 4, 5], "15": [3, 4, 5], "16": [5], "17": [8, 9, 10, 11, 12], "18": [14, 15]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

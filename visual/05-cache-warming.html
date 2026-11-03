@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Warming</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache warming and the database page cache</h1>
+  <p class="lede">DozerDB, the graph behind Chain Insights, keeps hot pages in memory. A restart empties it. Press <b>Next</b> and watch who misses after a restart, and why a warm pass that runs once goes cold the next day.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="once">Warm once at startup</button>
+    <button role="tab" aria-selected="false" data-mode="always">A warmer that keeps running</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">A grid of database pages from older to newer blocks, with an investigator search, a warmer and the graph sync</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <text x="170" y="40" font-size="16" font-weight="700" fill="var(--fg)">DozerDB page cache (memory)</text>
+        <text x="808" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="var(--muted)">tomorrow</text>
+        <text x="158" y="110" text-anchor="end" font-size="14" font-weight="700" fill="var(--fg)">structure</text>
+        <rect id="s0" class="box" x="170" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s1" class="box" x="226" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s2" class="box" x="282" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s3" class="box" x="338" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s4" class="box" x="394" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s5" class="box" x="450" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s6" class="box" x="506" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s7" class="box" x="562" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s8" class="box" x="618" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s9" class="box" x="674" y="80" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="s10" class="box" x="730" y="80" width="50" height="50" rx="5" fill="var(--panel)" stroke="var(--muted)" stroke-dasharray="4 4"/>
+        <rect id="s11" class="box" x="786" y="80" width="50" height="50" rx="5" fill="var(--panel)" stroke="var(--muted)" stroke-dasharray="4 4"/>
+        <text x="158" y="170" text-anchor="end" font-size="14" font-weight="700" fill="var(--fg)">values</text>
+        <rect id="v0" class="box" x="170" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v1" class="box" x="226" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v2" class="box" x="282" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v3" class="box" x="338" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v4" class="box" x="394" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v5" class="box" x="450" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v6" class="box" x="506" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v7" class="box" x="562" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v8" class="box" x="618" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v9" class="box" x="674" y="140" width="50" height="50" rx="5" fill="var(--ok)"/>
+        <rect id="v10" class="box" x="730" y="140" width="50" height="50" rx="5" fill="var(--panel)" stroke="var(--muted)" stroke-dasharray="4 4"/>
+        <rect id="v11" class="box" x="786" y="140" width="50" height="50" rx="5" fill="var(--panel)" stroke="var(--muted)" stroke-dasharray="4 4"/>
+        <g font-size="13" fill="var(--muted)"><text x="170" y="212">older blocks</text><text x="836" y="212" text-anchor="end">newer blocks</text></g>
+        <rect id="inv" class="box" x="40" y="262" width="240" height="60" rx="8" fill="var(--coord)"/><text data-on="inv" x="160" y="287" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Investigator search</text><text id="s-inv" data-on="inv" x="160" y="309" text-anchor="middle" font-size="13" fill="#fff">starts from any address</text>
+        <rect id="wm" class="box" x="330" y="262" width="240" height="60" rx="8" fill="var(--coord)"/><text data-on="wm" x="450" y="287" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Warmer</text><text id="s-wm" data-on="wm" x="450" y="309" text-anchor="middle" font-size="13" fill="#fff">reads pages ahead of use</text>
+        <rect id="sy" class="box" x="620" y="262" width="240" height="60" rx="8" fill="var(--coord)"/><text data-on="sy" x="740" y="287" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Graph sync</text><text id="s-sy" data-on="sy" x="740" y="309" text-anchor="middle" font-size="13" fill="#fff">writes in block order</text>
+        <text id="cnt" x="450" y="390" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-warming/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">warm because it was used</span>
+    <span style="--c:var(--coord)">warmed ahead by the warmer</span>
+    <span style="--c:var(--line)">cold: on disk only</span>
+    <span style="--c:var(--fail)">a search that missed</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Any database restart before traffic: Postgres has <code>pg_prewarm</code>, a graph database needs a warmer. A service deploy: preload the hottest keys before the instance joins the load balancer.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Warm in order of value: the structure first, then the newest values. Keep the warmer running, because the hot set follows the live data. Give memory to the buffer pool before you add an application cache that holds the same pages again.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Warm once at startup</th><th>Warmer that keeps running</th></tr>
+      <tr><td>Right after a restart</td><td>Warm</td><td>Warm</td></tr>
+      <tr><td>The next day</td><td>Cold where the new data is</td><td>Follows the new data</td></tr>
+      <tr><td>Cost</td><td>One burst of reads</td><td>A steady trickle of reads</td></tr>
+      <tr><td>Fits</td><td>Data that does not move</td><td>A live chain, a growing table</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;A restart empties every cache, so I warm the most valuable pages first and keep the warmer running, because the hot set moves with the data.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[170,340,666];
+const X=c=>195+c*56, Y=192;
+const S=(c,col,txt)=>[160,262,X(c),Y,txt,col,false,[-40,10]];
+const Q=(c,col,txt)=>[740,262,X(c),Y,txt,col,false,[70,12]];
+const ALL=[...R("s",0,9),...R("v",0,9)];
+const START=[
+ {pc:[15],t:"Warm and serving",b:"DozerDB, the graph behind Chain Insights, keeps hot pages of nodes and links in memory. The structure row is which address links to which. The values row is amounts and times. Right now everything in use is warm.",
+  w2:"A page in memory answers in well under a millisecond. A page on disk costs a read from the disk.",fill:{...F(ALL,OK),wm:LINE},text:{"s-wm":"idle",cnt:"search: hit"},a:[Q(9,OK,"write block"),S(3,OK,"hit")]},
+ {pc:[1],t:"Restart: every cache is empty",b:"DozerDB restarts for an upgrade. The database buffer pool is empty. The operating system page cache below it is empty too.",w2:"A restart throws away every warm page at once. The first users pay for all of it.",
+  fill:F(ALL,LINE),text:{cnt:""},ban:"DozerDB restarted: page cache empty"},
+ {pc:[12, 13, 14],t:"The sync does not miss. The search does.",b:"The graph sync writes new blocks in order and reads back only what it just wrote, so it stays warm. An investigator starts a search from an old address. Every page it needs is on disk.",
+  w2:"Same database, two access patterns. The writer is predictable. The searcher is not, and it misses.",fill:{s9:OK,v9:OK},text:{cnt:"search: miss, read from disk"},a:[Q(9,OK,"write block"),S(2,FAIL,"miss")]},
+ {pc:[3, 4],t:"Warmer pass 1: the structure",b:"A warmer reads the structure pages first: which address links to which. Searches walk this before anything else.",w2:"Warm in order of value. Every search needs the structure, only some need the values.",
+  fill:{...F(R("s",0,8),COORD),wm:COORD},text:{"s-wm":"pass 1: structure",cnt:""},a:[[450,262,X(4),Y,"read ahead",COORD]]},
+ {pc:[5, 6, 7, 15],t:"Warmer pass 2: values, newest first",b:"Then the warmer reads the values, starting with the newest blocks and going back as far as memory allows. The investigator searches again and hits.",
+  w2:"Most questions are about recent activity. Newest first warms the pages most likely to be asked for.",fill:F(R("v",3,8),COORD),text:{"s-wm":"pass 2: values, newest first",cnt:"search: hit"},a:[[450,262,X(8),Y,"read ahead",COORD],S(6,OK,"hit")]}
+];
+const steps={
+"once":[...START,
+ {pc:[14],t:"The failure that matters: warm once, then stop",b:"The startup warmer finishes and stops. A day passes. New blocks arrive. Lines 8 and 9 never run, so their values were never warmed. The check on line 14 finds today's values cold, and searches about today miss.",
+  w2:"Yesterday's warm set is cold tomorrow. A one-time warm pass hides the problem until the hot data moves.",fill:{wm:LINE,s10:OK,s11:OK,v10:LINE,v11:LINE,v3:LINE,v4:LINE},text:{"s-wm":"stopped after startup",cnt:"search: miss on today's blocks"},
+  a:[Q(11,OK,"write block"),S(10,FAIL,"miss")],ban:"the warm set is yesterday's"}
+],
+"always":[...START,
+ {pc:[8, 9, 15],t:"The chain keeps moving, so does the warmer",b:"Line 8 never stops. On each new day, line 9 reads its values. The check on line 14 finds them warm, so searches about today hit.",w2:"The hot set moves with the data, so warming is a job that runs all the time, not a step at startup.",
+  fill:{s10:OK,s11:OK,v10:COORD,v11:COORD},text:{"s-wm":"running all the time",cnt:"search: hit on today's blocks"},a:[Q(11,OK,"write block"),[450,262,X(11),Y,"read ahead",COORD],S(10,OK,"hit")]},
+ {pc:[10],t:"Old values fall out, and that is fine",b:"Memory is finite. The oldest values leave the cache as new ones come in. Few searches ask about them.",w2:"Give memory to the database buffer pool first. A big application cache in front of it would hold the same pages twice.",
+  fill:{v3:LINE,v4:LINE},text:{cnt:"old blocks: miss, rare"}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"once": {
+"label": "Go",
+"pc": [
+"on restart: every page is cold           # buffer pool and page cache empty",
+"",
+"warmer:",
+"  read all structure pages               # pass 1: every search needs them",
+"  for day from newest back:              # pass 2: values, newest first",
+"    if memory is full: stop",
+"    read the values of day",
+"  loop forever:                          # the fix: never stop",
+"    on a new day: read its values",
+"    if memory is full: evict the oldest day",
+"",
+"search(day):",
+"  if structure is cold: read from disk   # slow",
+"  if values of day are cold: read from disk",
+"  else: all from memory"
+],
+"real": [
+"func (c *Cache) warmValue(day int) {",
+"\tif c.has(day) {",
+"\t\treturn",
+"\t}",
+"\tif len(c.values) == c.limit {",
+"\t\toldest := slices.Index(c.values, slices.Min(c.values))",
+"\t\tc.values = slices.Delete(c.values, oldest, oldest+1)",
+"\t}",
+"\tc.values = append(c.values, day)",
+"}",
+"",
+"func (c *Cache) search(day int) string {",
+"\tswitch {",
+"\tcase !c.structure:",
+"\t\treturn \"cold: structure and values from disk\"",
+"\tcase !c.has(day):",
+"\t\treturn \"half cold: values from disk\"",
+"\t}",
+"\treturn \"warm: all from memory\"",
+"}",
+"",
+"c.warmStructure() // pass 1",
+"for d := today; d > today-3; d-- { // pass 2: newest first",
+"\tc.warmValue(d)",
+"}",
+"for d := today + 1; d <= today+2; d++ { // never stop",
+"\tc.warmValue(d)",
+"}"
+],
+"map": {
+"1": [
+14
+],
+"3": [
+22
+],
+"4": [
+22
+],
+"5": [
+23,
+25
+],
+"6": [
+5
+],
+"7": [
+24
+],
+"8": [
+26,
+28
+],
+"9": [
+27
+],
+"10": [
+5,
+6,
+7
+],
+"12": [
+12
+],
+"13": [
+14,
+15
+],
+"14": [
+16,
+17
+],
+"15": [
+19
+]
+}
+},
+"always": {
+"label": "Go",
+"pc": [
+"on restart: every page is cold           # buffer pool and page cache empty",
+"",
+"warmer:",
+"  read all structure pages               # pass 1: every search needs them",
+"  for day from newest back:              # pass 2: values, newest first",
+"    if memory is full: stop",
+"    read the values of day",
+"  loop forever:                          # the fix: never stop",
+"    on a new day: read its values",
+"    if memory is full: evict the oldest day",
+"",
+"search(day):",
+"  if structure is cold: read from disk   # slow",
+"  if values of day are cold: read from disk",
+"  else: all from memory"
+],
+"real": [
+"func (c *Cache) warmValue(day int) {",
+"\tif c.has(day) {",
+"\t\treturn",
+"\t}",
+"\tif len(c.values) == c.limit {",
+"\t\toldest := slices.Index(c.values, slices.Min(c.values))",
+"\t\tc.values = slices.Delete(c.values, oldest, oldest+1)",
+"\t}",
+"\tc.values = append(c.values, day)",
+"}",
+"",
+"func (c *Cache) search(day int) string {",
+"\tswitch {",
+"\tcase !c.structure:",
+"\t\treturn \"cold: structure and values from disk\"",
+"\tcase !c.has(day):",
+"\t\treturn \"half cold: values from disk\"",
+"\t}",
+"\treturn \"warm: all from memory\"",
+"}",
+"",
+"c.warmStructure() // pass 1",
+"for d := today; d > today-3; d-- { // pass 2: newest first",
+"\tc.warmValue(d)",
+"}",
+"for d := today + 1; d <= today+2; d++ { // never stop",
+"\tc.warmValue(d)",
+"}"
+],
+"map": {
+"1": [
+14
+],
+"3": [
+22
+],
+"4": [
+22
+],
+"5": [
+23,
+25
+],
+"6": [
+5
+],
+"7": [
+24
+],
+"8": [
+26,
+28
+],
+"9": [
+27
+],
+"10": [
+5,
+6,
+7
+],
+"12": [
+12
+],
+"13": [
+14,
+15
+],
+"14": [
+16,
+17
+],
+"15": [
+19
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

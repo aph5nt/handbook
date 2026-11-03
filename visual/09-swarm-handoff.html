@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm handoff</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Swarm handoff: peers pass the conversation</h1>
+  <p class="lede">A Chain Insights support chat has three agents and no boss. Each agent has a handoff tool and passes the conversation to the peer that owns the topic. Watch a top-up question go to billing and an address question go to investigation. Then switch tabs to see two agents pass a refund back and forth.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Handed to the right peer</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Ping-pong with no owner</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A user, a triage agent, a billing agent and an investigation agent, with handoff arrows between them</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="ut" class="edge" d="M130 190 L246 84" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="ub" class="edge" d="M130 210 L246 318" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="tb" class="edge" d="M355 100 L355 296" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="bi" class="edge" d="M464 320 L540 320 L540 80 L616 80" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="ib" class="edge" d="M620 94 L570 94 L570 340 L464 340" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"/>
+      <path id="ti" class="edge" d="M460 55 L616 55" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <text x="300" y="200" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">handoff</text>
+      <g><rect id="user" class="box" x="10" y="170" width="120" height="56" rx="10" fill="var(--line)"/><text id="user-l" x="70.0" y="202.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">User</text></g>
+      <g><rect id="tri" class="box" x="250" y="40" width="210" height="60" rx="10" fill="var(--line)"/><text id="tri-l" x="355.0" y="74.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Triage agent</text></g>
+      <g><rect id="bil" class="box" x="250" y="300" width="210" height="60" rx="10" fill="var(--line)"/><text id="bil-l" x="355.0" y="334.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Billing agent</text></g>
+      <g><rect id="inv" class="box" x="620" y="40" width="250" height="60" rx="10" fill="var(--line)"/><text id="inv-l" x="745.0" y="74.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Investigation agent</text></g>
+      <text x="610" y="210" font-size="14" font-weight="700" fill="var(--fg)">Conversation</text>
+      <rect x="610" y="220" width="280" height="190" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-swarm-handoff/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">agent holding the conversation</span>
+    <span style="--c:var(--ok)">a handoff with a summary</span>
+    <span style="--c:var(--wait)">a handoff with no owner</span>
+    <span style="--c:var(--fail)">ping-pong, user repeats themselves</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>OpenAI's Swarm and Agents SDK handoffs. Customer-support bots with billing, technical and sales agents. LangGraph's swarm pattern. It suits a conversation that changes topic more than a task that splits into parts.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Give each agent a handoff tool whose description says exactly which topics it owns. Pass a short summary with every handoff. Cap handoffs per user turn, and give unclear requests one owner that answers or asks a human.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Swarm handoff</th><th>Supervisor and workers</th></tr>
+      <tr><td>Who decides</td><td>The agent holding the conversation</td><td>One supervisor</td></tr>
+      <tr><td>Shape</td><td>Peers in a ring or mesh</td><td>A tree</td></tr>
+      <tr><td>Good for</td><td>A conversation that changes topic</td><td>A task that splits into parallel parts</td></tr>
+      <tr><td>Main failure</td><td>Ping-pong with no owner</td><td>Lossy briefs and summaries</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"In a swarm the agent holding the conversation hands it to the peer that owns the topic, so every topic needs one owner and handoffs need a cap."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"pc": [1, 2], "t": "A question arrives", "b": "The user writes: 'My wallet top-up failed.' The triage agent holds the conversation, and the handoff count starts at 0.", "w": "No boss: whoever holds the conversation decides what happens next.", "box": {"tri": "coord"}, "ed": {"ut": "coord"}, "rows": [["user: my wallet top-up failed", "muted"]]},
+{"pc": [4, 8, 9], "t": "Triage hands off to billing", "b": "Triage's rule matches the word 'top-up' to billing. Target is not triage, the count 0 is under the cap of 2, so it hands off with the one-line summary. The count becomes 1.", "w": "The handoff carries the summary, so the user is not asked again.", "box": {"bil": "coord"}, "ed": {"tb": "ok"}, "rows": [["triage to billing, with a summary", "ok"]]},
+{"pc": [4, 5], "t": "Billing answers", "b": "Billing runs its own rule. None of its handoff words ('who funded', 'query') is in the message, so the target is billing itself. It answers: the top-up is waiting for one more block.", "w": "The owner of the topic answers, with its own tools.", "box": {"bil": "coord"}, "ed": {"ub": "coord"}, "rows": [["billing: waiting for one block", "ok"]]},
+{"pc": [4, 8, 9], "t": "The topic changes", "b": "A new user turn starts the count at 0 again. 'Who funded 0xabc?' matches billing's rule 'who funded' to investigation, so billing hands off.", "w": "Each agent knows what it does not own.", "box": {"inv": "coord"}, "ed": {"bi": "ok"}, "rows": [["user: who funded 0xabc?", "muted"], ["handoff: billing to investigation", "ok"]]},
+{"pc": [4, 5], "t": "Investigation answers", "b": "Investigation's rules ('refund', 'top-up') do not match, so it owns the turn. It queries the graph and names both funders in full, 42 characters each.", "w": "Three specialists, one conversation, no central coordinator.", "box": {"inv": "ok"}, "rows": [["investigation: funders in full", "ok"]]}],
+"bad":[
+{"pc": [4, 8], "t": "A request between topics", "b": "The user writes: 'Refund me for a query that failed.' Triage's rule matches 'refund' to billing: handoff 1.", "w": "Refund sounds like billing. 'Query failed' sounds technical.", "box": {"bil": "coord"}, "ed": {"tb": "ok"}, "rows": [["user: refund a failed query", "muted"]]},
+{"pc": [4, 8, 9], "t": "Billing passes it on", "b": "Billing's rule matches 'query' to investigation before anything else: handoff 2.", "w": "Each agent sees half of the request as someone else's.", "box": {"inv": "coord"}, "ed": {"bi": "wait"}, "rows": [["billing to investigation: 'technical'", "wait"]]},
+{"pc": [4, 8, 9], "t": "Investigation passes it back", "b": "Investigation's rule matches 'refund' to billing: handoff 3. Each rule is right about one word and wrong about the request.", "w": "Two agents, each sure the other owns it.", "box": {"bil": "coord"}, "ed": {"ib": "wait"}, "rows": [["investigation to billing: 'refunds'", "wait"]]},
+{"pc": [6], "t": "Ping-pong", "b": "Suppose line 6 is off: no cap. Handoff 4 goes billing to investigation again, and nothing in the loop can end it.", "w": "No step failed. The system has no owner for this request.", "box": {"bil": "fail", "inv": "fail", "user": "fail"}, "ed": {"bi": "fail", "ib": "fail"}, "rows": [["4 handoffs and no answer", "fail"], ["the user is still waiting", "fail"]]},
+{"pc": [6, 7], "t": "The fix: a cap and an owner", "b": "Line 6 on: after handoff 2 the count equals the cap, so the next handoff is refused. Line 7 makes triage the owner: it answers the query part and asks a human for the refund.", "w": "Every request needs one owner when the topic is unclear.", "box": {"tri": "ok", "user": "ok"}, "ed": {"ut": "ok"}, "rows": ["clear", ["cap reached: triage owns it", "ok"], ["triage asks a human for the refund", "ok"]]},
+{"pc": [10, 4, 5], "t": "Clear handoff descriptions", "b": "Billing's description now owns 'refunds for failed queries', and its 'query' rule is removed. Triage hands to billing once, and billing's rule finds no other owner, so billing answers: refund approved.", "w": "The handoff description is the routing rule, like any tool description.", "box": {"bil": "ok"}, "ed": {"tb": "ok"}, "rows": [["refunds: billing owns them", "ok"]]}]},
+"T0":{},"panel":{"x": 610, "y": 220, "w": 280, "h": 190, "title": "Conversation", "rh": 29, "fs": 12},"code":{"_": {"label": "Python", "pc": ["holder = the agent that has the conversation", "handoffs = 0", "loop:", "  target = holder.route(message)            # its own rule: who owns this topic", "  if target is holder: return holder.answer(message)", "  if handoffs == 2:                          # the cap per user turn", "    return triage answers what it can and asks a human   # one owner", "  holder = target, with a one-line summary   # the user is not asked again", "  handoffs += 1", "route rules = the handoff tool descriptions  # e.g. refunds for failed queries: billing"], "real": ["CAP = 2  # handoffs per user turn", "", "", "def handle(message, holder, rules, cap=CAP, log=print):", "    handoffs = 0", "    while True:", "        target = fake_route(holder, message, rules)  # its own rule decides", "        if target == holder:  # it owns the topic", "            return holder, answer(holder, message)", "        if cap is not None and handoffs == cap:  # cap reached", "            return \"triage\", \"triage: answered the query part, asked a human for the refund\"", "        log(f\"  handoff {handoffs + 1}: {holder} -> {target}, summary: '{message}'\")", "        holder = target  # the user is not asked again", "        handoffs += 1", "        if cap is None and handoffs == 4:                # no cap: stop the demo at 4", "            return None, \"no answer after 4 handoffs\""], "map": {"6": [1, 10], "1": [4], "2": [5], "3": [6], "4": [7], "10": [7], "5": [8, 9], "7": [11], "8": [12, 13], "9": [14]}, "path": "handbook/code/09-swarm-handoff/main.py", "cmd": "python3 main.py", "note": ""}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

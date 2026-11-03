@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bloom Filters</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache penetration and Bloom filters</h1>
+  <p class="lede">A script sends lookups for random addresses that do not exist. Each one is new, so it passes through the cache to the graph. Press <b>Next</b> and watch a row of sixteen bits answer &quot;definitely not&quot; without a database read.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="filter">How the filter answers</button>
+    <button role="tab" aria-selected="false" data-mode="stale">A filter that falls behind</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A lookup, a sixteen-bit Bloom filter with hash arrows, and the cache and graph with a read counter</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="rq" class="box" x="20" y="30" width="190" height="74" rx="8" fill="var(--coord)"/>
+        <text id="h-rq" data-on="rq" x="115.0" y="56" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Lookup</text>
+        <text id="s-rq" data-on="rq" x="115.0" y="80" text-anchor="middle" font-size="14" fill="#fff"></text>
+        <text id="bl" x="464" y="140" text-anchor="middle" font-size="14" font-weight="700" fill="var(--muted)">Bloom filter: 16 bits</text>
+        <rect id="bt0" class="box" x="240" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt0" data-on="bt0" x="252.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix0" x="252" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">0</text>
+        <rect id="bt1" class="box" x="268" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt1" data-on="bt1" x="280.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix1" x="280" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">1</text>
+        <rect id="bt2" class="box" x="296" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt2" data-on="bt2" x="308.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix2" x="308" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">2</text>
+        <rect id="bt3" class="box" x="324" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt3" data-on="bt3" x="336.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix3" x="336" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">3</text>
+        <rect id="bt4" class="box" x="352" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt4" data-on="bt4" x="364.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix4" x="364" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">4</text>
+        <rect id="bt5" class="box" x="380" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt5" data-on="bt5" x="392.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix5" x="392" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">5</text>
+        <rect id="bt6" class="box" x="408" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt6" data-on="bt6" x="420.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix6" x="420" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">6</text>
+        <rect id="bt7" class="box" x="436" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt7" data-on="bt7" x="448.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix7" x="448" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">7</text>
+        <rect id="bt8" class="box" x="464" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt8" data-on="bt8" x="476.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix8" x="476" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">8</text>
+        <rect id="bt9" class="box" x="492" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt9" data-on="bt9" x="504.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix9" x="504" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">9</text>
+        <rect id="bt10" class="box" x="520" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt10" data-on="bt10" x="532.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix10" x="532" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">10</text>
+        <rect id="bt11" class="box" x="548" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt11" data-on="bt11" x="560.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix11" x="560" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">11</text>
+        <rect id="bt12" class="box" x="576" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt12" data-on="bt12" x="588.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix12" x="588" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">12</text>
+        <rect id="bt13" class="box" x="604" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt13" data-on="bt13" x="616.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix13" x="616" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">13</text>
+        <rect id="bt14" class="box" x="632" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt14" data-on="bt14" x="644.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix14" x="644" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">14</text>
+        <rect id="bt15" class="box" x="660" y="56" width="24" height="40" rx="4" fill="var(--line)"/>
+        <text id="t-bt15" data-on="bt15" x="672.0" y="81.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">0</text>
+        <text id="ix15" x="672" y="112" text-anchor="middle" font-size="11" fill="var(--muted)">15</text>
+        <rect id="db" class="box" x="700" y="140" width="180" height="74" rx="8" fill="var(--svc)"/>
+        <text id="h-db" data-on="db" x="790.0" y="166" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Cache and graph</text>
+        <text id="s-db" data-on="db" x="790.0" y="190" text-anchor="middle" font-size="14" fill="#fff"></text>
+        <rect id="dr" class="box" x="700" y="224" width="180" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-dr" data-on="dr" x="790.0" y="246.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <text id="vd" x="464" y="180" text-anchor="middle" font-size="16" font-weight="700" fill="var(--fg)"></text>
+        <text id="kn" x="40" y="300" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <text id="kn2" x="40" y="324" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-bloom-filter-penetration/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">bit set to one</span>
+    <span style="--c:var(--line)">bit still zero</span>
+    <span style="--c:var(--ok)">real address found</span>
+    <span style="--c:var(--wait)">false maybe: one wasted read</span>
+    <span style="--c:var(--fail)">zero bit, or a wrongly refused address</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Public lookup APIs that bots probe with random keys. Inside databases: Cassandra, RocksDB and HBase keep a Bloom filter per file to skip files that cannot hold a key. Redis has the RedisBloom module.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Put a Bloom filter in front of lookups when misses for keys that do not exist are a real load. Size it for the false-positive rate you can afford. Add every key on write and rebuild it on a schedule.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Negative caching</th><th>Bloom filter</th></tr>
+      <tr><td>Stops repeats of one missing key</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Stops a new random key each time</td><td>No</td><td>Yes, almost always</td></tr>
+      <tr><td>Can be wrong</td><td>Stale after the key is created</td><td>False maybe, never false no if every key is added</td></tr>
+      <tr><td>Memory</td><td>One entry per missing key</td><td>A few bits per known key</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Penetration is misses for keys that do not exist, so I put a Bloom filter in front: it says definitely not without a database read, and I add every new key to it on write.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[240,258,450];
+const BX=k=>252+k*28;
+const H=(ks,col)=>ks.map(k=>[212,34,BX(k),54,"",col||FG]);
+const SET=ks=>Object.assign(F(ks.map(k=>"bt"+k),COORD),Object.fromEntries(ks.map(k=>["t-bt"+k,"1"])));
+const BASE=[2,4,7,11,13];
+function bits(ks){const f={},t={};ks.forEach(k=>{f["bt"+k]=COORD;t["t-bt"+k]="1"});return{f,t};}
+const B0=bits(BASE);
+const steps={
+"filter":[
+ {pc:[1],t:"An empty filter",b:"The Bloom filter is a row of bits, all zero. It will hold every address the graph knows about.",w2:"It stores no addresses, only bits. A million addresses fit in about a megabyte.",
+  text:{"s-rq":"",vd:"",kn:"known addresses: none",kn2:"","t-dr":"database reads: 0"}},
+ {pc:[2, 3, 4],t:"Add a known address",b:"Add 0x18..cb24. Three hash functions turn it into three positions: 2, 7 and 13. Those bits become one.",w2:"Adding is cheap: three hashes, three bits.",
+  fill:bits([2,7,13]).f,text:{...bits([2,7,13]).t,"s-rq":"add 0x18..cb24",kn:"known: 0x18..cb24"},a:H([2,7,13],COORD)},
+ {pc:[2, 3, 4],t:"Add another",b:"Add 0x77..30ff. Its hashes are 4, 7 and 11. Bit 7 is already one. Bits can be shared.",w2:"Shared bits are why the filter is small, and why it can be wrong in one direction.",
+  fill:bits([4,11]).f,text:{...bits([4,11]).t,"s-rq":"add 0x77..30ff",kn2:"known: 0x77..30ff"},a:H([4,7,11],COORD)},
+ {pc:[6, 7, 8, 9],t:"A fake address: definitely not",b:"A script asks for a random address 0xab..9f10. Its hashes are 2, 5 and 11. The check on line 8 walks the bits: bit 2 is one, bit 5 is zero. Line 9 returns NOT FOUND at once.",w2:"One zero bit is proof. The answer is not found, and the cache and the graph are never asked.",
+  fill:{bt5:FAIL},text:{"s-rq":"0xab..9f10?",vd:"bit 5 is 0: definitely not"},a:H([2,5,11])},
+ {pc:[7, 10],t:"A real address: maybe",b:"An investigator asks for 0x77..30ff. The check on line 8 finds bits 4, 7 and 11 all one, so line 10 sends it on. It may exist, so the request goes on to the cache and the graph, which find it.",w2:"All ones means maybe, never certainly.",
+  fill:{bt5:LINE,dr:OK},text:{"s-rq":"0x77..30ff?",vd:"all ones: maybe, so look it up","t-dr":"database reads: 1, found"},a:[...H([4,7,11],OK),[690,76,700,150,""]]},
+ {pc:[7, 10],t:"A false positive",b:"Another fake, 0xcd..0e42, hashes to 2, 4 and 13. All three are one, set by other addresses. The filter says maybe. The graph says not found.",w2:"A false maybe costs one database read. A bigger filter with more bits makes it rarer.",
+  fill:{dr:WAIT},text:{"s-rq":"0xcd..0e42?",vd:"all ones by chance: false maybe","t-dr":"database reads: 2, one wasted"},a:H([2,4,13],WAIT)}
+],
+"stale":[
+ {pc:[12, 13],t:"A new address reaches the graph",b:"0x5e..aa01 receives its first transaction. The graph sync writes it. Line 14 is missing, so nobody adds it to the Bloom filter.",w2:"The filter is only right about addresses it was told about.",
+  fill:B0.f,text:{...B0.t,"s-rq":"0x5e..aa01 is new",vd:"",kn:"known: 0x18..cb24, 0x77..30ff",kn2:"in the graph only: 0x5e..aa01","t-dr":"database reads: 0"}},
+ {pc:[7, 8, 9],t:"The failure that matters: a real address refused",b:"An investigator asks for 0x5e..aa01. Its hashes are 3, 9 and 14. The check on line 8 finds bit 3 zero, so line 9 answers definitely not, and the investigator is told it does not exist.",
+  w2:"A Bloom filter has no false negatives only if every key was added. A stale filter refuses real data.",fill:{bt3:FAIL,bt9:FAIL,bt14:FAIL},text:{"s-rq":"0x5e..aa01?",vd:"zeros: definitely not, but it is real"},a:H([3,9,14],FAIL),ban:["a real address reported as missing",258]},
+ {pc:[14, 15],t:"Fix: add on write, rebuild on a schedule",b:"The graph sync adds every new address to the filter in the same step that writes it. A nightly job rebuilds the filter from the graph, to catch any miss.",
+  w2:"Keep the filter on the write path. Then a definitely not is always true.",fill:{bt3:COORD,bt9:COORD,bt14:COORD,dr:OK},text:{"t-bt3":"1","t-bt9":"1","t-bt14":"1",vd:"all ones: maybe, so look it up","t-dr":"database reads: 1, found",kn2:"added on write: 0x5e..aa01"},a:H([3,9,14],OK)}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"filter": {
+"label": "Go",
+"pc": [
+"bits = 16 zeros                         # the filter holds no addresses",
+"function add(addr):",
+"  for p in hashes(addr):                # 3 hash functions, 3 positions",
+"    bits[p] = 1",
+"",
+"function lookup(addr):",
+"  for p in hashes(addr):",
+"    if bits[p] == 0:                    # one zero bit is proof",
+"      return NOT FOUND                  # cache and graph never asked",
+"  return cacheThenGraph(addr)           # all ones: maybe",
+"",
+"graph sync, on a new address:",
+"  graph.write(addr)",
+"  add(addr)                             # the fix: add on write",
+"nightly: rebuild bits from every address in the graph"
+],
+"real": [
+"type Bloom struct {",
+"\tbits []bool",
+"\tpos  func(key string) []int // the k bit positions of a key",
+"}",
+"",
+"func (b *Bloom) Add(key string) {",
+"\tfor _, p := range b.pos(key) {",
+"\t\tb.bits[p] = true",
+"\t}",
+"}",
+"",
+"func (b *Bloom) MayContain(key string) bool {",
+"\tfor _, p := range b.pos(key) {",
+"\t\tif !b.bits[p] {",
+"\t\t\treturn false // one zero bit: definitely not",
+"\t\t}",
+"\t}",
+"\treturn true // all ones: maybe",
+"}",
+"",
+"lookup := func(addr string) string {",
+"\tif !b.MayContain(addr) {",
+"\t\treturn \"not found\" // the graph is not asked",
+"\t}",
+"\treturn cacheThenGraph(addr)",
+"}",
+"",
+"// graph sync: write the address and add it in the same step",
+"graph[addr] = true",
+"b.Add(addr)"
+],
+"map": {
+"1": [
+1,
+2,
+3,
+4
+],
+"2": [
+6
+],
+"3": [
+7
+],
+"4": [
+8
+],
+"6": [
+12,
+21
+],
+"7": [
+13
+],
+"8": [
+14,
+22
+],
+"9": [
+15,
+23
+],
+"10": [
+18,
+25
+],
+"12": [
+28
+],
+"13": [
+29
+],
+"14": [
+30
+],
+"15": [
+28
+]
+}
+},
+"stale": {
+"label": "Go",
+"pc": [
+"bits = 16 zeros                         # the filter holds no addresses",
+"function add(addr):",
+"  for p in hashes(addr):                # 3 hash functions, 3 positions",
+"    bits[p] = 1",
+"",
+"function lookup(addr):",
+"  for p in hashes(addr):",
+"    if bits[p] == 0:                    # one zero bit is proof",
+"      return NOT FOUND                  # cache and graph never asked",
+"  return cacheThenGraph(addr)           # all ones: maybe",
+"",
+"graph sync, on a new address:",
+"  graph.write(addr)",
+"  add(addr)                             # the fix: add on write",
+"nightly: rebuild bits from every address in the graph"
+],
+"real": [
+"type Bloom struct {",
+"\tbits []bool",
+"\tpos  func(key string) []int // the k bit positions of a key",
+"}",
+"",
+"func (b *Bloom) Add(key string) {",
+"\tfor _, p := range b.pos(key) {",
+"\t\tb.bits[p] = true",
+"\t}",
+"}",
+"",
+"func (b *Bloom) MayContain(key string) bool {",
+"\tfor _, p := range b.pos(key) {",
+"\t\tif !b.bits[p] {",
+"\t\t\treturn false // one zero bit: definitely not",
+"\t\t}",
+"\t}",
+"\treturn true // all ones: maybe",
+"}",
+"",
+"lookup := func(addr string) string {",
+"\tif !b.MayContain(addr) {",
+"\t\treturn \"not found\" // the graph is not asked",
+"\t}",
+"\treturn cacheThenGraph(addr)",
+"}",
+"",
+"// graph sync: write the address and add it in the same step",
+"graph[addr] = true",
+"b.Add(addr)"
+],
+"map": {
+"1": [
+1,
+2,
+3,
+4
+],
+"2": [
+6
+],
+"3": [
+7
+],
+"4": [
+8
+],
+"6": [
+12,
+21
+],
+"7": [
+13
+],
+"8": [
+14,
+22
+],
+"9": [
+15,
+23
+],
+"10": [
+18,
+25
+],
+"12": [
+28
+],
+"13": [
+29
+],
+"14": [
+30
+],
+"15": [
+28
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

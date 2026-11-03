@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PII and redaction</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>PII and redaction: swap it out, put it back inside</h1>
+  <p class="lede">An investigator asks the agent to summarise a customer's case. The notes hold the customer's email and phone number. Press <b>Next</b> and watch them swapped for placeholders before the call, and put back after it. The second tab shows the side doors where data still leaks.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="redact">Redact and restore</button>
+    <button role="tab" aria-selected="false" data-mode="leak">The failure: side doors</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Case notes with personal data redacted before a hosted model call, and the real values restored inside your own system</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-pii-redaction/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">PII (personally identifiable information)</span>
+    <span style="--c:var(--undo)">redactor and mapping, in code</span>
+    <span style="--c:var(--coord)">hosted model API, outside</span>
+    <span style="--c:var(--ok)">placeholder, safe to send</span>
+    <span style="--c:var(--fail)">raw PII that left</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Customer support or case notes sent to a hosted model API. Eval sets built from production traces, which must be scrubbed before they go into git. Public blockchain data needs no redaction: it is already public, but a wallet linked to a name is PII.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Classify the data first. Route everything that leaves (prompts, tool results, traces, eval sets) through one redactor in code. Keep the placeholder mapping inside. Where text cannot be redacted, use a no-retention contract or a model on your own hardware. Log what was sent.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Send raw text</th><th>Redact, then restore</th></tr>
+      <tr><td>What leaves</td><td>Names, emails, phone numbers</td><td>Placeholders like CUSTOMER_1</td></tr>
+      <tr><td>Answer quality</td><td>Full</td><td>Nearly the same: the model works with placeholders</td></tr>
+      <tr><td>Where the real values live</td><td>Also at the provider</td><td>Only inside your system</td></tr>
+      <tr><td>Weak spot</td><td>Everything</td><td>Missed names, and paths that skip the redactor</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"PII leaves your control when it enters a hosted prompt, so I swap it for placeholders in code and put it back inside my own system."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={"redact":{pc:["notes = case text with an email, a phone and a wallet address",
+"find PII: a regex for emails and phones, a detector for names",
+"for each match: placeholder = CUSTOMER_1, PHONE_1, ...",
+"  mapping[placeholder] = real value        # stays inside",
+"prompt = redacted text -> hosted model API",
+"answer comes back with placeholders",
+"restore: placeholder -> real value, inside your system",
+"trace = copy of the prompt -> store it in-house",
+"WRONG: the raw trace goes to a hosted tracing service",
+"tool results pass the redactor before they join the prompt",
+"the detector can miss a name -> no-retention contract or own model",
+"one gate: prompts, tool results, traces, eval sets all redacted"],real:["PATTERNS = [",
+"    (\"CUSTOMER\", re.compile(r\"[\\w.+-]+@[\\w-]+\\.[\\w.]+\")),   # email",
+"    (\"PHONE\", re.compile(r\"\\+\\d{2}(?: \\d{3}){3}\")),",
+"    (\"NAME\", re.compile(r\"Anna Kowalska\")),   # toy detector: the full name only",
+"]",
+"",
+"def redact(text, mapping):",
+"    for prefix, pattern in PATTERNS:",
+"        for value in pattern.findall(text):",
+"            placeholder = next((p for p, v in mapping.items() if v == value), None)",
+"            if placeholder is None:",
+"                n = sum(1 for p in mapping if p.startswith(prefix)) + 1",
+"                placeholder = f\"{prefix}_{n}\"",
+"                mapping[placeholder] = value",
+"            text = text.replace(value, placeholder)",
+"    return text",
+"",
+"def restore(text, mapping):",
+"    for placeholder, value in mapping.items():",
+"        text = text.replace(placeholder, value)",
+"    return text",
+"",
+"def call(notes, tool_result=\"\", gate=False):",
+"    mapping = {}",
+"    prompt = redact(notes, mapping)",
+"    extra = redact(tool_result, mapping) if gate else tool_result     # side door 2",
+"    OUTSIDE[\"model\"].append(prompt + extra)",
+"    answer = hosted_model(prompt)",
+"    trace = {\"prompt\": notes + tool_result, \"answer\": answer}         # raw copy",
+"    if gate:",
+"        INSIDE_TRACES.append(trace)                                   # traces stay in-house",
+"    else:",
+"        OUTSIDE[\"tracer\"].append(trace[\"prompt\"])                     # side door 1",
+"    return restore(answer, mapping), mapping",
+"",
+"# no gate: 2 personal values in the prompt, 4 in the hosted trace",
+"# \"Anna called again.\" -> the detector misses Anna: 1 name sent as is",
+"# one gate: 0 in the prompt, 0 hosted traces, 1 trace kept inside"],map:{"1": [23], "2": [1, 2, 3, 4, 8, 9], "3": [10, 11, 12, 13, 15], "4": [14], "5": [25, 27, 28], "6": [28], "7": [18, 19, 20, 21, 34], "8": [29, 30, 31], "9": [32, 33, 36], "10": [26, 36], "11": [4, 37], "12": [26, 30, 31, 38]}},"leak":{pc:["notes = case text with an email, a phone and a wallet address",
+"find PII: a regex for emails and phones, a detector for names",
+"for each match: placeholder = CUSTOMER_1, PHONE_1, ...",
+"  mapping[placeholder] = real value        # stays inside",
+"prompt = redacted text -> hosted model API",
+"answer comes back with placeholders",
+"restore: placeholder -> real value, inside your system",
+"trace = copy of the prompt -> store it in-house",
+"WRONG: the raw trace goes to a hosted tracing service",
+"tool results pass the redactor before they join the prompt",
+"the detector can miss a name -> no-retention contract or own model",
+"one gate: prompts, tool results, traces, eval sets all redacted"],real:["PATTERNS = [",
+"    (\"CUSTOMER\", re.compile(r\"[\\w.+-]+@[\\w-]+\\.[\\w.]+\")),   # email",
+"    (\"PHONE\", re.compile(r\"\\+\\d{2}(?: \\d{3}){3}\")),",
+"    (\"NAME\", re.compile(r\"Anna Kowalska\")),   # toy detector: the full name only",
+"]",
+"",
+"def redact(text, mapping):",
+"    for prefix, pattern in PATTERNS:",
+"        for value in pattern.findall(text):",
+"            placeholder = next((p for p, v in mapping.items() if v == value), None)",
+"            if placeholder is None:",
+"                n = sum(1 for p in mapping if p.startswith(prefix)) + 1",
+"                placeholder = f\"{prefix}_{n}\"",
+"                mapping[placeholder] = value",
+"            text = text.replace(value, placeholder)",
+"    return text",
+"",
+"def restore(text, mapping):",
+"    for placeholder, value in mapping.items():",
+"        text = text.replace(placeholder, value)",
+"    return text",
+"",
+"def call(notes, tool_result=\"\", gate=False):",
+"    mapping = {}",
+"    prompt = redact(notes, mapping)",
+"    extra = redact(tool_result, mapping) if gate else tool_result     # side door 2",
+"    OUTSIDE[\"model\"].append(prompt + extra)",
+"    answer = hosted_model(prompt)",
+"    trace = {\"prompt\": notes + tool_result, \"answer\": answer}         # raw copy",
+"    if gate:",
+"        INSIDE_TRACES.append(trace)                                   # traces stay in-house",
+"    else:",
+"        OUTSIDE[\"tracer\"].append(trace[\"prompt\"])                     # side door 1",
+"    return restore(answer, mapping), mapping",
+"",
+"# no gate: 2 personal values in the prompt, 4 in the hosted trace",
+"# \"Anna called again.\" -> the detector misses Anna: 1 name sent as is",
+"# one gate: 0 in the prompt, 0 hosted traces, 1 trace kept inside"],map:{"1": [23], "2": [1, 2, 3, 4, 8, 9], "3": [10, 11, 12, 13, 15], "4": [14], "5": [25, 27, 28], "6": [28], "7": [18, 19, 20, 21, 34], "8": [29, 30, 31], "9": [32, 33, 36], "10": [26, 36], "11": [4, 37], "12": [26, 30, 31, 38]}}};
+//ENDCODE
+const steps={
+"redact":[
+ {t:"The case notes",b:"The notes say: anna.k@mail.com reported a theft, phone +48 600 100 200, funds sent to 0x9f3c...0071.",w:"The email and phone point to a person. That is PII (personally identifiable information).",notes:"raw",pc:[1]},
+ {t:"Find the PII",b:"A redactor in code scans the notes: a pattern for emails, a pattern for phone numbers like +48 600 100 200, and a detector for names. It finds 2 values.",w:"Find it before the call, not after.",notes:"raw",red:1,find:1,pc:[2]},
+ {t:"Swap for placeholders",b:"The email becomes CUSTOMER_1 and the phone PHONE_1. The same value always gets the same placeholder. The mapping from placeholder to real value stays in a table inside your system.",w:"Stable placeholders keep the text readable for the model.",notes:"raw",red:1,map:1,sent:"CUSTOMER_1 reported a theft, PHONE_1",pc:[3, 4]},
+ {t:"Send the redacted text",b:"Only the redacted text crosses the line to the hosted model API. The check counts the personal values in it: 0.",w:"Nothing that points to the person has left.",notes:"raw",red:1,map:1,sent:"CUSTOMER_1 reported a theft, PHONE_1",cross:1,pc:[5]},
+ {t:"The answer has placeholders",b:"The model writes: \"CUSTOMER_1 reported a theft. The funds went to 0x9f3c...0071.\"",w:"The model never needed the real email to write a good summary.",notes:"raw",red:1,map:1,cross:1,back:1,pc:[6]},
+ {t:"Put the real values back",b:"Inside your system, the mapping turns CUSTOMER_1 back into the real email. The investigator reads the full summary.",w:"The real values only ever existed inside your system.",notes:"raw",red:1,map:1,cross:1,back:1,restore:1,pc:[7]},
+ {t:"Traces follow the same rules",b:"The logs and traces of this call hold the same data. They are stored in-house, under the same rules as the notes.",w:"A trace is a copy of the prompt. Treat it like one.",notes:"raw",red:1,map:1,cross:1,back:1,restore:1,trace:"in",pc:[8]}
+],
+"leak":[
+ {t:"The prompt is redacted",b:"The user's question goes through the redactor. The team thinks the job is done.",w:"The prompt is one path out. There are others.",notes:"raw",red:1,cross:1,sent:"CUSTOMER_1 reported a theft, PHONE_1",pc:[5]},
+ {t:"The failure: a raw trace leaves",b:"The tracing tool sends the full, unredacted trace to a hosted tracing service. The email and phone have left by a side door: 4 personal values in the hosted trace.",w:"Redacting the prompt and forgetting the traces leaks the same data.",notes:"raw",red:1,cross:1,trace:"out",pc:[9]},
+ {t:"A second side door: tool results",b:"A tool fetches the customer record and its result goes straight into the prompt, skipping the redactor: 2 personal values in the prompt.",w:"Every path into a hosted prompt must pass the redactor, not only the user's text.",notes:"raw",red:1,cross:1,trace:"out",tool:1,pc:[10]},
+ {t:"Redaction is not perfect",b:"A note says \"Anna called again\". The name detector knows the full name \"Anna Kowalska\" and misses \"Anna\" alone. It is sent as is: 1 name.",w:"Detectors miss some names. Plan for that.",notes:"raw",red:1,cross:1,miss:1,pc:[2, 11]},
+ {t:"The fix: one gate for everything that leaves",b:"Prompts, tool results, traces and eval sets all pass one redactor. Traces stay in-house. What was sent is logged. Text that cannot be redacted goes to a no-retention contract or a model on your own hardware. Now the prompt holds 0 personal values, 0 traces go to a hosted service, and 1 stays inside.",w:"Classify first, redact everything that leaves, and keep the copies inside.",notes:"raw",red:1,map:1,cross:1,trace:"in",gate:1,pc:[12, 8, 10]}
+]};
+function scene(s){
+  let h=`<line x1="600" y1="20" x2="600" y2="345" stroke="var(--muted)" stroke-width="2" stroke-dasharray="8 6"/>`+T(588,36,"your system","var(--muted)",13,"end",1)+T(612,36,"outside","var(--muted)",13,"start",1);
+  h+=R(20,60,180,80,"var(--wait)","","");h+=T(110,90,"Case notes","#fff",14,"middle",1)+T(110,112,"email, phone","#fff",12,"middle")+T(110,128,"0x9f3c...0071","#fff",12,"middle");
+  if(s.red){h+=A(202,100,248,100,"var(--fg)");h+=R(250,70,150,60,"var(--undo)",s.gate?"one gate":"Redactor","#fff",14);
+    if(s.find)h+=T(325,152,"emails, phones, names","var(--undo)",12,"middle",1);}
+  if(s.map)h+=R(250,250,150,56,"var(--undo)","map: CUSTOMER_1","#fff",13);
+  if(s.map&&s.red)h+=A(325,132,325,248,"var(--undo)");
+  h+=R(660,70,210,60,"var(--coord)","Hosted model API","#fff",14);
+  if(s.cross){h+=A(402,100,656,100,s.miss?"var(--fail)":"var(--ok)");h+=T(530,90,s.miss?"\"Anna called again\"":"redacted only",s.miss?"var(--fail)":"var(--ok)",12,"middle",1);}
+  if(s.sent)h+=T(420,170,s.sent,"var(--ok)",12,"start",1);
+  if(s.back){h+=A(656,120,452,200,"var(--ok)");h+=T(560,145,"CUSTOMER_1 reported...","var(--ok)",12,"end",1);}
+  if(s.restore){h+=R(420,200,170,44,"var(--undo)","put values back","#fff",13);h+=A(450,246,402,270,"var(--undo)");h+=A(505,246,505,288,"var(--fg)");h+=R(420,290,170,44,"var(--ok)","Investigator","#fff",14);}
+  if(s.trace==="in")h+=R(20,290,180,44,"var(--undo)","traces: in-house","#fff",13);
+  if(s.trace==="out"){h+=R(20,290,180,44,"var(--wait)","raw trace","#fff",13);h+=R(660,280,210,50,"var(--fail)","Hosted tracing","#fff",14);h+=A(202,312,656,305,"var(--fail)","email and phone leave");}
+  if(s.tool){h+=R(20,180,180,50,"var(--wait)","Tool: customer record","#fff",13);h+=A(202,205,656,125,"var(--fail)","skips the redactor");}
+  if(s.miss)h+=T(110,170,"name detector missed it","var(--fail)",12,"middle",1);
+  if(s.gate)h+=T(325,160,"prompts, tools, traces, evals","var(--undo)",12,"middle",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

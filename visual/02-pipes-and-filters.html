@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipes and filters</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Pipes and filters</h1>
+  <p class="lede">Inside the indexer, each block goes through five stages. Each stage is a goroutine with a channel in and a channel out. When pricing slows down, the channels fill and fetching waits. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="bounded" id="tab-bounded">Bounded channels</button>
+    <button role="tab" aria-selected="false" data-mode="unbounded" id="tab-unbounded">One unbounded channel</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Five indexer stages joined by channels of capacity three, a warehouse, and a process memory bar</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-pf">
+          <g class="node" id="n-st1" data-c="c"><rect class="box" id="r-st1" x="20" y="60" width="130" height="70" rx="8"/><text id="t-st1l" x="85.0" y="92" text-anchor="middle" font-size="14">Fetch block</text><text id="t-st1s" x="85.0" y="108" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-st2" data-c="c"><rect class="box" id="r-st2" x="200" y="60" width="130" height="70" rx="8"/><text id="t-st2l" x="265.0" y="92" text-anchor="middle" font-size="14">Decode receipts</text><text id="t-st2s" x="265.0" y="108" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-st3" data-c="c"><rect class="box" id="r-st3" x="380" y="60" width="130" height="70" rx="8"/><text id="t-st3l" x="445.0" y="92" text-anchor="middle" font-size="14">Extract swaps</text><text id="t-st3s" x="445.0" y="108" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-st4" data-c="c"><rect class="box" id="r-st4" x="560" y="60" width="130" height="70" rx="8"/><text id="t-st4l" x="625.0" y="92" text-anchor="middle" font-size="14">Price at day</text><text id="t-st4s" x="625.0" y="108" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-st5" data-c="c"><rect class="box" id="r-st5" x="740" y="60" width="130" height="70" rx="8"/><text id="t-st5l" x="805.0" y="92" text-anchor="middle" font-size="14">Write rows</text><text id="t-st5s" x="805.0" y="108" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="arrow" id="a-p1" data-c="m"><path class="route" d="M150 95 L196 95" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-p2" data-c="m"><path class="route" d="M330 95 L376 95" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-p3" data-c="m"><path class="route" d="M510 95 L556 95" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-p4" data-c="m"><path class="route" d="M690 95 L736 95" marker-end="url(#arr)"/></g>
+          <g class="node" id="n-c10" data-c="o"><rect class="box" id="r-c10" x="125" y="150" width="30" height="20" rx="4"/><text id="t-c10l" x="140.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c11" data-c="o"><rect class="box" id="r-c11" x="160" y="150" width="30" height="20" rx="4"/><text id="t-c11l" x="175.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c12" data-c="o"><rect class="box" id="r-c12" x="195" y="150" width="30" height="20" rx="4"/><text id="t-c12l" x="210.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c20" data-c="o"><rect class="box" id="r-c20" x="305" y="150" width="30" height="20" rx="4"/><text id="t-c20l" x="320.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c21" data-c="o"><rect class="box" id="r-c21" x="340" y="150" width="30" height="20" rx="4"/><text id="t-c21l" x="355.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c22" data-c="o"><rect class="box" id="r-c22" x="375" y="150" width="30" height="20" rx="4"/><text id="t-c22l" x="390.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c30" data-c="o"><rect class="box" id="r-c30" x="485" y="150" width="30" height="20" rx="4"/><text id="t-c30l" x="500.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c31" data-c="o"><rect class="box" id="r-c31" x="520" y="150" width="30" height="20" rx="4"/><text id="t-c31l" x="535.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c32" data-c="o"><rect class="box" id="r-c32" x="555" y="150" width="30" height="20" rx="4"/><text id="t-c32l" x="570.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c40" data-c="o"><rect class="box" id="r-c40" x="665" y="150" width="30" height="20" rx="4"/><text id="t-c40l" x="680.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c41" data-c="o"><rect class="box" id="r-c41" x="700" y="150" width="30" height="20" rx="4"/><text id="t-c41l" x="715.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <g class="node" id="n-c42" data-c="o"><rect class="box" id="r-c42" x="735" y="150" width="30" height="20" rx="4"/><text id="t-c42l" x="750.0" y="165" text-anchor="middle" font-size="15"></text></g>
+          <text id="t-chl" x="450" y="192" text-anchor="middle" font-size="13" font-weight="400" fill="var(--muted)">each channel holds at most 3 items</text>
+          <text id="t-q3" x="535" y="165" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fail)"></text>
+          <g class="node" id="n-st4b" data-c="h"><rect class="box" id="r-st4b" x="560" y="205" width="130" height="50" rx="8"/><text id="t-st4bl" x="625.0" y="226" text-anchor="middle" font-size="14">Price at day</text><text id="t-st4bs" x="625.0" y="244" text-anchor="middle" font-size="12" font-weight="400">copy 2</text></g>
+          <g class="node" id="n-wh" data-c="v"><rect class="box" id="r-wh" x="740" y="205" width="130" height="50" rx="8"/><text id="t-whl" x="805.0" y="235" text-anchor="middle" font-size="15">Warehouse</text></g>
+          <g class="arrow" id="a-wr" data-c="m"><path class="route" d="M805 130 L805 201" marker-end="url(#arr)"/></g>
+          <text x="20" y="282" fill="var(--muted)" font-size="13" font-weight="400">process memory</text>
+          <g class="node" id="n-mem" data-c="ok"><rect class="box" id="r-mem" x="20" y="290" width="120" height="26" rx="4"/><text id="t-meml" x="80.0" y="308" text-anchor="middle" font-size="15"></text></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-pipes-and-filters/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a stage</span>
+    <span style="--c:var(--ok)">working at full speed</span>
+    <span style="--c:var(--wait)">waiting or slow</span>
+    <span style="--c:var(--svc)">an item in a channel slot</span>
+    <span style="--c:var(--fail)">failed or out of memory</span>
+    <span style="--c:var(--line)">an empty slot</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a Go indexer</h2>
+      <p>Each stage is a goroutine and each pipe is a channel made with a capacity: <code>make(chan Block, 3)</code>. A slow stage blocks the send before it. Scale one stage by starting more goroutines that read the same channel.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: Unix and streams</h2>
+      <p>Unix shell pipes are the original pipes and filters. Kafka Streams and Flink are the same idea across machines. Inside one service it is a pipeline. Between services it is events: a pipeline is a chain, events are a bus.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Bounded channels</th><th>Unbounded channels</th></tr>
+      <tr><td>A slow stage</td><td>Earlier stages wait</td><td>Earlier stages keep going</td></tr>
+      <tr><td>Memory</td><td>Flat, capped by the bounds</td><td>Grows until the process dies</td></tr>
+      <tr><td>Signal</td><td>A full channel shows the slow stage</td><td>Nothing, until the crash</td></tr>
+      <tr><td>Scale</td><td>More copies of the slow stage</td><td>Does not help in time</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Pipes and filters is a chain of small stages on bounded channels, so a slow stage slows the fetch instead of filling memory."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+bounded:[
+ {"t": "Five stages, one channel between each", "b": "The program indexes 40 blocks, from 9401. Each block passes five stages: fetch, decode, extract, price, write. Each stage is a goroutine running one loop: take an item from the channel in, do the job, send the result to the channel out. Each of the four channels is made with capacity 3.", "w": "Each stage does one job, so each one is small and easy to test.", "m": "memory: flat", "pc": [1, 2, 4, 5]},
+ {"t": "Blocks flow", "b": "Fetch reads block 9401 and sends it into channel 1. Decode takes it out at once, so the send never waits. Each channel holds about one item. Every stage is busy.", "w": "When the stages run at the same speed, the channels stay nearly empty.", "pc": [5, 2], "n": {"st1": "ok", "st2": "ok", "st3": "ok", "st4": "ok", "st5": "ok", "c10": "v", "c20": "v", "c30": "v", "c40": "v"}, "a": {"p1": "ok", "p2": "ok", "p3": "ok", "p4": "ok", "wr": "ok"}},
+ {"t": "Pricing slows down", "b": "The price lookup gets stuck on the swap of block 9401. In the program it waits on a release signal. Extract keeps sending into channel 3: 9402, 9403, 9404. Then all 3 slots are full.", "w": "The channel has a capacity of three. It cannot grow past that.", "pc": [6, 7], "n": {"st4": "w", "c40": "o", "c30": "v", "c31": "v", "c32": "v"}, "x": {"st4s": "slow"}},
+ {"t": "A full channel blocks the stage before it", "b": "Extract tries to send 9405 into the full channel 3, so its send waits. Channel 2 then fills (9406 to 9408) and decode waits holding 9409. Channel 1 fills (9410 to 9412) and fetch waits holding 9413. The run prints: fetch stopped after 13 of 40 blocks, channel lengths 3 3 3 0.", "w": "That is back-pressure, for free. No code checks for it: a send on a full channel simply waits.", "pc": [9, 2], "n": {"st3": "w", "st2": "w", "st1": "w", "c10": "v", "c11": "v", "c12": "v", "c20": "v", "c21": "v", "c22": "v", "c30": "v", "c31": "v", "c32": "v"}, "a": {"p1": "w", "p2": "w", "p3": "w"}, "x": {"st3s": "waits: channel full", "st2s": "waits", "st1s": "waits"}},
+ {"t": "Memory stays flat", "b": "9 items wait in the channels. The bound is 4 channels x 3 slots = 12. However long pricing stays stuck, the process holds the same 13 blocks.", "w": "A bound turns a slow stage into a slower pipeline, not a crash.", "m": "memory: flat, 9 items waiting, bound 12", "pc": [4, 10]},
+ {"t": "Scale the slow stage", "b": "The program starts a second copy of the price stage on the same channel 3, then the lookup recovers. Both copies take swaps from channel 3. The channels drain and fetch sends again. The run ends with 40 of 40 rows written.", "w": "Run more copies of the slow stage, not of the whole pipeline.", "pc": [12], "n": {"st4b": "ok", "st1": "ok", "st2": "ok", "st3": "ok", "st4": "ok", "c10": "v", "c11": "o", "c12": "o", "c20": "v", "c21": "o", "c22": "o", "c30": "v", "c31": "o", "c32": "o"}, "a": {"p1": "ok", "p2": "ok", "p3": "ok"}, "x": {"st1s": "", "st2s": "", "st3s": "", "st4s": ""}, "m": "memory: flat, fetch at full speed"}
+],
+unbounded:[
+ {"t": "Same pipeline, one unbounded channel", "b": "Channel 3, between extract and pricing, is replaced by a queue with no limit. It appends every swap it is given and never makes extract wait. The memory budget in the program is 20 queued swaps.", "w": "It looks harmless while every stage runs at the same speed.", "pc": [14], "n": {"st1": "ok", "st2": "ok", "st3": "ok", "st4": "ok", "st5": "ok", "c30": "h", "c31": "h", "c32": "h", "c10": "v", "c20": "v", "c40": "v"}, "a": {"p1": "ok", "p2": "ok", "p3": "ok", "p4": "ok", "wr": "ok"}, "x": {"q3": "no limit", "chl": "channel 3 has no limit"}, "m": "memory: flat"},
+ {"t": "Pricing slows, nothing pushes back", "b": "The price lookup gets stuck on block 9401 again. Extract sends 9402, 9403 and on into the queue. The queue never says full, so extract never waits, decode never waits and fetch never waits. The queue grows by one swap per block.", "w": "No back-pressure: the fast stages keep working as if nothing were wrong.", "pc": [7, 14], "n": {"st4": "w", "mem": "w"}, "x": {"st4s": "slow", "q3": "queue: growing"}, "wd": {"mem": 300}, "m": "memory: rising"},
+ {"t": "Memory climbs", "b": "Every queued swap lives in memory. After each append the queue checks its size against the budget of 20. It passes at 5, at 10, at 20.", "w": "An unbounded queue hides a slow stage until memory runs out.", "pc": [14, 15], "n": {"mem": "f"}, "x": {"q3": "queue: 20, budget 20"}, "wd": {"mem": 600}, "m": "memory: still rising"},
+ {"t": "Out of memory", "b": "The 21st queued swap passes the budget of 20, and the process is killed. The run prints: 22 swaps lost (21 in the queue, 1 held by pricing), 0 rows written. The last checkpoint was before block 9401, so the restart starts again at 9401.", "w": "This is the failure an interviewer probes: an unbounded channel turns slowness into a crash.", "pc": [15], "n": {"st1": "f", "st2": "f", "st3": "f", "st4": "f", "st5": "f"}, "a": {"p1": "f", "p2": "f", "p3": "f", "p4": "f", "wr": "x"}, "x": {"q3": "queue: 21, lost"}, "wd": {"mem": 860}, "m": "process killed: 22 swaps lost"},
+ {"t": "The fix: bound every channel", "b": "Channel 3 is made with capacity 3 again. The same stuck lookup now makes fetch wait after 13 blocks, with 9 items in the channels, as in the first tab.", "w": "Bound every channel. A full channel is a signal, not a failure.", "pc": [17, 9], "n": {"st1": "w", "st2": "w", "st3": "w", "st4": "w", "st5": "ok", "mem": "ok", "c10": "v", "c11": "v", "c12": "v", "c20": "v", "c21": "v", "c22": "v", "c30": "v", "c31": "v", "c32": "v"}, "a": {"p1": "w", "p2": "w", "p3": "w", "p4": "ok", "wr": "ok"}, "x": {"q3": "", "chl": "each channel holds at most 3 items", "st4s": "slow", "st3s": "waits"}, "wd": {"mem": 120}, "m": "memory: flat"}
+]};
+const SCENE={"bounded": "pf", "unbounded": "pf"};
+const CODE={
+ bounded:{label:"Go",why:"",
+  pc:[
+   "stage(in, out, job):",
+   "  for each item in in: send job(item) to out   # waits while out is full",
+   "pipeline(40 blocks from 9401):",
+   "  ch1, ch2, ch3, ch4 = channel(capacity 3)     # the bound",
+   "  fetch -> ch1 -> decode -> ch2 -> extract -> ch3 -> price -> ch4 -> write",
+   "price(swap):",
+   "  look up the day price                        # slow, or stuck",
+   "# what a full channel does",
+   "a send on a full channel waits                 # back-pressure",
+   "items waiting <= 4 channels x 3 = 12           # memory is flat",
+   "# scale the slow stage",
+   "start a second price copy that reads ch3",
+   "# the unbounded channel",
+   "queue3 = a list with no limit: append, never wait",
+   "if queue3 holds more than memory (20): the OS kills the process",
+   "# the fix",
+   "ch3 = channel(capacity 3) again"],
+  real:[
+   "func stage(in <-chan Item, out chan<- Item, job func(Item) Item) {",
+   "\tfor it := range in {",
+   "\t\tout <- job(it)",
+   "\t}",
+   "\tclose(out)",
+   "}",
+   "",
+   "func newPipeline(bounded3 bool) *Pipeline {",
+   "\tfor k := 1; k <= 4; k++ {",
+   "\t\tp.ch[k] = make(chan Item, capacity) // make(chan Item, 3)",
+   "\t}",
+   "\tgo func() { // stage 1: fetch block",
+   "\t\tfor b := firstBlock; b < firstBlock+blocks; b++ {",
+   "\t\t\tp.fetched.Add(1)",
+   "\t\t\tp.ch[1] <- Item{Block: b} // waits when channel 1 is full",
+   "\t\t}",
+   "\t\tclose(p.ch[1])",
+   "\t}()",
+   "\tgo stage(p.ch[1], p.ch[2], decode) // stage 2",
+   "\tif bounded3 {",
+   "\t\tgo stage(p.ch[2], p.ch[3], extract) // stage 3",
+   "\t} else {",
+   "\t\tp.ch[3] = make(chan Item) // the queue hands swaps to pricing one at a time",
+   "\t\traw := make(chan Item)    // extract hands each swap straight to the queue",
+   "\t\tgo stage(p.ch[2], raw, extract)",
+   "\t\tgo unbounded(raw, p.ch[3], p.killed)",
+   "\t}",
+   "",
+   "func (p *Pipeline) price(in <-chan Item, out chan<- Item, wg *sync.WaitGroup) {",
+   "\tdefer wg.Done()",
+   "\tfor it := range in {",
+   "\t\t<-p.release // the price lookup is stuck",
+   "\t\tout <- it",
+   "\t}",
+   "}",
+   "",
+   "func unbounded(in <-chan Item, out chan<- Item, killed chan<- int) {",
+   "\tfor in != nil || len(queue) > 0 {",
+   "\t\tselect {",
+   "\t\tcase it, ok := <-in:",
+   "\t\t\tif !ok {",
+   "\t\t\t\tin = nil",
+   "\t\t\t\tcontinue",
+   "\t\t\t}",
+   "\t\t\tqueue = append(queue, it) // never waits",
+   "\t\t\tif len(queue) > memBudget {",
+   "\t\t\t\tkilled <- len(queue) // out of memory",
+   "\t\t\t\treturn",
+   "",
+   "\twg.Add(1)",
+   "\tgo p.price(p.ch[3], p.ch[4], &wg) // copy 2 reads the same channel"],
+  map:{"1": [1], "2": [2, 3], "3": [8, 13], "4": [9, 10], "5": [12, 15, 19, 21], "6": [29], "7": [32, 33], "9": [3, 15], "10": [10], "12": [50, 51], "14": [37, 45], "15": [46, 47], "17": [20, 21]}},
+ unbounded:{label:"Go",why:"",
+  pc:[
+   "stage(in, out, job):",
+   "  for each item in in: send job(item) to out   # waits while out is full",
+   "pipeline(40 blocks from 9401):",
+   "  ch1, ch2, ch3, ch4 = channel(capacity 3)     # the bound",
+   "  fetch -> ch1 -> decode -> ch2 -> extract -> ch3 -> price -> ch4 -> write",
+   "price(swap):",
+   "  look up the day price                        # slow, or stuck",
+   "# what a full channel does",
+   "a send on a full channel waits                 # back-pressure",
+   "items waiting <= 4 channels x 3 = 12           # memory is flat",
+   "# scale the slow stage",
+   "start a second price copy that reads ch3",
+   "# the unbounded channel",
+   "queue3 = a list with no limit: append, never wait",
+   "if queue3 holds more than memory (20): the OS kills the process",
+   "# the fix",
+   "ch3 = channel(capacity 3) again"],
+  real:[
+   "func stage(in <-chan Item, out chan<- Item, job func(Item) Item) {",
+   "\tfor it := range in {",
+   "\t\tout <- job(it)",
+   "\t}",
+   "\tclose(out)",
+   "}",
+   "",
+   "func newPipeline(bounded3 bool) *Pipeline {",
+   "\tfor k := 1; k <= 4; k++ {",
+   "\t\tp.ch[k] = make(chan Item, capacity) // make(chan Item, 3)",
+   "\t}",
+   "\tgo func() { // stage 1: fetch block",
+   "\t\tfor b := firstBlock; b < firstBlock+blocks; b++ {",
+   "\t\t\tp.fetched.Add(1)",
+   "\t\t\tp.ch[1] <- Item{Block: b} // waits when channel 1 is full",
+   "\t\t}",
+   "\t\tclose(p.ch[1])",
+   "\t}()",
+   "\tgo stage(p.ch[1], p.ch[2], decode) // stage 2",
+   "\tif bounded3 {",
+   "\t\tgo stage(p.ch[2], p.ch[3], extract) // stage 3",
+   "\t} else {",
+   "\t\tp.ch[3] = make(chan Item) // the queue hands swaps to pricing one at a time",
+   "\t\traw := make(chan Item)    // extract hands each swap straight to the queue",
+   "\t\tgo stage(p.ch[2], raw, extract)",
+   "\t\tgo unbounded(raw, p.ch[3], p.killed)",
+   "\t}",
+   "",
+   "func (p *Pipeline) price(in <-chan Item, out chan<- Item, wg *sync.WaitGroup) {",
+   "\tdefer wg.Done()",
+   "\tfor it := range in {",
+   "\t\t<-p.release // the price lookup is stuck",
+   "\t\tout <- it",
+   "\t}",
+   "}",
+   "",
+   "func unbounded(in <-chan Item, out chan<- Item, killed chan<- int) {",
+   "\tfor in != nil || len(queue) > 0 {",
+   "\t\tselect {",
+   "\t\tcase it, ok := <-in:",
+   "\t\t\tif !ok {",
+   "\t\t\t\tin = nil",
+   "\t\t\t\tcontinue",
+   "\t\t\t}",
+   "\t\t\tqueue = append(queue, it) // never waits",
+   "\t\t\tif len(queue) > memBudget {",
+   "\t\t\t\tkilled <- len(queue) // out of memory",
+   "\t\t\t\treturn",
+   "",
+   "\twg.Add(1)",
+   "\tgo p.price(p.ch[3], p.ch[4], &wg) // copy 2 reads the same channel"],
+  map:{"1": [1], "2": [2, 3], "3": [8, 13], "4": [9, 10], "5": [12, 15, 19, 21], "6": [29], "7": [32, 33], "9": [3, 15], "10": [10], "12": [50, 51], "14": [37, 45], "15": [46, 47], "17": [20, 21]}}};
+let mode="bounded";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

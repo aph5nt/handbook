@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tail latency and hedging</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Tail latency and hedged requests</h1>
+  <p class="lede">A wallet page asks 100 storage shards for its rows and must wait for all of them. Each shard is slow only once in a hundred calls. Press <b>Next</b> to see why the page is still slow most of the time, and how a hedged request fixes it.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="fan" id="tab-fan">Fan-out: the slowest shard wins</button>
+    <button role="tab" aria-selected="false" data-mode="hedge" id="tab-hedge">Hedged request</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 410" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A wallet page fanning out to 100 shards, one of them slow, and a hedged request to a replica</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-tail-latency-hedging/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">asked, waiting for an answer</span>
+    <span style="--c:var(--ok)">answered fast</span>
+    <span style="--c:var(--wait)">in a pause, slow</span>
+    <span style="--c:var(--fail)">page slow, or done twice</span>
+    <span style="--c:var(--line)">cancelled or not asked</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Google's paper "The Tail at Scale" introduced hedged and tied requests for Bigtable-style systems. Cassandra's speculative retry sends a read that is slower than the p99 to another replica. Any search or feed page that fans out to many shards lives on its tail.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Measure p99, not the average. Hedge only idempotent reads, only after about the p95 time, and cap the extra load at a few percent. Never hedge a write such as a payment: it would happen twice.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Plain fan-out</th><th>Hedged fan-out</th></tr>
+      <tr><td>Page waits for</td><td>The slowest of 100 shards</td><td>The faster of two copies of the slow shard</td></tr>
+      <tr><td>Page slow when</td><td>Any one shard is slow: about 63 % of pages</td><td>Both copies are slow: rare</td></tr>
+      <tr><td>Extra load</td><td>None</td><td>A few percent, only the slow calls are repeated</td></tr>
+      <tr><td>Safe for writes</td><td>Yes</td><td>No: a hedged write runs twice</td></tr>
+      <tr><td>Rule</td><td>Watch p99, the median hides the problem</td><td>Wait about p95, then ask a second replica</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A fan-out request waits for its slowest part, so p99 becomes the median. I hedge idempotent reads after a short delay and cap the extra load."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const SC={idle:"var(--line)",asked:"var(--coord)",done:"var(--ok)",wait:"var(--wait)",cancel:"var(--line)"};
+function scene(s){
+  let b="";const msgs=[];
+  b+=BOX(20,140,140,70,s.pageK?KC[s.pageK]:"var(--svc)","Wallet page","waits for all");
+  b+=T(360,42,"100 shards (20 drawn)",{s:13,c:"var(--muted)"});
+  for(let k=0;k<20;k++){const x=230+(k%5)*52,y=56+Math.floor(k/5)*38,st=k===13?s.slow:s.sh;
+    b+=R(x,y,44,30,SC[st],{rx:5,st:k===13&&st==="wait"?"var(--fail)":null})+T(x+22,y+20,k===13?"14":"",{s:12,c:"#fff"});}
+  b+=ARROW(160,175,226,150,"",KC.n);
+  if(s.slowlab)b+=T(360,226,s.slowlab,{s:13,c:"var(--wait)"});
+  if(s.rep){b+=BOX(640,250,220,60,SC[s.rep],"Replica of shard 14",s.rep==="done"?"answered":"asked");
+    msgs.push(ARROW(160,205,640,280,s.hl||"hedge after 20 ms",s.rep==="done"?KC.ok:KC.c,{lx:420,ly:262}));}
+  b+=T(720,70,"page time",{s:14,c:"var(--muted)"});
+  b+=T(720,112,s.pt,{s:36,c:s.pageK?KC[s.pageK]:"var(--fg)"});
+  if(s.prob){const fx=40,w=820,ok=Math.round(w*.37);
+    msgs.push(R(fx,300,ok,34,"var(--ok)",{rx:6})+T(fx+ok/2,322,"37 %: no shard slow",{c:"#fff",s:13}),
+      R(fx+ok,300,w-ok,34,"var(--fail)",{rx:6})+T(fx+ok+(w-ok)/2,322,"63 %: at least one shard slow",{c:"#fff",s:13}),
+      T(450,288,"0.99 to the power 100 is about 0.37",{s:13}));}
+  if(s.load){msgs.push(T(40,288,"calls sent",{a:"start",s:13}),R(40,300,780,30,"var(--coord)",{rx:6})+T(430,320,"100 original calls",{c:"#fff",s:13}),
+      (s.load==="all"?"":R(820,300,40,30,"var(--wait)",{rx:6})+T(840,350,"+ about 5",{s:12,c:"var(--wait)"})));
+    if(s.load==="all")msgs.push(R(40,336,820,30,"var(--fail)",{rx:6})+T(450,356,"+100 hedges: load doubles",{c:"#fff",s:13}));}
+  if(s.ban)msgs.push(BANNER(394,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+fan:[
+ {t:"The page asks 100 shards",b:"A wallet page needs rows from 100 storage shards. Line 2 sends all 100 reads at once. Line 3 then waits for every answer.",w:"A fan-out request is only as fast as its slowest part.",sh:"asked",slow:"asked",pt:"…",pc:[1,2,3]},
+ {t:"99 shards answer in 10 ms",b:"Almost every shard answers within 10 ms. Line 3 still waits: it has 99 of the 100 answers it needs.",w:"If you looked at the average, everything would look fast.",sh:"done",slow:"asked",pt:"10 ms?",pc:[3]},
+ {t:"One shard is in a pause",b:"Shard 14 is in a garbage-collection pause. It answers after 1 second. Each shard has such a pause about once in a hundred calls.",w:"This is tail latency: the slow end of the response times. Here it is the 99th percentile, p99.",sh:"done",slow:"wait",slowlab:"shard 14: pause, 1 s",pt:"…",pc:[3]},
+ {t:"The failure: the page takes 1 second",b:"Line 3 cannot finish until shard 14 answers. The page takes 1 second, 100 times longer than the typical shard. Nothing in lines 1 to 3 ever tries a second copy.",w:"One slow part of a hundred decides the page time.",sh:"done",slow:"done",slowlab:"shard 14 answered at 1 s",pt:"1 s",pageK:"fail",ban:"99 answers in 10 ms, but the page waited 1 s for one shard.",pc:[3]},
+ {t:"Why this happens to most pages",b:"Line 4: each shard is fast 99 % of the time. The chance that all 100 are fast is 0.99 to the power 100, about 37 %. A run of 10,000 simulated pages finds 63 % meeting a paused shard.",w:"With a big fan-out, the p99 of one shard becomes the median of the page. The simulated page p50 is 1,000 ms. You must fix the tail, not the average.",sh:"done",slow:"done",pt:"1 s",pageK:"fail",prob:true,pc:[4]},
+ {t:"The fix: a second copy after a short wait",b:"Replace the read of each shard with lines 6 to 12: after 20 ms with no answer, ask a replica too. Shard 14's replica answers in 10 ms, so the page takes about 30 ms.",w:"The next tab walks through these lines. In the simulated pages, the p50 falls from 1,000 ms to 30 ms.",sh:"done",slow:"cancel",slowlab:"cancelled",pt:"30 ms",pageK:"ok",rep:"done",hl:"first answer wins",pc:[6,7,11,12]}
+],
+hedge:[
+ {t:"Same page, same slow shard",b:"The page asks 100 shards again. Line 6 sends each read. 99 answer in 10 ms, so line 8 returns at once for those. Shard 14 is in a pause.",w:"For 99 of the calls, nothing has changed.",sh:"done",slow:"wait",slowlab:"shard 14: pause",pt:"…",pc:[5,6,8]},
+ {t:"Wait a short time: about p95",b:"Line 7 waits up to 20 ms, about the time 95 % of shard calls beat. Line 8 checks: has shard 14 answered? No.",w:"Waiting first means only the slowest few percent of calls get a second try.",sh:"done",slow:"wait",slowlab:"20 ms passed, no answer",pt:"20 ms",pc:[7,8]},
+ {t:"Send the hedge",b:"Line 9: is this read idempotent? Yes. Line 10: would 1 hedge exceed 5 % of 100 calls, which is 5? No. So line 11 sends the same read to a replica of shard 14.",w:"Both checks passed, so asking twice is harmless and the extra load is capped.",sh:"done",slow:"wait",slowlab:"shard 14: still paused",pt:"20 ms",rep:"asked",pc:[9,10,11]},
+ {t:"The first answer wins",b:"The replica answers in 10 ms. Line 12 returns that answer and cancels the call to shard 14. The page time is 20 + 10, about 30 ms instead of 1 second.",w:"Two copies are rarely slow at the same moment. The tail shrinks dramatically.",sh:"done",slow:"cancel",slowlab:"cancelled",pt:"30 ms",pageK:"ok",rep:"done",hl:"first answer wins",pc:[12]},
+ {t:"The cost: a few percent more calls",b:"Only calls slower than the 20 ms of line 7 are hedged. In the simulation 95 % take 10 ms, 4 % take 30 ms and 1 % pause for 1 s. That gives 5.0 hedges per 100 calls.",w:"A small, capped amount of extra load buys a much shorter tail.",sh:"done",slow:"cancel",pt:"30 ms",pageK:"ok",load:"few",pc:[7,8]},
+ {t:"The failure: hedging the wrong thing",b:"Remove the wait on line 7 and every call goes to two copies: 100 calls become 200. Remove the check on line 9, and a payment is sent twice. Remove line 10, and nothing caps the extra load.",w:"The double load makes every shard slower, and the customer is charged twice.",sh:"done",slow:"done",pt:"slower",pageK:"fail",load:"all",ban:"Hedging every call doubles the load. Hedging a payment charges twice.",pc:[7,9,10]},
+ {t:"The fix: three guards",b:"Put them back. Line 9 asks whether a payment may be hedged: the answer is no. Line 10 asks about a sixth hedge in 100 calls: 6 is above 5, so no. Line 7 keeps the wait.",w:"Hedge only idempotent reads, only after a delay, and cap the extra load.",sh:"done",slow:"cancel",pt:"30 ms",pageK:"ok",load:"few",pc:[7,9,10]}
+]};
+const code={"*": {"label": "Go", "pc": ["on a page request:", "  send a read to each of the 100 shards, at once", "  wait until every shard has answered      # page time = the slowest", "  chance none is slow = 0.99 ^ 100 = 0.37  # so 63 % of pages meet one", "on a hedged read of one shard:", "  send the read to the shard", "  wait up to 20 ms                         # about p95 of one call", "  if it answered: return it                # 95 of 100 calls stop here", "  if the call is not idempotent: wait for it   # never send a payment twice", "  if hedges + 1 > 5 % of calls: wait for it    # the budget caps the extra load", "  send the same read to a replica", "  return the first answer, cancel the other"], "real": ["// ReadAll is the page: it waits for every shard, so the slowest decides.", "func ReadAll(reads []Read) time.Duration {", "\tstart := time.Now()", "\tvar wg sync.WaitGroup", "\tfor _, r := range reads {", "\t\twg.Add(1)", "\t\tgo func(r Read) { defer wg.Done(); r(context.Background()) }(r)", "\t}", "\twg.Wait()", "\treturn time.Since(start)", "}", "", "// Allow refuses a write, and refuses a hedge beyond the budget.", "func (g *Guard) Allow(idempotent bool) bool {", "\tif !idempotent {", "\t\treturn false // never send a payment twice", "\t}", "\tif float64(g.hedges+1) > budget*float64(g.calls) {", "\t\treturn false // the budget is spent: wait for the primary", "\t}", "\tg.hedges++", "\treturn true", "}", "", "// Hedged reads the primary, and after a short wait also a replica. The first", "// answer wins and the other call is cancelled.", "func Hedged(primary, replica Read, idempotent bool, g *Guard) (string, int) {", "\tctx, cancel := context.WithCancel(context.Background())", "\tdefer cancel() // cancels the loser", "\tanswers := make(chan string, 2)", "\tg.calls++", "\tgo func() { answers <- primary(ctx) }()", "\tselect {", "\tcase a := <-answers:", "\t\treturn a, 1 // fast path: no hedge", "\tcase <-time.After(hedgeAfter):", "\t}", "\tif !g.Allow(idempotent) {", "\t\treturn <-answers, 1", "\t}", "\tgo func() { answers <- replica(ctx) }()", "\treturn <-answers, 2", "}"], "map": {"1": [2], "2": [5, 7], "3": [9], "4": [9], "5": [27], "6": [32], "7": [36], "8": [34, 35], "9": [15, 16], "10": [18], "11": [41], "12": [29, 42]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

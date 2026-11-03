@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webhooks and Push</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.note{font-size:13px}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Pushing data: webhooks, SSE and WebSockets</h1>
+  <p class="lede">A customer's payment settles. The payment provider posts <code>payment.settled</code> to the subscription service, which unlocks the customer's subscription. Press <b>Next</b> and compare a naive receiver with a safe one.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="naive">Naive receiver</button>
+    <button role="tab" aria-selected="false" data-mode="safe">Signed, deduplicated, fast</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of a payment provider sending a webhook to a subscription service</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="actors" font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700"></g>
+      <g id="chips" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Webhooks and SSE (Server-Sent Events) are real net/http. The WebSocket is modelled with two channels, because the standard library has no WebSocket. Full program: handbook/code/13-webhooks-sse-websockets/main.go (go run .).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">sender</span>
+    <span style="--c:var(--undo)">attacker</span>
+    <span style="--c:var(--svc)">receiver</span>
+    <span style="--c:var(--ok)">checked, applied once</span>
+    <span style="--c:var(--wait)">in progress or parked</span>
+    <span style="--c:var(--fail)">applied wrongly, or down</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: payments and events between companies</h2>
+      <p>Stripe, GitHub and most payment providers send signed webhooks with an event id, and retry on anything but <code>2xx</code>. Offer a polling endpoint as well: every client understands it.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: live views</h2>
+      <p>A live view of new blocks in a browser: SSE. A chat with an agent that also takes commands: WebSockets. A server-to-server event: a webhook.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Webhook</th><th>SSE</th><th>WebSocket</th></tr>
+      <tr><td>Direction</td><td>Server to your server</td><td>Server to browser</td><td>Both ways</td></tr>
+      <tr><td>Receiver</td><td>A public URL you run</td><td>A browser tab</td><td>A browser tab or a client</td></tr>
+      <tr><td>Lost messages</td><td>Sender retries, then dead-letter</td><td>Reconnects, resumes from last id</td><td>Your own protocol</td></tr>
+      <tr><td>Must have</td><td>Signature, event id, fast 200</td><td>A last event id</td><td>Heartbeats and reconnect logic</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A webhook is signed, retried and deduplicated by event id, and the receiver acknowledges before it does the work."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Each tab: actors (columns), chips (state pills under some actors) and steps.
+// A step message is [from,to,y,text,kind], ["band",y,text], or ["note",actor,y,text,kind].
+// kind: true or "fail" = red, "lost" = cut arrow, "replay" = purple, "ok" = green, "wait" = amber.
+const TABS={
+ "naive":{actors:[{"id":"x","n":"Attacker","c":"undo"},{"id":"p","n":"Payment provider","c":"coord"},{"id":"r","n":"Subscription service"},{"id":"db","n":"Database"}],chips:["p","r","db"],steps:[
+  {"t":"Start","b":"The subscription service registered a URL with the provider. On each payment event, line 1 sends a POST there.","w":"A webhook is an HTTP call the other way round: the server calls you.","m":[["note","r",140,"POST /hooks/payments"]],"st":{"p":["idle","idle"],"r":["waiting","idle"],"db":["locked","idle"]},"pc":[1]},
+  {"t":"Slow work first","b":"payment.settled e9 arrives. Line 6 does the slow work first: unlock, email and invoice, all before the answer.","w":"The sender is waiting on an open connection the whole time.","m":[["p","r",130,"POST payment.settled"],["note","r",175,"unlock, email, invoice","wait"],["r","db",215,"unlock month 1"]],"st":{"p":["waiting","wait"],"r":["busy","wait"],"db":["1 month","ok"]},"pc":[1,4,6]},
+  {"t":"The sender times out","b":"Line 2 waits only as long as its timeout. The work takes longer, so line 3 marks the delivery as failed: the program prints provider gave up: true. The receiver finishes, but nobody is listening.","w":"Slow work before the answer turns every slow day into failed deliveries.","m":[["r","p",140,"200 late","lost"],["note","p",185,"timeout: retry later",true]],"st":{"p":["will retry","fail"],"r":["done","ok"],"db":["1 month","ok"]},"pc":[2,3]},
+  {"t":"The retry unlocks twice","b":"The provider sends e9 again. Line 5: there is no stored id to check, so line 7 runs a second time. The program prints alice has months 2 for one payment.","w":"Delivery is at least once. Without dedupe, at least once becomes twice.","m":[["p","r",130,"POST settled (again)"],["r","db",170,"unlock month 2",true]],"st":{"p":["delivered","ok"],"r":["done","ok"],"db":["2 months","fail"]},"pc":[1,5,7]},
+  {"t":"A fake event","b":"An attacker posts payment.settled for their own account. Line 4 reads it with no signature to check, and line 7 adds a month: the program prints mallory has months 1.","w":"Anyone who knows the URL can send an event.","m":[["x","r",130,"POST fake payment.settled",true],["r","db",170,"unlock attacker",true]],"st":{"p":["delivered","ok"],"r":["fooled","fail"],"db":["free months","fail"]},"bad":"r","pc":[4,7]},
+  {"t":"The failure that matters","b":"The refund arrives first: line 8 finds 0 months and stays at 0. Then the settle arrives and line 7 adds one. The program prints refunded bob has months 1. Order is not guaranteed.","w":"Fix: sign, dedupe by event id, acknowledge first. Carry a sequence number if order matters.","m":[["band",150,"double unlock, free unlock, wrong order"]],"st":{"p":["delivered","ok"],"r":["fooled","fail"],"db":["wrong state","fail"]},"bad":"r","pc":[7,8]}
+ ]},
+ "safe":{actors:[{"id":"x","n":"Attacker","c":"undo"},{"id":"p","n":"Payment provider","c":"coord"},{"id":"r","n":"Subscription service"},{"id":"db","n":"Database"}],chips:["p","r","db"],steps:[
+  {"t":"A signed event","b":"Line 1: the provider computes an HMAC (Hash-based Message Authentication Code) of the timestamp and body with the shared secret. It sends the signature, event id e9 and the timestamp.","w":"Only someone with the shared secret can produce a valid signature.","m":[["note","p",130,"sign body + time"],["p","r",170,"POST settled, id e9, sig"]],"st":{"p":["sent e9","wait"],"r":["checking","wait"],"db":["locked","idle"]},"pc":[1]},
+  {"t":"Check before trusting","b":"Line 3 checks age: anything over 300 seconds is refused, so a captured event cannot be replayed. The program prints 401 for one sent 301 seconds ago. Line 4 recomputes the HMAC and compares.","w":"The timestamp is inside the signed data, so an old captured event cannot be replayed later.","m":[["note","r",140,"HMAC matches","ok"],["note","r",180,"timestamp fresh","ok"]],"st":{"p":["sent e9","wait"],"r":["verified","ok"],"db":["locked","idle"]},"pc":[2,3,4]},
+  {"t":"Store the event id, answer at once","b":"Line 6 finds e9 is new. Line 7 stores it, line 8 queues the unlock and line 9 answers 200 at once. The answer no longer waits for the work.","w":"Acknowledge first, work after. The sender never waits on slow work.","m":[["r","db",130,"insert e9 if new"],["r","p",165,"200 at once","ok"],["note","r",210,"unlock in background","wait"]],"st":{"p":["delivered","ok"],"r":["working","wait"],"db":["e9 seen, 1 month","ok"]},"pc":[6,7,8,9]},
+  {"t":"The same event again","b":"A network blip makes the provider send e9 again. Line 6 finds it stored and answers 200 without doing anything. The program prints alice months 1, not 2.","w":"The event id is the idempotency key of a webhook.","m":[["p","r",130,"POST e9 (again)"],["r","db",165,"e9 seen?"],["db","r",195,"yes","replay"],["r","p",225,"200, nothing done","replay"]],"st":{"p":["delivered","ok"],"r":["done","ok"],"db":["e9 seen, 1 month","ok"]},"pc":[6]},
+  {"t":"A fake event is refused","b":"The attacker posts payment.settled without the secret. Line 4 finds no match and line 5 answers 401 before anything is written: the program prints mallory months 0.","w":"A signature check costs microseconds and closes the door.","m":[["x","r",140,"POST fake settled",true],["r","x",180,"401 bad signature","ok"]],"st":{"p":["delivered","ok"],"r":["refused fake","ok"],"db":["e9 seen, 1 month","ok"]},"pc":[4,5]},
+  {"t":"The receiver is down","b":"The receiver is down for two hours. Line 10 tries at gaps of 1, 5, 15, 30 and 60 minutes: 5 tries over 111 minutes. Line 11 moves the event to the dead-letter list. The team replays it when the receiver is back.","w":"Retries with backoff, a dead-letter list, and a polling endpoint as the fallback every client understands.","m":[["p","r",120,"e12","lost"],["p","r",150,"+1 min","lost"],["p","r",180,"+10 min","lost"],["note","p",220,"dead-letter: e12","wait"]],"st":{"p":["e12 parked","wait"],"r":["down","fail"],"db":["e9 seen, 1 month","ok"]},"bad":"r","pc":[10,11]},
+  {"t":"Browsers: SSE and WebSockets","b":"A webhook needs a server to receive it. A browser's live feed of new blocks uses SSE (line 12), one way: the program prints block 9506 to 9508. A chat with an agent that takes commands uses a WebSocket (line 13), two way.","w":"SSE reconnects by itself and passes most proxies. Long polling is the last resort.","m":[["note","r",130,"server: webhook"],["note","r",165,"browser feed: SSE"],["note","r",200,"two-way: WebSocket"]],"st":{"p":["replayed e12","ok"],"r":["back","ok"],"db":["all applied once","ok"]},"pc":[12,13]}
+ ]}
+};
+const CODE={
+ "naive":{label:"Go",
+  pc:[
+   "provider: POST the event to the registered URL",
+   "provider: wait for the answer, up to its timeout",
+   "  no answer in time: mark failed, send again later",
+   "receiver: read the event                # no signature check",
+   "  (no id check: every delivery counts as new)",
+   "  slow work first: unlock, email, invoice",
+   "  settled: months + 1",
+   "  refunded: months - 1, never below 0   # order is not guaranteed",
+   "  answer 200"],
+  real:[
+   "func (n *Naive) ServeHTTP(w http.ResponseWriter, r *http.Request) {",
+   "\tvar e Event",
+   "\tjson.NewDecoder(r.Body).Decode(&e)",
+   "\ttime.Sleep(n.work) // unlock, email, invoice, all before the answer",
+   "\tswitch e.Type {",
+   "\tcase \"payment.settled\":",
+   "\t\tn.months[e.Account]++",
+   "\tcase \"payment.refunded\":",
+   "\t\tn.months[e.Account] = max(0, n.months[e.Account]-1)",
+   "\t}",
+   "\tw.WriteHeader(http.StatusOK)",
+   "}",
+   "",
+   "",
+   "func post(url string, e Event, ts int64, sig string, timeout time.Duration) (int, error) {",
+   "\tbody, _ := json.Marshal(e)",
+   "\treq, _ := http.NewRequest(\"POST\", url, bytes.NewReader(body))",
+   "\treq.Header.Set(\"X-Timestamp\", strconv.FormatInt(ts, 10))",
+   "\tif sig == \"sign\" {",
+   "\t\tsig = sign(strconv.FormatInt(ts, 10), body)",
+   "\t}",
+   "\treq.Header.Set(\"X-Signature\", sig)",
+   "\tres, err := (&http.Client{Timeout: timeout}).Do(req)",
+   "\tif err != nil {",
+   "\t\treturn 0, err",
+   "\t}",
+   "\tres.Body.Close()"],
+  map:{"1":[15,16,17],"2":[23],"3":[24,25],"4":[2,3],"5":[3],"6":[4],"7":[6,7],"8":[8,9],"9":[11]}},
+ "safe":{label:"Go",
+  pc:[
+   "provider: signature = HMAC of timestamp + body with the shared secret",
+   "receiver: read body, signature, timestamp",
+   "  timestamp older than 300 seconds: 401, stop",
+   "  recompute the HMAC, compare in constant time",
+   "  no match: 401, write nothing, stop",
+   "  event id already stored: 200, do nothing, stop",
+   "  store the id",
+   "  queue the unlock for the background",
+   "  answer 200 at once",
+   "provider: on failure wait 1, 5, 15, 30, 60 minutes between tries",
+   "  still failing: move to the dead-letter list, replay later",
+   "browser, one way: SSE, the server writes data lines and flushes",
+   "browser, two way: WebSocket, both sides send freely"],
+  real:[
+   "func sign(ts string, body []byte) string {",
+   "\tmac := hmac.New(sha256.New, secret)",
+   "\tmac.Write([]byte(ts + \".\" + string(body)))",
+   "\treturn hex.EncodeToString(mac.Sum(nil))",
+   "}",
+   "",
+   "func (s *Safe) ServeHTTP(w http.ResponseWriter, r *http.Request) {",
+   "\tbody, _ := io.ReadAll(r.Body)",
+   "\tts := r.Header.Get(\"X-Timestamp\")",
+   "\tsent, err := strconv.ParseInt(ts, 10, 64)",
+   "\tif err != nil || s.now()-sent > 300 { // older than five minutes: a replay",
+   "\t\thttp.Error(w, \"stale\", http.StatusUnauthorized)",
+   "\t\treturn",
+   "\t}",
+   "\tif !hmac.Equal([]byte(sign(ts, body)), []byte(r.Header.Get(\"X-Signature\"))) {",
+   "\t\thttp.Error(w, \"bad signature\", http.StatusUnauthorized)",
+   "\t\treturn",
+   "\t}",
+   "\tvar e Event",
+   "\tjson.Unmarshal(body, &e)",
+   "\tif s.seen[e.ID] {",
+   "\t\tw.WriteHeader(http.StatusOK) // already stored: do nothing",
+   "\t\treturn",
+   "\t}",
+   "\ts.seen[e.ID] = true",
+   "\ts.queue <- e // the unlock runs in the background",
+   "\tw.WriteHeader(http.StatusOK)",
+   "}",
+   "",
+   "func deliver(try func() bool, gaps []int) (minutes int, delivered bool) {",
+   "\tfor _, gap := range gaps {",
+   "\t\tif try() {",
+   "\t\t\treturn minutes, true",
+   "\t\t}",
+   "\t\tminutes += gap",
+   "\t}",
+   "\treturn minutes, false",
+   "}",
+   "",
+   "func sse(w http.ResponseWriter, r *http.Request) {",
+   "\tw.Header().Set(\"Content-Type\", \"text/event-stream\")",
+   "\tf := w.(http.Flusher)",
+   "\tfor h := 9506; h <= 9508; h++ {",
+   "\t\tfmt.Fprintf(w, \"data: block %d\\n\\n\", h)",
+   "\t\tf.Flush()",
+   "\t}",
+   "",
+   "func socket(fromUser <-chan string, toUser chan<- string) {",
+   "\tfor cmd := range fromUser {",
+   "\t\ttoUser <- \"agent ran: \" + cmd"],
+  map:{"1":[1,2,3,4],"2":[8,9],"3":[10,11,12,13],"4":[15],"5":[15,16],"6":[21,22],"7":[25],"8":[26],"9":[26],"10":[30,31,32,33,34,35],"11":[37],"12":[40,41,42,43,44,45],"13":[48,49,50]}}
+};
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)"};
+const colFor={fail:"var(--fail)",lost:"var(--fail)",replay:"var(--undo)",ok:"var(--ok)",wait:"var(--wait)"};
+const NS="http://www.w3.org/2000/svg";
+let mode="naive",view="pc",i=0,timer=null,X={},W=160;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function drawActors(){
+  const T=TABS[mode],n=T.actors.length,gap=900/n;W=Math.min(180,gap-24);X={};
+  let a="",c="";
+  T.actors.forEach((ac,k)=>{const x=gap/2+k*gap;X[ac.id]=x;
+    a+=`<rect id="bx-${ac.id}" class="box" x="${x-W/2}" y="20" width="${W}" height="52" rx="8" fill="var(--${ac.c||"svc"})"/><text x="${x}" y="52" text-anchor="middle" fill="#fff">${esc(ac.n)}</text><line x1="${x}" y1="72" x2="${x}" y2="340" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  T.chips.forEach(id=>{const x=X[id];
+    c+=`<rect id="st-${id}" class="box" x="${x-W/2+6}" y="300" width="${W-12}" height="28" rx="14" fill="var(--line)"/><text id="tx-${id}" x="${x}" y="319" fill="var(--fg)"></text>`;});
+  $("actors").innerHTML=a;$("chips").innerHTML=c;
+}
+function msgSvg(m){
+  if(m[0]==="band"){const col=colFor[m[3]||"fail"];
+    return `<rect x="20" y="${m[1]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[1]+3}" text-anchor="middle" fill="${col}" font-weight="700">${esc(m[2])}</text>`;}
+  if(m[0]==="note"){const [,id,y,txt,kind]=m,x=X[id],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+    return `<rect x="${x-W/2}" y="${y-17}" width="${W}" height="26" rx="6" fill="var(--panel)" stroke="${col}" stroke-width="2"/><text class="note" x="${x}" y="${y+1}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  const [a,b,y,txt,kind]=m,x1=X[a],x2=X[b],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+  if(kind==="lost"){const mid=(x1+x2)/2;
+    return `<line x1="${x1}" y1="${y}" x2="${mid}" y2="${y}" stroke="${col}" stroke-dasharray="6 5"/><path d="M${mid-8} ${y-8}L${mid+8} ${y+8}M${mid-8} ${y+8}L${mid+8} ${y-8}" stroke="${col}" stroke-width="3"/><text x="${(x1+mid)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;
+}
+function drawCode(){
+  const c=CODE[mode],s=TABS[mode].steps[i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const T=TABS[mode],s=T.steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${T.steps.length}`;
+  for(const id of T.chips){const [v,c]=(s.st&&s.st[id])||["","idle"];$("tx-"+id).textContent=v;
+    $("st-"+id).setAttribute("fill",fillFor[c]);$("tx-"+id).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");}
+  for(const ac of T.actors)$("bx-"+ac.id).setAttribute("fill",s.bad===ac.id?"var(--fail)":`var(--${ac.c||"svc"})`);
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=msgSvg(m);g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===T.steps.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(TABS[mode].steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=TABS[mode].steps.length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));drawActors();go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawActors();go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

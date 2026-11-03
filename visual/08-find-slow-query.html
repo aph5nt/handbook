@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Finding the slow query</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Finding the slow query: sort by total time</h1>
+  <p class="lede">Five statement shapes from a warehouse query log, with how often each runs and how long each run takes. Watch which one really carries the load.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="slowest">Slowest query first fails</button>
+    <button role="tab" aria-selected="false" data-mode="total">Sort by total time</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 372" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Five statement shapes with bars for total time per hour</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text x="30" y="30" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">statement shapes from the query log (story numbers)</text>
+<text x="400" y="30" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">total time per hour</text>
+<rect id="r0" class="box" data-f="var(--line)" x="30" y="44" width="340" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r0-t" data-t="page write: JOIN addresses twice" x="200" y="61" text-anchor="middle" font-size="12" fill="var(--fg)">page write: JOIN addresses twice</text>
+<text id="r0-u" data-t="3,000 per hour · 2 s each" x="200" y="81" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">3,000 per hour · 2 s each</text>
+<rect x="400" y="54" width="360" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="t0" class="box" data-f="var(--coord)" data-a='{"width":"0"}' x="400" y="54" width="0" height="24" rx="4" fill="var(--coord)"/>
+<text id="v0" data-t="" x="770" y="71" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="r1" class="box" data-f="var(--line)" x="30" y="98" width="340" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r1-t" data-t="writer probe: MAX(block_height)" x="200" y="115" text-anchor="middle" font-size="12" fill="var(--fg)">writer probe: MAX(block_height)</text>
+<text id="r1-u" data-t="3,000 per hour · 0.3 s" x="200" y="135" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">3,000 per hour · 0.3 s</text>
+<rect x="400" y="108" width="360" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="t1" class="box" data-f="var(--coord)" data-a='{"width":"0"}' x="400" y="108" width="0" height="24" rx="4" fill="var(--coord)"/>
+<text id="v1" data-t="" x="770" y="125" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="r2" class="box" data-f="var(--line)" x="30" y="152" width="340" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r2-t" data-t="dashboard: volume per pool" x="200" y="169" text-anchor="middle" font-size="12" fill="var(--fg)">dashboard: volume per pool</text>
+<text id="r2-u" data-t="600 per hour · 0.5 s" x="200" y="189" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">600 per hour · 0.5 s</text>
+<rect x="400" y="162" width="360" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="t2" class="box" data-f="var(--coord)" data-a='{"width":"0"}' x="400" y="162" width="0" height="24" rx="4" fill="var(--coord)"/>
+<text id="v2" data-t="" x="770" y="179" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="r3" class="box" data-f="var(--line)" x="30" y="206" width="340" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r3-t" data-t="lookup: tx by hash" x="200" y="223" text-anchor="middle" font-size="12" fill="var(--fg)">lookup: tx by hash</text>
+<text id="r3-u" data-t="50,000 per hour · 5 ms" x="200" y="243" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">50,000 per hour · 5 ms</text>
+<rect x="400" y="216" width="360" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="t3" class="box" data-f="var(--coord)" data-a='{"width":"0"}' x="400" y="216" width="0" height="24" rx="4" fill="var(--coord)"/>
+<text id="v3" data-t="" x="770" y="233" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="r4" class="box" data-f="var(--line)" x="30" y="260" width="340" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="r4-t" data-t="daily report: top traders" x="200" y="277" text-anchor="middle" font-size="12" fill="var(--fg)">daily report: top traders</text>
+<text id="r4-u" data-t="1 per day · 60 s" x="200" y="297" text-anchor="middle" font-size="11" font-weight="400" fill="var(--fg)">1 per day · 60 s</text>
+<rect x="400" y="270" width="360" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="t4" class="box" data-f="var(--coord)" data-a='{"width":"0"}' x="400" y="270" width="0" height="24" rx="4" fill="var(--coord)"/>
+<text id="v4" data-t="" x="770" y="287" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect x="20" y="322" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="348" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="347" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-find-slow-query/main.go</code> (<code>go run .</code>). It writes one day of log lines in memory and groups them the way pg_stat_statements does.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">shape in the log</span>
+    <span style="--c:var(--ok)">fixed</span>
+    <span style="--c:var(--wait)">still heavy</span>
+    <span style="--c:var(--fail)">the real cost</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL <code>pg_stat_statements</code> ordered by <code>total_exec_time</code>. StarRocks audit log grouped by statement digest, sorted by CPU and scan bytes. An APM (application performance monitoring) database view that ties each shape to the service that sent it.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Group by shape, sort by total time, explain the top shape with real parameters, fix it, and compare totals. Check the 99th percentile separately for paths a user waits on.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Sort by slowest run</th><th>Sort by total time</th></tr>
+      <tr><td>Finds</td><td>rare heavy reports</td><td>what the machine spends its time on</td></tr>
+      <tr><td>Misses</td><td>fast queries run very often</td><td>nothing that costs load</td></tr>
+      <tr><td>Use for</td><td>one user-facing path</td><td>CPU, capacity, the bill</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"Find the slow query by grouping statements by shape and sorting by total time, because a fast query run a million times costs more than one slow report."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+slowest:[
+ {"t": "CPU is high all day", "b": "Warehouse CPU sits high from morning to night. Nobody complains about one slow page.", "w": "High load with no slow query points at volume, not at one statement.", "f": {"r0": "c", "r1": "c", "r2": "c", "r3": "c", "r4": "c"}, "x": {"big": "CPU high, no single culprit"}, "pc": []},
+ {"t": "Sort by the slowest single run", "b": "The obvious move: sort shapes by their slowest single run. The daily report tops the list at 60,000 ms. The page write is second at 2,000 ms.", "w": "Slowest per run is the wrong ranking for load.", "f": {"r4": "f"}, "x": {"big": "slowest run: the daily report, 60 s", "sql": "ORDER BY max_time DESC"}, "pc": [7]},
+ {"t": "Tune the report", "b": "A day goes into making the report fast. It now takes ten seconds.", "w": "Real work, real improvement, for one run a day.", "f": {"r4": "ok"}, "x": {"r4-u": "1 per day · 10 s", "big": "report: 60 s → 10 s"}, "pc": [7]},
+ {"t": "CPU has not moved", "b": "The report runs once a day: 60 s ÷ 24 = 2.5 s per hour. Now 10 s ÷ 24, about 0.4 s. The hour still holds 6,000 + 900 + 300 + 250 seconds of other work. CPU is as high as before.", "w": "Chasing the slowest query fixed something nobody paid for.", "f": {"r4": "ok", "r0": "w", "r1": "w"}, "x": {"r4-u": "1 per day · 10 s", "big": "CPU unchanged"}, "pc": [7]},
+ {"t": "The right ranking", "b": "Load is calls times mean time. The page write: 3,000 calls × 2 s = 6,000 s per hour. The report: 2.5 s per hour. The right sort key is that product.", "w": "Sort by total time first. Look at the 99th percentile separately, for paths a user waits on.", "f": {"r0": "f"}, "x": {"big": "rank by calls × mean", "sql": "ORDER BY total_time DESC"}, "pc": [8]}
+],
+total:[
+ {"t": "Group by statement shape", "b": "The normaliser replaces every quoted string and every number with ?. WHERE block_height = 9506000 and = 9506001 become one shape. A day of log, about 1.36 million lines, becomes 5 shapes.", "w": "Thousands of log lines become five shapes.", "f": {"r0": "c", "r1": "c", "r2": "c", "r3": "c", "r4": "c"}, "x": {"big": "log grouped into 5 shapes", "sql": "WHERE pool = ? · tx_hash = ?"}, "pc": [1, 2, 3]},
+ {"t": "Compute total time per shape", "b": "Each line adds 1 to its shape's calls and its time to the shape's total. Per hour: page write 6,000 s, writer probe 900 s, dashboard 300 s, lookup 250 s, report 2.5 s.", "w": "One shape dwarfs the rest.", "a": {"t0": {"width": "360"}, "t1": {"width": "54"}, "t2": {"width": "18"}, "t3": {"width": "15"}, "t4": {"width": "2"}}, "x": {"v0": "6,000 s", "v1": "900 s", "v2": "300 s", "v3": "250 s", "v4": "about 2 s", "big": "total = calls × mean"}, "pc": [4, 5, 6]},
+ {"t": "The top shape", "b": "Sort by total, descending. The page write is first: 6,000 of 7,452.5 seconds per hour, 81 percent of the load, on its own.", "w": "A few shapes usually carry most of the load.", "f": {"r0": "f", "t0": "f"}, "a": {"t0": {"width": "360"}, "t1": {"width": "54"}, "t2": {"width": "18"}, "t3": {"width": "15"}, "t4": {"width": "2"}}, "x": {"v0": "6,000 s", "v1": "900 s", "v2": "300 s", "v3": "250 s", "v4": "about 2 s", "big": "one shape: most of the load"}, "pc": [8, 9]},
+ {"t": "EXPLAIN ANALYZE the top shape", "b": "With real parameters, the plan shows both joins scanning addresses on every page. The cost grows with the table, not with the page.", "w": "Now you know what to fix and why.", "f": {"r0": "f", "t0": "f"}, "a": {"t0": {"width": "360"}, "t1": {"width": "54"}, "t2": {"width": "18"}, "t3": {"width": "15"}, "t4": {"width": "2"}}, "x": {"v0": "6,000 s", "v1": "900 s", "v2": "300 s", "v3": "250 s", "v4": "about 2 s", "r0-u": "plan: 2 scans of addresses per page", "big": "cost grows with the table", "sql": "EXPLAIN ANALYZE …"}, "pc": [10]},
+ {"t": "Fix and compare totals", "b": "The page write now looks up its own distinct addresses in one keyed IN query: 80 ms per call. 3,000 × 0.08 s = 240 s per hour, below the dashboard's 300 s.", "w": "Compare the shape's total before and after. CPU falls with it.", "f": {"r0": "ok", "t0": "ok"}, "a": {"t0": {"width": "14"}, "t1": {"width": "54"}, "t2": {"width": "18"}, "t3": {"width": "15"}, "t4": {"width": "2"}}, "x": {"v0": "240 s", "v1": "900 s", "v2": "300 s", "v3": "250 s", "v4": "about 2 s", "r0-u": "3,000 per hour · 0.08 s", "big": "top shape: 6,000 s → 240 s per hour"}, "pc": [11]}
+]
+};
+const base={};
+const code={
+"slowest":{
+ label:"SQL",
+ pc:["for each statement in the log:", "  shape = replace every constant with ?   # = 9506000 -> = ?", "  s = shapes[shape]", "  s.calls += 1", "  s.total += statement.time", "  s.max = max(s.max, statement.time)", "by_slowest = sort shapes by s.max, descending    # the trap", "by_load    = sort shapes by s.total, descending  # calls x mean", "top = by_load[0]                       # page write, 6,000 s per hour", "explain_analyze(top, real parameter values)", "fix(top); compare top.total before and after", "look at p99 separately for paths a user waits on"],
+ real:["-- PostgreSQL: pg_stat_statements normalises and groups for you", "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;", "", "-- each shape keeps calls, total, max", "-- (the extension does this for every statement)", "", "-- the trap: slowest single run first", "SELECT query, calls, max_exec_time", "FROM   pg_stat_statements", "ORDER  BY max_exec_time DESC LIMIT 5;", "", "-- the load: total = calls x mean", "SELECT query, calls, mean_exec_time, total_exec_time", "FROM   pg_stat_statements", "ORDER  BY total_exec_time DESC LIMIT 5;", "", "-- the top shape, with real values", "EXPLAIN ANALYZE INSERT INTO page SELECT ...", "  WHERE block_height = 9506000;", "", "-- after the fix: start a clean window, compare totals", "SELECT pg_stat_statements_reset();", "", "-- StarRocks: the audit log, grouped by statement digest", "SELECT digest, count(*) AS calls, sum(query_time) AS total_ms", "FROM   starrocks_audit_db__.starrocks_audit_tbl__", "WHERE  `timestamp` >= now() - INTERVAL 1 HOUR", "GROUP  BY digest ORDER BY total_ms DESC LIMIT 5;"],
+ map:{"1": [1, 2], "2": [1, 2], "3": [4, 5], "4": [4, 5], "5": [4, 5], "6": [4, 5], "7": [8, 9, 10], "8": [13, 14, 15, 25, 26, 27, 28], "9": [13, 14, 15], "10": [18, 19], "11": [22], "12": []}},
+"total":"slowest"
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visibility timeout</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+svg text{paint-order:stroke}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:8px 0}
+#codetabs button[aria-pressed="true"]{background:var(--coord);color:#fff;border-color:var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Visibility timeout</h1>
+  <p class="lede">An SQS queue holds resize jobs. When a worker receives a job, SQS hides it from everyone else for 30 seconds. If the worker does not delete it in time, it comes back. Press <b>Next</b> to see that save a crashed job, then see a slow job run twice.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Hide, then delete</button>
+    <button role="tab" aria-selected="false" data-mode="short">Timeout too short</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story: <code>handbook/code/04-visibility-timeout/main.go</code> (<code>go run .</code>). <span id="codenote"></span></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">SQS queue</span>
+    <span style="--c:var(--coord)">worker</span>
+    <span style="--c:var(--wait)">hidden, in progress</span>
+    <span style="--c:var(--ok)">deleted, done</span>
+    <span style="--c:var(--fail)">processed twice</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Amazon SQS, Google Cloud Pub/Sub (acknowledgement deadline), Azure Service Bus (lock duration). RabbitMQ does the same through the open connection: an unacknowledged message returns when the consumer disconnects.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Set the visibility timeout longer than the slowest normal job. For jobs whose time varies, extend it while working with <code>ChangeMessageVisibility</code>. Make the handler idempotent anyway, and add a redrive policy so a job that keeps coming back ends in a DLQ.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Timeout too short</th><th>Timeout too long</th></tr>
+      <tr><td>Slow job</td><td>Becomes visible again, runs twice</td><td>Fine</td></tr>
+      <tr><td>Crashed worker</td><td>Retried soon</td><td>Job waits the whole timeout before a retry</td></tr>
+      <tr><td>Fix</td><td>Longer timeout or a heartbeat that extends it</td><td>Shorter timeout plus a heartbeat</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The visibility timeout hides a received message until the worker deletes it. I set it longer than the slowest normal job, extend it for long ones, and keep the handler idempotent."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const C={idle:["var(--line)","var(--fg)"],busy:["var(--wait)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],main:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],undo:["var(--undo)","#fff"],off:["none","var(--muted)"]};
+const col=st=>st==="idle"?"var(--muted)":(C[st]||[ "var(--fg)"])[0];
+function box(x,y,w,h,st,label,sub){const [f,t]=C[st]||C.idle;const cx=x+w/2,cy=y+h/2;
+  return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="5 4"/><text x="${cx}" y="${sub?cy-3:cy+6}" font-size="16" font-weight="700" fill="${t}">${label}</text>`+(sub?`<text x="${cx}" y="${cy+17}" font-size="13" fill="${t}">${sub}</text>`:"");}
+function arrow(x1,y1,x2,y2,label,st,dash){const c=st?col(st):"var(--fg)";
+  return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`+(label?`<rect x="${(x1+x2)/2-String(label).length*4.1-6}" y="${(y1+y2)/2-11}" width="${String(label).length*8.2+12}" height="22" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="1"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+5}" font-size="14" font-weight="700" fill="${c}">${label}</text>`:"")+`</g>`;}
+function chip(x,y,w,label,st){const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="${x}" y="${y}" width="${w}" height="26" rx="13" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="4 3"/><text x="${x+w/2}" y="${y+18}" font-size="13" font-weight="700" fill="${t}">${label}</text></g>`;}
+function note(y,txt,st){if(!txt)return"";const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="60" y="${y}" width="780" height="32" rx="16" fill="${f}"/><text x="450" y="${y+22}" font-size="15" font-weight="700" fill="${t}">${txt}</text></g>`;}
+function gdraw(s,base){let h="";const N=Object.assign({},base||{},s.nd||{});
+  for(const k in N){const n=N[k];if(n)h+=box(n[0],n[1],n[2],n[3],n[4],n[5],n[6]);}
+  (s.ar||[]).forEach(a=>h+=arrow(...a));(s.ch||[]).forEach(c=>h+=chip(...c));
+  if(s.n)h+=note(s.n[2]||352,s.n[0],s.n[1]);return h;}
+function seq(A,s){const n=A.length,gap=860/n,X={};A.forEach((a,k)=>X[a[0]]=20+gap*k+gap/2);
+  const w=Math.min(gap-14,180);let h="";
+  A.forEach(a=>{const x=X[a[0]];h+=box(x-w/2,14,w,52,(s.ac&&s.ac[a[0]])||a[2]||"main",a[1],a[3]);
+    h+=`<line x1="${x}" y1="66" x2="${x}" y2="330" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  let y=98;(s.m||[]).forEach(m=>{
+    if(m[0]==="x"){h+=`<g class="msg"><rect x="20" y="${y-15}" width="860" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${y+4}" fill="var(--fail)" font-weight="700" font-size="14">${m[1]}</text></g>`;y+=34;return;}
+    const [f,t,l,st,d]=m;
+    if(f===t)h+=chip(X[f]-Math.min(gap/2-4,110),y-13,Math.min(gap-8,220),l,st||"idle");
+    else{const x1=X[f],x2=X[t],dir=x2>x1?1:-1;h+=arrow(x1+4*dir,y,x2-6*dir,y,l,st||"main",d);}
+    y+=34;});
+  for(const k in (s.st||{})){const [st,txt]=s.st[k];h+=chip(X[k]-w/2,340,w,txt,st);}
+  if(s.n)h+=note(380,s.n[0],s.n[1]);return h;}
+
+const A=[["q","SQS queue","svc","resize-jobs"],["a","Worker A","main"],["b","Worker B","main"]];
+const code={"ok": {"label": "Go", "pc": ["receive(now):", "  job = first job with visibleAt <= now", "  job.visibleAt = now + timeout     # hidden, not deleted", "  job.receives = job.receives + 1", "  if job.receives reaches 4: move it to the DLQ", "worker:", "  job = receive(now)", "  while working: every 20 s extend(job)  # heartbeat, optional", "  do the work; name the output by job id  # a repeat overwrites", "  delete(job)                       # the acknowledgement"], "real": ["// Receive returns the first visible job and hides it.", "func (q *Queue) Receive(now int) *Job {", "\tfor _, j := range q.jobs {", "\t\tif !j.deleted && j.visibleAt <= now {", "\t\t\tj.visibleAt = now + q.timeout", "\t\t\tj.receives++", "\t\t\treturn j", "\t\t}", "\t}", "\treturn nil", "}", "", "func (q *Queue) Delete(j *Job) { j.deleted = true }", "", "// the work: the output is named by job id", "put(fmt.Sprintf(\"resized/%d.png\", j.ID)) // a repeat overwrites the same file", "", "// Extend is ChangeMessageVisibility: a heartbeat.", "func (q *Queue) Extend(j *Job, now int) { j.visibleAt = now + q.timeout }", "", "// the redrive policy", "if p.receives >= maxReceive {", "\tmoveToDLQ(p)", "}"], "map": {"1": [2], "2": [4], "3": [5], "4": [6], "5": [22, 23], "6": [2], "7": [2], "8": [19], "9": [16], "10": [13]}}, "short": {"label": "Go", "pc": ["receive(now):", "  job = first job with visibleAt <= now", "  job.visibleAt = now + timeout     # hidden, not deleted", "  job.receives = job.receives + 1", "  if job.receives reaches 4: move it to the DLQ", "worker:", "  job = receive(now)", "  while working: every 20 s extend(job)  # heartbeat, optional", "  do the work; name the output by job id  # a repeat overwrites", "  delete(job)                       # the acknowledgement"], "real": ["// Receive returns the first visible job and hides it.", "func (q *Queue) Receive(now int) *Job {", "\tfor _, j := range q.jobs {", "\t\tif !j.deleted && j.visibleAt <= now {", "\t\t\tj.visibleAt = now + q.timeout", "\t\t\tj.receives++", "\t\t\treturn j", "\t\t}", "\t}", "\treturn nil", "}", "", "func (q *Queue) Delete(j *Job) { j.deleted = true }", "", "// the work: the output is named by job id", "put(fmt.Sprintf(\"resized/%d.png\", j.ID)) // a repeat overwrites the same file", "", "// Extend is ChangeMessageVisibility: a heartbeat.", "func (q *Queue) Extend(j *Job, now int) { j.visibleAt = now + q.timeout }", "", "// the redrive policy", "if p.receives >= maxReceive {", "\tmoveToDLQ(p)", "}"], "map": {"1": [2], "2": [4], "3": [5], "4": [6], "5": [22, 23], "6": [2], "7": [2], "8": [19], "9": [16], "10": [13]}}};
+const steps={
+"ok":[
+ {pc:[1, 2, 3, 4],t:"Receive hides the job",b:"Worker A receives job 7 at second 0. SQS does not delete it. It sets visibleAt to second 30, so no other receive can return it until then.",w:"Receive is not delete. The job is only borrowed.",m:[["q","a","job 7, hidden 30 s"]],st:{q:["busy","job 7 hidden"],a:["busy","resizing"]}},
+ {pc:[10],t:"Delete when done",b:"Worker A finishes at second 10 and deletes job 7. Delete is the acknowledgement. Only now is the job gone for good.",w:"Delete is the acknowledgement. Only now is the job gone for good.",m:[["q","a","job 7, hidden 30 s"],["a","q","delete job 7","ok"]],st:{q:["ok","job 7 gone"],a:["ok","done"]}},
+ {pc:[7],t:"A worker crashes",b:"Worker A receives job 8 at second 10, so visibleAt is second 40. Then it crashes. It never deletes job 8, and nobody has to notice the crash.",w:"Nobody has to notice the crash.",m:[["q","a","job 8, hidden 30 s"],["x","worker A crashes"]],ac:{a:"fail"},st:{q:["busy","job 8 hidden"],a:["fail","crashed"]}},
+ {pc:[2, 3, 4, 10],t:"It comes back by itself",b:"A receive at second 39 finds job 8 still hidden: visibleAt 40 is later than 39. At second 40 the check passes. Worker B receives it, the receive count is 2, and it deletes it.",w:"The timeout turned a crash into a delay.",m:[["q","q","30 s passed: job 8 visible","busy"],["q","b","job 8, receive count 2"],["b","q","delete job 8","ok"]],ac:{a:"fail"},st:{q:["ok","job 8 gone"],b:["ok","done"]}},
+ {pc:[5],t:"Counting the returns",b:"Each receive raises the receive count. In the run, poison job 13 crashes every worker, every 30 seconds. At second 90 the count reaches 4, and the redrive policy moves it to the DLQ.",w:"A job that crashes every worker is parked instead of returning for ever.",m:[["q","q","receive count 4: to DLQ","undo"]],st:{q:["undo","poison job parked"]},n:["Crash: retried. Poison: parked.","ok"]}
+],
+"short":[
+ {pc:[7, 3],t:"A slow job",b:"Job 9 is a huge image and takes 45 seconds. Worker A receives it at second 0, so visibleAt is second 30. The timeout was set for a normal job.",w:"The timeout was set for a normal job.",m:[["q","a","job 9, hidden 30 s"]],st:{q:["busy","job 9 hidden"],a:["busy","resizing, 45 s"]}},
+ {pc:[2],t:"It becomes visible while still running",b:"At second 30 the check passes: visibleAt 30 is not later than now. Job 9 is visible again, while worker A is still working. SQS cannot tell slow from dead.",w:"SQS cannot tell slow from dead.",m:[["q","a","job 9, hidden 30 s"],["q","q","30 s passed: job 9 visible","busy"]],st:{q:["busy","job 9 visible again"],a:["busy","still resizing"]}},
+ {pc:[2, 3, 4],t:"The failure: two workers, one job",b:"Worker B receives job 9 and starts too, receive count 2. At second 45 worker A finishes and deletes. At second 75 worker B finishes and writes the file again. The job ran 2 times.",w:"The job ran twice. With a side effect like a charge, it would be a double charge.",m:[["q","b","job 9, receive count 2","fail"],["a","q","delete job 9 at 45 s","busy"],["b","b","writes again at 75 s","fail"]],st:{a:["busy","done"],b:["fail","duplicate work"]},n:["One job, done twice","fail"]},
+ {pc:[8, 10],t:"Fix: extend while working",b:"Worker A calls ChangeMessageVisibility at second 20 and at second 40. visibleAt moves to 50 and then 70. At second 45 no receive can return job 9, and A deletes it. It ran once.",w:"A heartbeat says: still working, keep it hidden.",m:[["q","a","job 9, hidden 30 s"],["a","q","extend 30 s","ok"],["a","q","extend 30 s","ok"],["a","q","delete job 9","ok"]],st:{q:["ok","job 9 gone"],a:["ok","done once"]}},
+ {pc:[9],t:"And make it idempotent",b:"Name the output by job id, so a repeat overwrites the same file. The timeout reduces duplicates. Idempotency makes the rest safe.",w:"The timeout reduces duplicates. Idempotency makes the rest safe.",m:[["b","b","job 9 output exists: skip","ok"]],st:{b:["ok","skipped"]}}
+]};
+function draw(s){return seq(A,s);}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+function render(){
+  const L=steps[mode],s=L[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${L.length}`;
+  $("scene").innerHTML=draw(s,mode);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("scene").querySelectorAll(".msg")].forEach((el,k)=>reduce?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),70*k+30));
+  $("prev").disabled=i===0;$("next").disabled=i===L.length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"){$("codecard").style.display="none";return;}
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codenote").textContent=c.note||"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

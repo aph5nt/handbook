@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buffer Pool and Page Cache</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Buffer pool and the OS page cache</h1>
+  <p class="lede">Postgres keeps hot pages in its buffer pool, and Linux keeps file pages in its page cache underneath. Press <b>Next</b> and follow page 7 from the disk into memory, twice. Then watch an oversized buffer pool starve the machine.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="bp">Follow page 7</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Cache layers from application cache to disk, with copies of page 7 and a bar of how the server's RAM is split</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="q" class="box" x="20" y="20" width="150" height="64" rx="8" fill="var(--coord)"/>
+        <text id="h-q" data-on="q" x="95.0" y="46" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Query</text>
+        <text id="s-q" data-on="q" x="95.0" y="70" text-anchor="middle" font-size="14" fill="#fff">needs page 7</text>
+        <rect id="ac" class="box" x="200" y="110" width="430" height="56" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-ac" x="216" y="143" text-anchor="start" font-size="15" font-weight="700" fill="var(--fg)">Application cache</text>
+        <rect id="pac" class="box" x="470" y="121" width="145" height="34" rx="17.0" fill="var(--panel)"/>
+        <text id="t-pac" data-on="pac" x="542.5" y="143.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="bp" class="box" x="200" y="180" width="430" height="56" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-bp" x="216" y="213" text-anchor="start" font-size="15" font-weight="700" fill="var(--fg)">Database buffer pool</text>
+        <rect id="pbp" class="box" x="470" y="191" width="145" height="34" rx="17.0" fill="var(--panel)"/>
+        <text id="t-pbp" data-on="pbp" x="542.5" y="213.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="pc" class="box" x="200" y="250" width="430" height="56" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-pc" x="216" y="283" text-anchor="start" font-size="15" font-weight="700" fill="var(--fg)">OS page cache</text>
+        <rect id="ppc" class="box" x="470" y="261" width="145" height="34" rx="17.0" fill="var(--panel)"/>
+        <text id="t-ppc" data-on="ppc" x="542.5" y="283.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <rect id="dk" class="box" x="200" y="320" width="430" height="56" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-dk" x="216" y="353" text-anchor="start" font-size="15" font-weight="700" fill="var(--fg)">Disk</text>
+        <rect id="pdk" class="box" x="470" y="331" width="145" height="34" rx="17.0" fill="var(--panel)"/>
+        <text id="t-pdk" data-on="pdk" x="542.5" y="353.0" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="rt" x="670" y="40" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)">RAM on the database server</text>
+        <rect x="670" y="52" width="210" height="24" rx="4" fill="var(--line)"/>
+        <rect id="rbp" class="box" x="670" y="52" width="0" height="24" rx="4" fill="var(--coord)"/>
+        <text id="rbt" x="670" y="98" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="rpt" x="670" y="118" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)"></text>
+        <text id="nt" x="670" y="170" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <text id="nt2" x="670" y="192" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-buffer-pool-page-cache/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">page in memory</span>
+    <span style="--c:var(--wait)">extra copy in the application</span>
+    <span style="--c:var(--line)">evicted or squeezed out</span>
+    <span style="--c:var(--coord)">buffer pool share of RAM</span>
+    <span style="--c:var(--fail)">oversized pool, swapping</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Postgres <code>shared_buffers</code> and <code>effective_cache_size</code>, MySQL <code>innodb_buffer_pool_size</code>. DozerDB, like Neo4j, maps its store files into its own page cache, sized by setting. <code>pg_prewarm</code> refills the buffer pool after a restart.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Follow your database's sizing guide: about a quarter of RAM for Postgres shared buffers, most of the RAM for a database that uses direct I/O. Add an application cache only for answers that are costly to compute, not for raw pages.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Buffer pool</th><th>OS page cache</th></tr>
+      <tr><td>Owned by</td><td>The database</td><td>The operating system</td></tr>
+      <tr><td>Knows</td><td>Tables, indexes, which pages are hot</td><td>Only files and recent reads</td></tr>
+      <tr><td>A hit costs</td><td>No system call</td><td>A system call and a copy</td></tr>
+      <tr><td>Sized by</td><td>A database setting</td><td>Whatever RAM is free</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;The buffer pool is the database's page cache and the OS page cache sits under it, so a page can be cached twice, and I size the buffer pool by the database's guide, not to all of RAM.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[200,8,430];
+const steps={
+"bp":[
+ {pc:[2, 5, 6, 7, 8],t:"A query needs page 7",b:"Postgres needs page 7 of a table, 8 kilobytes. The check on line 2: is it in the buffer pool? No. The check on line 5: is it in the OS page cache? No. So line 6 reads the disk.",
+  w2:"Two caches stand between the query and the disk: the database's and the operating system's.",w:{rbp:52},fill:{rbp:COORD},text:{"rbt":"blue: buffer pool, about a quarter","rpt":"grey: free for the OS page cache","t-pac":"","t-pbp":"","t-ppc":"","t-pdk":"page 7",nt:"",nt2:""},
+  a:[[150,84,198,200,"miss",FG,false,[-50,0]],[440,236,440,250,"miss"],[440,306,440,320,"miss: read the disk"]]},
+ {pc:[7, 8],t:"Two copies of one page",b:"The disk read lands in the OS page cache. Postgres copies it into its buffer pool. Page 7 is now in memory twice.",w2:"This is double caching. It is normal for Postgres, and it is why the buffer pool is not given all the RAM.",
+  fill:{pbp:OK,ppc:OK},text:{"t-pbp":"page 7","t-ppc":"page 7",nt:"page 7 in RAM: 2 copies"}},
+ {pc:[2, 3, 4],t:"The next query hits the buffer pool",b:"Another query needs page 7. The check on line 2 says yes. Line 3 raises its usage count, so the clock sweep will spare it longer. No system call, no disk.",w2:"The buffer pool is the fastest place for a database page.",a:[[150,84,198,200,"hit",OK,false,[-50,0]]]},
+ {pc:[5, 8, 12, 13, 14, 15],t:"Evicted from the pool, still in the page cache",b:"Other pages arrive, and the clock sweep on lines 12 to 15 lowers each usage count until page 7 reaches 0 and is evicted. The next query misses on line 2, but the OS page cache still holds it. A memory copy, still no disk.",
+  w2:"The page cache is a second chance. A miss in the pool is not always a disk read.",fill:{pbp:LINE},text:{"t-pbp":"evicted",nt:"page 7 in RAM: 1 copy"},a:[[150,84,198,200,"miss",FG,false,[-50,0]],[440,236,440,250,"page cache hit",OK]]},
+ {pc:[9],t:"A third copy in the application",b:"The service adds its own cache of the same rows, in front of the database. The same data now sits in memory three times.",w2:"Every layer of cache costs memory. Give the database's own caches memory first.",
+  fill:{pac:WAIT,pbp:OK},text:{"t-pac":"rows of page 7","t-pbp":"page 7",nt:"same data in RAM: 3 copies"}},
+ {pc:[17],t:"The failure that matters: the pool takes all the RAM",b:"Someone sets the buffer pool to 90 percent of RAM, to cache more. The page cache shrinks to almost nothing, the operating system starts to swap, and every query slows down.",
+  w2:"Bigger is not better here. The database also needs the page cache, and the OS needs room.",w:{rbp:190},fill:{rbp:FAIL,dk:FAIL,ppc:LINE},text:{"rbt":"red: buffer pool at 90 percent","rpt":"page cache starved, swapping","t-ppc":"squeezed out",nt:"disk busy, every query slow",nt2:""},ban:["swapping: everything slows down",8]},
+ {pc:[17],t:"Fix: size by the database's guide",b:"Postgres starts at about a quarter of RAM for shared buffers and leaves the rest to the page cache. Databases that bypass the page cache with direct I/O, such as InnoDB with O_DIRECT, take most of the RAM instead.",
+  w2:"Know which caches your database relies on, and give each one its share.",w:{rbp:52},fill:{rbp:COORD,dk:PANEL,ppc:OK,pac:LINE},text:{"rbt":"blue: buffer pool, about a quarter","rpt":"rest: OS page cache","t-ppc":"page 7","t-pac":"",nt:"no swapping",nt2:""}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"bp": {
+"label": "Go",
+"pc": [
+"read(page):",
+"  if page in pool:                       # no system call, no disk",
+"    usage[page] += 1, up to 5",
+"    return it",
+"  if page not in osPageCache:            # one system call first",
+"    diskReads += 1                       # the real read",
+"    osPageCache.add(page)",
+"  put(page)                              # now in memory twice",
+"  return it",
+"",
+"put(page):                               # the clock sweep",
+"  loop:",
+"    b = the buffer under the hand; hand += 1",
+"    if usage[b] > 0: usage[b] -= 1; continue  # a second chance",
+"    evict b; b holds page; usage[b] = 1; return",
+"",
+"RAM split: pool about 25 percent, the rest for the page cache"
+],
+"real": [
+"func (d *DB) Read(page int) string {",
+"\tif d.pool.Get(page) { // usage count goes up, capped at 5",
+"\t\treturn \"buffer pool: no system call, no disk\"",
+"\t}",
+"\tfrom := \"OS page cache: one system call, no disk\"",
+"\tif !d.pageCache[page] {",
+"\t\td.diskReads++",
+"\t\td.pageCache[page] = true",
+"\t\tfrom = \"disk\"",
+"\t}",
+"\td.pool.Put(page) // now in memory twice",
+"\treturn from",
+"}",
+"",
+"func (p *Pool) Put(page int) { // the clock sweep",
+"\tfor {",
+"\t\ti := p.hand",
+"\t\tp.hand = (p.hand + 1) % len(p.pages)",
+"\t\tif p.usage[i] > 0 {",
+"\t\t\tp.usage[i]-- // a second chance",
+"\t\t\tcontinue",
+"\t\t}",
+"\t\tif p.pages[i] >= 0 {",
+"\t\t\tdelete(p.lookup, p.pages[i])",
+"\t\t}",
+"\t\tp.pages[i], p.usage[i] = page, 1",
+"\t\tp.lookup[page] = i",
+"\t\treturn",
+"\t}",
+"}",
+"",
+"pool := ram * split.pct / 100 // 25: 16 of 64 GB; 90: 57 of 64 GB, the OS swaps"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+2
+],
+"4": [
+3
+],
+"5": [
+6
+],
+"6": [
+7
+],
+"7": [
+8
+],
+"8": [
+11
+],
+"9": [
+12
+],
+"11": [
+15
+],
+"12": [
+16
+],
+"13": [
+17,
+18
+],
+"14": [
+19,
+20,
+21
+],
+"15": [
+23,
+24,
+25,
+26,
+27,
+28
+],
+"17": [
+32
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

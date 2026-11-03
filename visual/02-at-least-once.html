@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>At-least-once delivery and idempotency</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>At-least-once delivery and idempotency</h1>
+  <p class="lede">A consumer reads a message, does its work, then acknowledges. If it crashes between the work and the acknowledgement, the message comes again. A wallet balance shows what that does to a careless consumer. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="naive" id="tab-naive">Add the amount</button>
+    <button role="tab" aria-selected="false" data-mode="idem" id="tab-idem">Merge by message id</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A queue, a consumer and a wallet balance table, with the acknowledgement arrow</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-alo">
+          <g class="node" id="n-q" data-c="c"><rect class="box" id="r-q" x="30" y="140" width="190" height="90" rx="8"/><text id="t-ql" x="125.0" y="182" text-anchor="middle" font-size="15">Queue</text><text id="t-qs" x="125.0" y="198" text-anchor="middle" font-size="12" font-weight="400">msg 7: +50 to wallet W</text></g>
+          <g class="node" id="n-cn" data-c="c"><rect class="box" id="r-cn" x="340" y="140" width="190" height="90" rx="8"/><text id="t-cnl" x="435.0" y="182" text-anchor="middle" font-size="15">Consumer</text><text id="t-cns" x="435.0" y="198" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-st" data-c="v"><rect class="box" id="r-st" x="650" y="140" width="220" height="90" rx="8"/><text id="t-stl" x="760.0" y="182" text-anchor="middle" font-size="15">Balances</text><text id="t-sts" x="760.0" y="198" text-anchor="middle" font-size="12" font-weight="400">W: 100</text></g>
+          <g class="node" id="n-seen" data-c="h"><rect class="box" id="r-seen" x="650" y="270" width="220" height="50" rx="8"/><text id="t-seenl" x="760.0" y="292" text-anchor="middle" font-size="14">Seen ids</text><text id="t-seens" x="760.0" y="308" text-anchor="middle" font-size="12" font-weight="400">none</text></g>
+          <g class="arrow" id="a-dl" data-c="x"><path class="route" d="M220 170 L336 170" marker-end="url(#arr)"/><text id="t-dll" x="278" y="158" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">deliver msg 7</text></g>
+          <g class="arrow" id="a-wr" data-c="x"><path class="route" d="M530 185 L646 185" marker-end="url(#arr)"/><text id="t-wrl" x="588" y="173" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">write</text></g>
+          <g class="arrow" id="a-ack" data-c="x"><path class="route" d="M336 210 L224 210" marker-end="url(#arr)"/><text id="t-ackl" x="280" y="232" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">ack</text></g>
+          <g class="arrow" id="a-ck" data-c="x"><path class="route" d="M530 215 C590 260 610 290 646 295" marker-end="url(#arr)"/><text id="t-ckl" x="560" y="280" text-anchor="end" font-size="13" font-weight="400" fill="var(--fg)">check id</text></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-at-least-once/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the queue or the consumer</span>
+    <span style="--c:var(--svc)">stored state</span>
+    <span style="--c:var(--ok)">done once, correctly</span>
+    <span style="--c:var(--wait)">a repeat delivery</span>
+    <span style="--c:var(--fail)">crashed, or a wrong result</span>
+    <span style="--c:var(--muted)">the dedupe record</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: Kafka and SQS</h2>
+      <p>Kafka consumers commit offsets after the work, and Amazon SQS redelivers after a visibility timeout. Both are at-least-once by default. The practical choice: make the effect idempotent, never trust "exactly once" alone.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: a graph sync</h2>
+      <p>A graph sync merges each link by its key. Re-reading a block range after a restart changes nothing. A counter that adds instead of merging would double every link.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>At-most-once</th><th>At-least-once</th><th>Exactly-once effect</th></tr>
+      <tr><td>Ack</td><td>Before the work</td><td>After the work</td><td>After, plus idempotent work</td></tr>
+      <tr><td>On a crash</td><td>Message lost</td><td>Message repeated</td><td>Repeat ignored</td></tr>
+      <tr><td>Use</td><td>Metrics you can lose</td><td>The default</td><td>Money, counts, graphs</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"At-least-once delivery means repeats will come, so every consumer makes its effect idempotent by merging, setting or recording the message id."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+naive:[
+ {"t": "A message arrives", "b": "Message 7 says: add 50 to wallet W. W holds 100. deliver looks for the first message with no ack. Message 7 has none, so it goes to the consumer.", "w": "The queue keeps the message until it hears an ack (acknowledgement).", "a": {"dl": "ok"}, "n": {"cn": "ok"}, "pc": [1]},
+ {"t": "The consumer adds 50", "b": "consumeNaive runs balance = balance + 50. That is 100 + 50 = 150. W now holds 150.", "w": "The work is done. The ack is not sent yet.", "a": {"wr": "ok"}, "x": {"sts": "W: 150"}, "pc": [2, 3]},
+ {"t": "Crash before the ack", "b": "The consumer process dies on the line before the ack. The queue has no ack recorded for message 7.", "w": "Between the work and the ack is the gap every delivery system has.", "n": {"cn": "f"}, "x": {"cns": "crashed"}, "pc": [4, 5]},
+ {"t": "The queue delivers again", "b": "deliver runs again. Its check asks: does message 7 have an ack? No. It cannot tell \"work done, ack lost\" from \"work never done\". So it delivers message 7 to the restarted consumer.", "w": "This is at-least-once delivery: a message may arrive more than once, never less.", "n": {"cn": "w"}, "a": {"dl": "w", "wr": "x"}, "x": {"cns": "restarted", "dll": "msg 7 again"}, "pc": [6, 1]},
+ {"t": "50 is added twice", "b": "This consumer keeps no record of message 7, and no check stops it. It adds again: 150 + 50 = 200. The real balance is 150. W is wrong by 50.", "w": "A non-idempotent consumer turns a harmless repeat into wrong money.", "n": {"st": "f"}, "a": {"wr": "f"}, "x": {"sts": "W: 200, should be 150"}, "m": "balance wrong by 50", "pc": [3]}
+],
+idem:[
+ {"t": "Same message, a careful consumer", "b": "Message 7 arrives: add 50 to W. W holds 100. consumeOnce opens a transaction. It reads the seen ids, the ids of the messages already applied. There are none.", "w": "Idempotent: doing it twice has the same effect as doing it once.", "n": {"seen": "m"}, "a": {"dl": "ok"}, "x": {"seens": "none"}, "pc": [7, 8]},
+ {"t": "Apply and record the id in one transaction", "b": "The check asks: is id 7 in the seen ids? No. So the consumer adds 50 and records id 7 in the same transaction. The commit saves both: W holds 150, and the seen ids hold 7.", "w": "The effect and the record of the effect commit together or not at all.", "a": {"wr": "ok", "ck": "ok"}, "x": {"sts": "W: 150", "seens": "7"}, "pc": [9, 10, 11, 12]},
+ {"t": "Crash before the ack", "b": "The consumer dies after the commit and before the ack, as before. The queue has no ack. The database has both changes.", "w": "The gap is still there. The consumer is now ready for it.", "n": {"cn": "f"}, "x": {"cns": "crashed"}, "pc": [13, 14]},
+ {"t": "Redelivered, and recognised", "b": "deliver finds no ack, so message 7 comes again. The check asks: is id 7 in the seen ids? Yes. The consumer skips the add and sends the ack. W stays at 150.", "w": "At-least-once delivery plus an idempotent effect gives exactly-once results.", "n": {"cn": "ok", "seen": "ok"}, "a": {"dl": "w", "wr": "x", "ack": "ok"}, "x": {"cns": "skips msg 7", "dll": "msg 7 again"}, "m": "balance right: 150", "pc": [9]},
+ {"t": "Other ways to be idempotent", "b": "Set a value instead of adding to it: set W = 150 twice, and W holds 150. Merge by a natural key instead of insert. Use the event's own id as the row key.", "w": "A graph sync that merges links by key can replay any range safely.", "x": {"cns": "merge, set, or dedupe"}, "pc": [16, 17]}
+]};
+const SCENE={"naive": "alo", "idem": "alo"};
+const CODE={
+ naive:{label:"Go",why:"",
+  pc:[
+   "deliver(): return the first message with no ack yet      # kept until the ack",
+   "consumeNaive(msg):",
+   "  balance[msg.wallet] += msg.amount                      # adds every time",
+   "  if the process crashes here: stop                      # the ack is never sent",
+   "  ack(msg)",
+   "# no ack, so deliver() returns the same message again    # at-least-once",
+   "consumeOnce(msg):",
+   "  tx = begin()",
+   "  if msg.id is in tx.seen: ack(msg), return              # a repeat: skip the work",
+   "  tx.balance[msg.wallet] += msg.amount",
+   "  tx.seen += msg.id",
+   "  commit(tx)                                             # both or neither",
+   "  if the process crashes here: stop                      # the id is already saved",
+   "  ack(msg)",
+   "# other ways to be idempotent",
+   "setBalance(w, v): balance[w] = v                         # set, not add",
+   "merge a row by its key, never insert it twice"],
+  real:[
+   "func (q *Queue) deliver() (Msg, bool) {",
+   "\tfor _, m := range q.msgs {",
+   "\t\tif !q.acked[m.ID] { // no ack yet: deliver it (again)",
+   "\t\t\treturn m, true",
+   "\t\t}",
+   "\t}",
+   "\treturn Msg{}, false",
+   "}",
+   "",
+   "func consumeNaive(q *Queue, s *Store, m Msg, crash bool) error {",
+   "\ts.balance[m.Wallet] += m.Amount // adds every time",
+   "\tif crash {",
+   "\t\treturn errCrash // the ack is never sent",
+   "\t}",
+   "\tq.ack(m)",
+   "\treturn nil",
+   "}",
+   "",
+   "func consumeOnce(q *Queue, s *Store, m Msg, crash bool) (applied bool, err error) {",
+   "\ttx := s.begin()",
+   "\tif tx.seen[m.ID] { // a repeat: skip the work, just ack",
+   "\t\tq.ack(m)",
+   "\t\treturn false, nil",
+   "\t}",
+   "\ttx.balance[m.Wallet] += m.Amount",
+   "\ttx.seen[m.ID] = true",
+   "\ts.commit(tx) // the effect and the id commit together",
+   "\tif crash {",
+   "\t\treturn true, errCrash",
+   "\t}",
+   "\tq.ack(m)",
+   "\treturn true, nil",
+   "}",
+   "",
+   "func setBalance(s *Store, wallet string, v int) { s.balance[wallet] = v }"],
+  map:{"1": [1, 2, 3, 4, 5, 6, 7, 8], "2": [10], "3": [11], "4": [12, 13, 14], "5": [15], "6": [2, 3, 4], "7": [19], "8": [20], "9": [21, 22, 23, 24], "10": [25], "11": [26], "12": [27], "13": [28, 29, 30], "14": [31], "16": [35]}},
+ idem:{label:"Go",why:"",
+  pc:[
+   "deliver(): return the first message with no ack yet      # kept until the ack",
+   "consumeNaive(msg):",
+   "  balance[msg.wallet] += msg.amount                      # adds every time",
+   "  if the process crashes here: stop                      # the ack is never sent",
+   "  ack(msg)",
+   "# no ack, so deliver() returns the same message again    # at-least-once",
+   "consumeOnce(msg):",
+   "  tx = begin()",
+   "  if msg.id is in tx.seen: ack(msg), return              # a repeat: skip the work",
+   "  tx.balance[msg.wallet] += msg.amount",
+   "  tx.seen += msg.id",
+   "  commit(tx)                                             # both or neither",
+   "  if the process crashes here: stop                      # the id is already saved",
+   "  ack(msg)",
+   "# other ways to be idempotent",
+   "setBalance(w, v): balance[w] = v                         # set, not add",
+   "merge a row by its key, never insert it twice"],
+  real:[
+   "func (q *Queue) deliver() (Msg, bool) {",
+   "\tfor _, m := range q.msgs {",
+   "\t\tif !q.acked[m.ID] { // no ack yet: deliver it (again)",
+   "\t\t\treturn m, true",
+   "\t\t}",
+   "\t}",
+   "\treturn Msg{}, false",
+   "}",
+   "",
+   "func consumeNaive(q *Queue, s *Store, m Msg, crash bool) error {",
+   "\ts.balance[m.Wallet] += m.Amount // adds every time",
+   "\tif crash {",
+   "\t\treturn errCrash // the ack is never sent",
+   "\t}",
+   "\tq.ack(m)",
+   "\treturn nil",
+   "}",
+   "",
+   "func consumeOnce(q *Queue, s *Store, m Msg, crash bool) (applied bool, err error) {",
+   "\ttx := s.begin()",
+   "\tif tx.seen[m.ID] { // a repeat: skip the work, just ack",
+   "\t\tq.ack(m)",
+   "\t\treturn false, nil",
+   "\t}",
+   "\ttx.balance[m.Wallet] += m.Amount",
+   "\ttx.seen[m.ID] = true",
+   "\ts.commit(tx) // the effect and the id commit together",
+   "\tif crash {",
+   "\t\treturn true, errCrash",
+   "\t}",
+   "\tq.ack(m)",
+   "\treturn true, nil",
+   "}",
+   "",
+   "func setBalance(s *Store, wallet string, v int) { s.balance[wallet] = v }"],
+  map:{"1": [1, 2, 3, 4, 5, 6, 7, 8], "2": [10], "3": [11], "4": [12, 13, 14], "5": [15], "6": [2, 3, 4], "7": [19], "8": [20], "9": [21, 22, 23, 24], "10": [25], "11": [26], "12": [27], "13": [28, 29, 30], "14": [31], "16": [35]}}};
+let mode="naive";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

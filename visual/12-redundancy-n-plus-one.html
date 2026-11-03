@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redundancy and N+1</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Redundancy and N+1: no single point of failure</h1>
+  <p class="lede">An API needs three copies to carry its peak. The team runs four: N+1. Watch where the spare helps, where a single database still takes everything down, and how spares that fail together are no spares. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="spread">N+1 across zones</button>
+    <button role="tab" aria-selected="false" data-mode="corr">Correlated failure: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A balancer, four API copies in two failure domains, and a database</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-lb" class="box" x="360" y="14" width="180" height="56" rx="8"/><text id="b-lb-t" x="450" y="38">Balancer</text><text id="b-lb-l" x="450" y="59" class="sm"></text>
+        <rect id="f-z1" x="20" y="96" width="400" height="160" rx="12" fill="none" stroke-width="3"/><text id="z1-t" x="40" y="240" text-anchor="start" fill="var(--fg)">Zone 1</text>
+        <rect id="f-z2" x="480" y="96" width="400" height="160" rx="12" fill="none" stroke-width="3"/><text id="z2-t" x="500" y="240" text-anchor="start" fill="var(--fg)">Zone 2</text>
+        <rect id="b-c1" class="box" x="40" y="140" width="170" height="62" rx="8"/><text id="b-c1-t" x="125" y="166">Copy 1</text><text id="b-c1-l" x="125" y="189" class="sm"></text>
+        <rect id="b-c2" class="box" x="230" y="140" width="170" height="62" rx="8"/><text id="b-c2-t" x="315" y="166">Copy 2</text><text id="b-c2-l" x="315" y="189" class="sm"></text>
+        <rect id="b-c3" class="box" x="500" y="140" width="170" height="62" rx="8"/><text id="b-c3-t" x="585" y="166">Copy 3</text><text id="b-c3-l" x="585" y="189" class="sm"></text>
+        <rect id="b-c4" class="box" x="690" y="140" width="170" height="62" rx="8"/><text id="b-c4-t" x="775" y="166">Copy 4</text><text id="b-c4-l" x="775" y="189" class="sm"></text>
+        <text id="zone-n" x="450" y="272" class="sm" fill="var(--muted)"></text>
+        <rect id="b-db" class="box" x="230" y="280" width="190" height="62" rx="8"/><text id="b-db-t" x="325" y="306">Database</text><text id="b-db-l" x="325" y="329" class="sm"></text>
+        <g id="g-r" class="dim"><rect id="b-rp" class="box" x="500" y="280" width="190" height="62" rx="8"/><text id="b-rp-t" x="595" y="306">Replica</text><text id="b-rp-l" x="595" y="329" class="sm"></text></g>
+        <text id="cap" x="450" y="372" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-redundancy-n-plus-one/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">balancer</span>
+    <span style="--c:var(--ok)">serving with room</span>
+    <span style="--c:var(--wait)">the spare, or near its limit</span>
+    <span style="--c:var(--fail)">failed, or a single point of failure</span>
+    <span style="--c:var(--line)">not running</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Kubernetes pod anti-affinity and topology spread constraints across zones. A database with a replica in another zone and a failover that is tested. Two serving lanes on separate machines: the second lane is the +1 for the whole stack.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>List every single point of failure, including DNS (Domain Name System), secrets, the balancer and the one person who knows the deploy. Size for N, run N+1, or N+2 when maintenance and failure can overlap. Spread copies so the loss of one failure domain still leaves N. Roll config changes gradually.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>N+1 in one failure domain</th><th>N+1 across failure domains</th></tr>
+      <tr><td>One copy dies</td><td>Covered</td><td>Covered</td></tr>
+      <tr><td>A zone, rack or power feed dies</td><td>Everything is down</td><td>The other domain carries on</td></tr>
+      <tr><td>A bad config push to all at once</td><td>Everything is down</td><td>Everything is down: roll it gradually</td></tr>
+      <tr><td>Cost</td><td>Cheapest</td><td>More copies, cross-zone traffic</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I size for N, run N+1 or N+2, and spread the copies across failure domains, because spares that fail together are not spares."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const base={f:{"b-lb":C,"b-c1":G,"b-c2":G,"b-c3":G,"b-c4":Y,"b-db":G,"b-rp":G},x:{"b-lb-l":"","b-c1-l":"","b-c2-l":"","b-c3-l":"","b-c4-l":"spare","b-db-l":"","b-rp-l":"","zone-n":"","cap":"","z1-t":"Zone 1","z2-t":"Zone 2"},dim:[],z1:G,z2:G};
+const D={spread:base,corr:base};
+const L=k=>[[450,70,125,138],[450,70,315,138],[450,70,585,138],[450,70,775,138]][k];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const steps={
+spread:[
+ {t:"Size for N, run N+1",b:"The peak needs three copies: N is 3. The team runs four. Each healthy copy carries peak ÷ copies up: 3 ÷ 4 = 75% of its capacity. Copy 4 is the +1, there so one copy can fail.",w:"N+1 means one copy can die, or be upgraded, and the rest still carry the peak.",dim:["g-r"],x:{"b-c1-l":"75%","b-c2-l":"75%","b-c3-l":"75%","b-c4-l":"spare, 75%"},m:[0,1,2,3].map(k=>a(L(k),"",C))},
+ {t:"One copy fails: covered",b:"Copy 2 crashes. The same rule gives 3 ÷ 3 = 100% for each of the three left. At or under 100% is the test, and it passes.",w:"That is exactly what the +1 was for. Users notice nothing.",dim:["g-r"],f:{"b-c2":R},x:{"b-c1-l":"100%","b-c2-l":"crashed","b-c3-l":"100%","b-c4-l":"100%"},m:[0,2,3].map(k=>a(L(k),"",C))},
+ {t:"A failure during an upgrade: N+2",b:"While copy 2 is down, copy 3 is taken out for an upgrade. Now 3 ÷ 2 = 150% for copies 1 and 4. Over 100%, so the peak is not served.",w:"When maintenance and failure can overlap, run N+2.",dim:["g-r"],f:{"b-c2":R,"b-c3":N,"b-c1":Y,"b-c4":Y},x:{"b-c1-l":"150%","b-c2-l":"crashed","b-c3-l":"upgrading","b-c4-l":"150%"},m:[0,3].map(k=>a(L(k),"",Y))},
+ {t:"The single point of failure: one database",b:"All four copies read one database. The database host fails. The serve test needs the database up as well, so the answer is nothing served: four healthy copies, all useless.",w:"Redundancy only counts where every piece on the path has a spare. Find the single points of failure: database, balancer, DNS (Domain Name System), secrets.",dim:["g-r"],f:{"b-db":R},x:{"b-db-t":"Database: down","b-db-l":"single point of failure","b-c1-l":"no data","b-c2-l":"no data","b-c3-l":"no data","b-c4-l":"no data"},m:[[125,202,300,278,"",R],[315,202,325,278,"",R],[585,202,400,278,"",R],[775,202,410,282,"",R]]},
+ {t:"Make the database redundant",b:"A replica runs in zone 2, with a tested failover. When the database host fails, the replica is promoted in seconds. The database is up again, and 3 ÷ 4 = 75% each.",w:"Now the data path has a spare too.",f:{"b-db":R},x:{"b-db-t":"Database: down","b-db-l":"failed","b-rp-t":"Replica: promoted","b-rp-l":"now primary","b-c1-l":"75%","b-c2-l":"75%","b-c3-l":"75%","b-c4-l":"75%"},m:[[315,202,590,278,"",C],[585,202,595,278,"",C]]},
+ {t:"Plan for losing a whole zone",b:"A power fault takes out zone 1: every copy whose zone is zone 1 goes down at once. Copies 3 and 4 survive at 3 ÷ 2 = 150%. To lose a zone and keep N, each zone needs N ÷ (zones − 1), rounded up: 3 zones of 2, or 2 zones of 3.",w:"N+1 across two zones protects against a copy, not a zone. To survive a zone, the copies left in the other zones must still be N: three zones of two, or two zones of three.",f:{"b-c1":R,"b-c2":R,"b-c3":Y,"b-c4":Y,"b-db":R},x:{"b-c1-l":"zone down","b-c2-l":"zone down","b-c3-l":"150%","b-c4-l":"150%","b-db-l":"in zone 1: down","b-rp-l":"promoted, serving","zone-n":"after a zone loss, the survivors must still be N"},z1:R,m:[2,3].map(k=>a(L(k),"",Y))}
+],
+corr:[
+ {t:"Four copies, one failure domain",b:"Another team also runs N+1: four copies for a peak of three, 75% each. To keep it simple, all four run in zone 1, two on rack A and two on rack B.",w:"On the dashboard this looks exactly like the first tab: four green copies.",dim:["g-r"],x:{"z1-t":"Zone 1, rack A","z2-t":"Zone 1, rack B","b-c1-l":"75%","b-c2-l":"75%","b-c3-l":"75%","b-c4-l":"spare, 75%"},m:[0,1,2,3].map(k=>a(L(k),"",C))},
+ {t:"The failure that matters: the zone loses power",b:"A power fault takes out zone 1. The failure takes every copy in that zone, and all four are in it. 0 copies up, nothing served.",w:"The spare shared a failure domain with the copies it was meant to cover. N+1 inside one zone is N+0 against a zone outage.",dim:["g-r"],f:{"b-c1":R,"b-c2":R,"b-c3":R,"b-c4":R,"b-lb":R},x:{"z1-t":"Zone 1, rack A","z2-t":"Zone 1, rack B","b-c1-l":"down","b-c2-l":"down","b-c3-l":"down","b-c4-l":"down","b-lb-l":"no healthy copy","cap":"a failure domain is a set of things that fail together"},z1:R,z2:R,m:[]},
+ {t:"The same failure from a config push",b:"The copies are now spread across two zones. A new config with a typo goes to all four at once. Each crashes on start: 0 copies up, nothing served.",w:"Correlation is not only physical. One bad push, one shared bug or one expired certificate fails every copy together.",dim:["g-r"],f:{"b-c1":R,"b-c2":R,"b-c3":R,"b-c4":R,"b-lb":R},x:{"b-c1-l":"bad config","b-c2-l":"bad config","b-c3-l":"bad config","b-c4-l":"bad config","b-lb-l":"no healthy copy"},m:[]},
+ {t:"The fix: spread, and roll gradually",b:"Config now goes to one copy first, and the roll stops at the first crash. Copy 1 crashes, the roll stops after 1 copy, and the other three serve at 100%.",w:"A bad push now kills one copy, the +1 covers it, and the roll stops.",dim:["g-r"],f:{"b-c1":R,"b-c4":G},x:{"b-c1-l":"new config: crashed","b-c2-l":"old config","b-c3-l":"old config","b-c4-l":"old config","b-lb-l":"roll stopped"},m:[1,2,3].map(k=>a(L(k),"",C))},
+ {t:"Prove it: take a domain away",b:"Once a quarter the team switches zone 1 off on purpose, in daylight. Copies 3 and 4 show 150%: the gap the first tab found. The drill proves the team needs a third copy in each zone.",w:"Redundancy you have not tested is a diagram. Taking a domain away is how you learn whether the spares are really independent.",f:{"b-c1":N,"b-c2":N,"b-c3":Y,"b-c4":Y},x:{"b-c1-l":"switched off","b-c2-l":"switched off","b-c3-l":"150%: gap found","b-c4-l":"150%: gap found","b-rp-l":"ready","cap":"a planned drill: zone 1 off for 30 minutes"},z1:Y,m:[2,3].map(k=>a(L(k),"",C))}
+]};
+function draw(s){const d=D[mode];$("f-z1").setAttribute("stroke",s.z1||d.z1);$("f-z2").setAttribute("stroke",s.z2||d.z2);if(!(s.x&&s.x["b-db-t"]))$("b-db-t").textContent="Database";if(!(s.x&&s.x["b-rp-t"]))$("b-rp-t").textContent="Replica";}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["load(copies, database):", "  up = number of copies that are up", "  if up == 0 or the database is down: nothing is served", "  each copy carries N * 100 / up percent   # over 100%: overloaded", "failDomain(domain):", "  every copy in that zone or rack goes down together", "roll(config, oneFirst):", "  for each copy: apply config", "    if it crashes and oneFirst: stop the roll", "perZone(zones): ceil(N / (zones - 1))   # survive one zone"], "real": ["func Load(cs []*Copy, dbUp bool) (int, int) {", "\tup := 0", "\tfor _, c := range cs {", "\t\tif c.Up {", "\t\t\tup++", "\t\t}", "\t}", "\tif up == 0 || !dbUp {", "\t\treturn up, -1 // nothing is served", "\t}", "\treturn up, n * 100 / up", "}", "", "func FailDomain(cs []*Copy, domain string) {", "\tfor _, c := range cs {", "\t\tif c.Zone == domain || c.Rack == domain {", "\t\t\tc.Up = false", "\t\t}", "\t}", "}", "", "func Roll(cs []*Copy, crashes bool, oneFirst bool) int {", "\thit := 0", "\tfor _, c := range cs {", "\t\thit++", "\t\tif crashes {", "\t\t\tc.Up = false", "\t\t\tif oneFirst {", "\t\t\t\treturn hit // watched it crash: stop the roll", "\t\t\t}", "\t\t}", "\t}", "\treturn hit", "}", "", "func PerZone(zones int) int {", "\treturn (n + zones - 2) / (zones - 1) // ceil(n / (zones-1))", "}"], "map": {"1": [1], "2": [2, 3, 4, 5], "3": [8, 9], "4": [11], "5": [14], "6": [16, 17], "7": [22], "8": [25, 26, 27], "9": [28, 29], "10": [36, 37]}}},PCS={"spread": [[1, 2, 4], [2, 4], [4], [3], [3, 4], [5, 6, 10]], "corr": [[1, 4], [5, 6, 3], [7, 8, 3], [8, 9], [5, 6, 10]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

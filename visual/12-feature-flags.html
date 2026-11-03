@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feature flags</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Feature flags: deploy is not release</h1>
+  <p class="lede">An agent proxy gets a new way to plan graph walks. The code ships to every copy, switched off. Each square is one tenth of the agents. Watch the flag release it step by step and switch it off in seconds, then watch old flags rot. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="roll">Percentage rollout and kill switch</button>
+    <button role="tab" aria-selected="false" data-mode="rot">Old flags pile up</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Agents, a feature flag, the old path and the new path</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <text x="130" y="100" fill="var(--fg)">Agents, in tenths</text>
+        <rect id="b-fl" class="box" x="300" y="140" width="210" height="76" rx="10"/><text id="b-fl-t" x="405" y="170">Flag new_walk_planner</text><text id="b-fl-l" x="405" y="196" class="sm"></text>
+        <rect id="b-op" class="box" x="620" y="50" width="250" height="66" rx="8"/><text id="b-op-t" x="745" y="76">Old path</text><text id="b-op-l" x="745" y="100" class="sm"></text>
+        <rect id="b-np" class="box" x="620" y="240" width="250" height="66" rx="8"/><text id="b-np-t" x="745" y="266">New path</text><text id="b-np-l" x="745" y="290" class="sm"></text>
+        <text id="cap" x="450" y="356" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-feature-flags/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">agent on the old path</span>
+    <span style="--c:var(--ok)">agent on the new path, healthy</span>
+    <span style="--c:var(--fail)">errors</span>
+    <span style="--c:var(--wait)">stale or untested</span>
+    <span style="--c:var(--line)">path not used</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A percentage rollout of a new query planner, keyed by API key so each agent sees one path. A kill switch for an expensive feature, such as deep graph walks, during an incident. LaunchDarkly or Unleash as a service, or a small config file the code reads at run time.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Key the rollout on a stable id, so a user does not flip between paths. Compare the flagged group's error rate with the rest. Give every flag an owner and an expiry date. Delete the flag and the old path after full rollout. Keep only a few long-lived operational switches, and test them.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Feature flag</th><th>Deploy and roll back</th></tr>
+      <tr><td>Turn the change on</td><td>A config change, seconds</td><td>A build and a deploy, minutes</td></tr>
+      <tr><td>Share of users</td><td>Any percentage, or named users</td><td>All at once, or one canary copy</td></tr>
+      <tr><td>Turn it off</td><td>Kill switch, seconds</td><td>Roll back the image</td></tr>
+      <tr><td>Cost</td><td>Dead code and flag combinations if not cleaned up</td><td>None after the deploy</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A feature flag separates deploy from release, so risky code ships switched off, turns on for a small share, and turns off in seconds, as long as old flags are deleted."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const FO=[510,166,618,90,"",C],FN=[510,192,618,268,"",G],FNR=[510,192,618,268,"",R];
+const AF=[246,178,298,178,"",C];
+const base={f:{"b-fl":C,"b-op":C,"b-np":N},x:{"b-fl-t":"Flag new_walk_planner","b-fl-l":"off","b-op-l":"errors 0.1%","b-np-l":"deployed, unused","cap":""}};
+const D={roll:base,rot:base};
+const steps={
+roll:[
+ {t:"Deploy: the code is everywhere, switched off",b:"Tuesday's deploy puts the new planner on every copy. Each request runs one check: is new_walk_planner on for this agent? The flag is at 0 percent, so the answer is always no. 0 of 10,000 agents take the new path.",w:"This is a deploy, not a release. Nothing has changed for any user.",on:0,m:[AF,FO]},
+ {t:"Release to one tenth",b:"Wednesday the flag goes to 10 percent. The check is hash(flag name + API key) % 100 < 10. Each agent gets a stable number from 0 to 99, so 982 of 10,000 land under 10. Asked 1,000 times, agent-00042 always gets the same answer.",w:"A stable key means the same agent always sees the same path. No flipping between answers.",on:1,f:{"b-np":G},x:{"b-fl-l":"on for 10%","b-np-l":"errors 0.1%"},m:[AF,FO,FN]},
+ {t:"Compare the two groups",b:"Both paths run at the same time on the same kind of traffic. The new path's error rate is 0.1 percent, the same as the old path, and it is a little faster. The rule to widen: new errors no higher than old.",w:"The flag gives a clean comparison: same time, same traffic, two paths.",on:1,f:{"b-np":G},x:{"b-fl-l":"on for 10%","b-np-l":"errors 0.1%, faster"},m:[AF,FO,FN]},
+ {t:"Widen to half",b:"The check passes, so the flag goes to 50 percent. Now 4,997 of 10,000 agents are under 50. Anyone who was under 10 is still under 50, so no agent flips back to the old path.",w:"Each step widens only after the last one looked healthy.",on:5,f:{"b-np":G},x:{"b-fl-l":"on for 50%","b-np-l":"errors 0.1%"},m:[AF,FO,FN]},
+ {t:"Errors rise on the new path",b:"At 50 percent a rare query shape appears. The new planner fails on it and its error rate climbs to 4 percent, against 0.1 percent on the old path. New is now higher than old, so the widen rule fails.",w:"Some bugs need volume to show. Half the agents are affected, not all.",on:5,f:{"b-np":R},x:{"b-fl-l":"on for 50%","b-np-l":"errors 4%"},m:[AF,FO,FNR]},
+ {t:"Kill switch: off in seconds",b:"The on-call engineer sets the flag to 0 percent. Every request reads the flag again, and hash % 100 < 0 is never true. 0 agents on the new path within seconds. No build, no deploy.",w:"Turning off a release is as fast as turning it on. That is the point of the flag.",on:0,x:{"b-fl-l":"off (killed)","b-np-l":"deployed, unused"},m:[AF,FO]},
+ {t:"Fixed, then delete the flag",b:"The bug is fixed and the flag ramps to 100 percent: every number from 0 to 99 is under 100, so all 10,000 agents take the new path. Then the team deletes the check and the old planner, because the switch now decides nothing.",w:"A flag is temporary. Once the new path is the only path, the switch is dead code.",on:10,f:{"b-np":G,"b-op":N},x:{"b-fl-l":"100%, then deleted","b-op-l":"deleted","b-np-l":"errors 0.1%"},m:[AF,FN]}
+],
+rot:[
+ {t:"A year later: 200 flags",b:"Nobody deleted flags after rollout. The proxy now has 200 of them. Most sit at 100 or 0 percent. Each one is a check on the request path that always answers the same, with an old branch nobody runs.",w:"Each forgotten flag keeps two code paths alive.",on:3,f:{"b-fl":Y},x:{"b-fl-t":"200 flags","b-fl-l":"most forgotten"},m:[AF,FO,FN]},
+ {t:"A combination nobody tested",b:"Each flag doubles the possible states. 3 flags make 8 combinations, 10 flags 1,024, and 200 flags about 1.6 × 10 to the power 60. Tests cover a handful. The pair A on, B off has never run, and it crashes on a real query.",w:"With n flags there are 2 to the power n combinations. Tests cover a handful.",on:3,f:{"b-fl":Y,"b-np":R},x:{"b-fl-t":"200 flags","b-fl-l":"A on, B off","b-np-l":"crash: untested pair"},m:[AF,FO,FNR]},
+ {t:"The failure that matters: the kill switch does nothing",b:"During an incident the on-call engineer flips kill_deep_walks. Nothing happens. A flag only acts where code reads it, and the code it guarded was rewritten months ago with no check left in it.",w:"A switch that is never tested is a hope, not a control.",on:3,f:{"b-fl":R,"b-np":R},x:{"b-fl-t":"kill_deep_walks","b-fl-l":"flipped: no effect","b-np-l":"still failing"},m:[AF,FO,FNR]},
+ {t:"The fix",b:"Every flag gets an owner and an expiry date. A check at build time compares each date with today: on 2026-11-02 it lists kill_deep_walks and old_cache_key and fails the build. Flags at 100 percent are deleted with their old path.",w:"Keep a few operational switches on purpose, and test them like any other control.",on:3,f:{"b-np":G},x:{"b-fl-t":"12 flags","b-fl-l":"owner + expiry each","b-np-l":"errors 0.1%"},m:[AF,FO,FN]}
+]};
+function draw(s,g){
+  let h="";const bad=(s.f||{})["b-np"]===R;
+  for(let k=0;k<10;k++){const r=Math.floor(k/5),q=k%5,on=k<s.on;
+    h+=`<rect class="dot" x="${20+q*46}" y="${140+r*46}" width="38" height="38" rx="6" fill="${on?(bad?R:G):C}"/>`;}
+  g.innerHTML=h;
+}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["each request from agent with api_key:", "  n = hash(flag name + api_key) % 100   # the same number every time", "  if n < flag.percent: take the new path", "  else: take the old path", "deploy with percent = 0                # code everywhere, on for nobody", "widen: percent = 10, then 50, then 100", "  rule: widen only if new errors are no higher than old", "kill: percent = 0                      # seconds, no build, no deploy", "# BUG: a flag at 100 stays forever, its old branch stays too", "# BUG: n flags make 2 to the power n combinations", "# BUG: the code was rewritten, nothing reads kill_deep_walks now", "build check: if flag.expiry < today: fail the build, name the owner", "after 100: delete the check and the old path"], "real": ["func (f *Flag) Enabled(apiKey string) bool {", "\th := fnv.New32a()", "\th.Write([]byte(f.Name + \":\" + apiKey))", "\treturn h.Sum32()%100 < f.Percent", "}", "", "func Traffic(f *Flag, n int) int {", "\ton := 0", "\tfor k := 0; k < n; k++ {", "\t\tif f.Enabled(fmt.Sprintf(\"agent-%05d\", k)) {", "\t\t\ton++", "\t\t}", "\t}", "\treturn on", "}", "", "func Expired(flags []Flag, today string) []string {", "\tvar out []string", "\tfor _, f := range flags {", "\t\tif f.Expiry < today { // YYYY-MM-DD sorts as text", "\t\t\tout = append(out, f.Name+\" (owner \"+f.Owner+\")\")", "\t\t}", "\t}", "\treturn out", "}", "", "func main() {", "\tf := &Flag{\"new_walk_planner\", 0, \"graph team\", \"2026-12-01\"}", "\tfmt.Printf(\"deploy, flag off: %d of %d agents on the new planner\\n\", Traffic(f, agents), agents)", "\tf.Percent = 10", "\tf.Percent = 50", "\tfmt.Printf(\"50%%: %d agents on the new planner, new path errors 4%%, old path 0.1%%\\n\", Traffic(f, agents))", "\tf.Percent = 0 // the kill switch", "\tfmt.Printf(\"kill switch: %d agents on the new planner, no build, no deploy\\n\", Traffic(f, agents))", "\tf.Percent = 100", "\tfmt.Printf(\"fixed, 100%%: %d agents, next step: delete the flag and the old planner\\n\", Traffic(f, agents))", "\tfmt.Printf(\"\\ncombinations: 3 flags %.0f, 10 flags %.0f, 200 flags about %.1e\\n\",", "\t\tmath.Pow(2, 3), math.Pow(2, 10), math.Pow(2, 200))", "\tflags := []Flag{", "\t\t{\"kill_deep_walks\", 0, \"nobody\", \"2025-11-30\"},", "\t\t{\"old_cache_key\", 100, \"nobody\", \"2026-03-15\"},", "\t}", "\tfmt.Println(\"build check on 2026-11-02, expired:\", Expired(flags, \"2026-11-02\"))", "}"], "map": {"1": [1, 10], "2": [2, 3], "3": [4, 11], "4": [4], "5": [28, 29], "6": [30, 31, 35], "7": [32], "8": [33, 34], "9": [41], "10": [38, 37], "11": [40], "12": [17, 20, 21, 43], "13": [35, 36]}}},PCS={"roll": [[1, 2, 3, 4, 5], [2, 3, 6], [4, 7], [3, 6, 7], [7], [3, 8], [6, 13]], "rot": [[9], [10], [11], [12, 13]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

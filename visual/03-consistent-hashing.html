@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consistent hashing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Consistent hashing</h1>
+  <p class="lede">A cache cluster of three nodes holds wallet data. Traffic grows and a fourth node joins. Press <b>Next</b> to count how many wallets change node with <code>hash mod N</code>, and how many with a ring.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="mod" id="tab-mod">hash(key) mod N</button>
+    <button role="tab" aria-selected="false" data-mode="ring" id="tab-ring">Hash ring</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 430" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Wallet keys placed on cache nodes, by modulo or on a hash ring</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-consistent-hashing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">node A</span>
+    <span style="--c:var(--svc)">node B</span>
+    <span style="--c:var(--undo)">node C</span>
+    <span style="--c:var(--wait)">node D, the new one</span>
+    <span style="--c:var(--fail)">key that moves, or a hot spot</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cassandra and DynamoDB place rows on a ring. CDNs (Content Delivery Networks) and cache clients pick a cache server this way. Kafka uses the simpler <code>hash(key) mod partitions</code>, which is why adding partitions moves keys.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Use a ring with virtual nodes when nodes join and leave often and a moved key is expensive, such as a cache miss. Watch for hot keys: hashing spreads keys, not popularity. Split a hot key with a suffix, or give it its own node.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>hash mod N</th><th>Hash ring</th></tr>
+      <tr><td>Node joins</td><td>Almost every key moves</td><td>About 1/N of the keys move, from one neighbour</td></tr>
+      <tr><td>In this example</td><td>10 of 12 wallets move</td><td>2 of 12 wallets move</td></tr>
+      <tr><td>Even spread</td><td>Even, if the hash is good</td><td>Needs virtual nodes to even the arcs</td></tr>
+      <tr><td>Hot key</td><td>Stays hot</td><td>Stays hot</td></tr>
+      <tr><td>Fits</td><td>A fixed number of partitions</td><td>Caches and stores that grow and shrink</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Consistent hashing moves only one Nth of the keys when a node joins, but it spreads keys, not load, so a hot key stays hot."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const NC={A:"var(--coord)",B:"var(--svc)",C:"var(--undo)",D:"var(--wait)"};
+const K=[["0x18",15],["0x9f",40],["0x2a",75],["0x4c",100],["0x51",130],["0x63",170],["0x77",200],["0x80",230],["0xa3",255],["0xb6",280],["0xc2",310],["0xe9",345]];
+const CX=220,CY=205,RR=150;
+const P=(d,r=RR)=>[CX+r*Math.sin(d*Math.PI/180),CY-r*Math.cos(d*Math.PI/180)];
+const owner=(p,ns)=>{const s=ns.slice().sort((a,b)=>a[1]-b[1]);return(s.find(n=>n[1]>=p)||s[0])[0]};
+const NODE=(n,cx,y)=>R(cx-28,y-13,56,22,NC[n],{rx:11})+T(cx,y+3,"node "+n,{s:12,c:"#fff"});
+function scene(s){
+  let b="";const msgs=[];
+  if(mode==="mod"){
+    [["wallet",60],["hash",170],["mod 3",300],["mod 4",430]].forEach(([h,x])=>{if(h!=="mod 4"||s.n4)b+=T(x,46,h,{s:14,c:"var(--muted)"})});
+    let moved=0;
+    K.forEach(([k,h],r)=>{const y=74+r*24,a="ABCD"[h%3],c="ABCD"[h%4];
+      b+=T(60,y,k,{s:14,w:400});b+=T(170,y,h,{s:14,w:400});
+      if(s.n3)b+=NODE(a,300,y-5);if(s.n4)b+=NODE(c,430,y-5);
+      if(s.diff&&a!==c){moved++;msgs.push(T(500,y,"moves",{a:"start",s:13,c:"var(--fail)"}))}});
+    if(s.diff){msgs.push(T(760,150,moved+" of 12",{s:40,c:"var(--fail)"}),T(760,180,"wallets change node",{s:14}));}
+    if(s.note)msgs.push(T(760,230,s.note,{s:13,w:400,c:"var(--muted)"}));
+  }else{
+    b+=`<circle cx="${CX}" cy="${CY}" r="${RR}" fill="none" stroke="var(--line)" stroke-width="6"/>`;
+    [0,90,180,270].forEach(d=>{const[x,y]=P(d,RR-26);b+=T(x,y+5,d,{s:11,w:400,c:"var(--muted)"})});
+    const ns=s.nodes;
+    if(s.own){const so=ns.slice().sort((a,c)=>a[1]-c[1]);so.forEach((n,j)=>{const p0=j?so[j-1][1]:so[so.length-1][1]-360,[x1,y1]=P(p0),[x2,y2]=P(n[1]);
+      b+=`<path d="M${x1} ${y1} A${RR} ${RR} 0 ${n[1]-p0>180?1:0} 1 ${x2} ${y2}" fill="none" stroke="${NC[n[0]]}" stroke-width="6" opacity=".55"/>`});}
+    if(s.keys)(s.keyset||K).forEach(([k,p])=>{const[x,y]=P(p),[lx,ly]=P(p,RR+30),o=owner(p,ns),hot=s.hot&&s.hot.includes(k),mv=s.moved&&s.moved.includes(k);
+      b+=`<circle cx="${x}" cy="${y}" r="${hot?11:7}" fill="${s.own?NC[o]:"var(--muted)"}"${hot||mv?` stroke="var(--fail)" stroke-width="4"`:""}/>`;
+      b+=T(lx,ly+4,k,{s:12,c:hot||mv?"var(--fail)":"var(--fg)",w:hot||mv?700:400})});
+    ns.forEach(([n,p,nw])=>{const[x,y]=P(p),r=s.small?12:19;const h=`<circle cx="${x}" cy="${y}" r="${r}" fill="${NC[n]}" stroke="var(--panel)" stroke-width="3"/>`+T(x,y+5,n,{s:s.small?12:15,c:"#fff"});nw?msgs.push(h):b+=h});
+    b+=T(470,44,s.ptitle,{a:"start",s:14});
+    const rows=s.prow||["A","B","C","D"].filter(m=>ns.some(n=>n[0]===m)).map(m=>{const c=s.keys?(s.keyset||K).filter(([,p])=>owner(p,ns)===m).length:0;return[m,c/6,s.keys?c+" keys":"arc ending at "+ns.filter(n=>n[0]===m).map(n=>n[1]).join(", ")]});
+    rows.forEach(([m,f,txt],j)=>{const y=68+j*50;b+=R(470,y,40,30,NC[m],{rx:6})+T(490,y+20,m,{c:"#fff"});
+      b+=R(520,y+4,Math.max(4,240*Math.min(f,1)),22,f>1?"var(--fail)":NC[m],{rx:4})+T(530,y+46,txt,{a:"start",s:13,w:400,c:f>1?"var(--fail)":"var(--muted)"})});
+  }
+  if(s.ban)msgs.push(BANNER(414,s.ban));
+  return{base:b,msgs};
+}
+const N3=[["A",120],["B",240],["C",360]],N4=[["A",120],["B",240],["C",360],["D",300]];
+const VN=[];for(let k=1;k<=12;k++)VN.push(["ABCD"[(k-1)%4],k*30]);
+const HOTP=[["A",1.5,"0x18 and 3 other keys: overloaded"],["B",.5,"normal"],["C",.4,"normal"],["D",.4,"normal"]];
+const SPLITK=K.filter(k=>k[0]!=="0x18").concat([["18#1",15],["18#2",140],["18#3",325]]);
+const steps={
+mod:[
+ {t:"Each wallet gets a number",b:"Line 1 needs a number per key: the hash of the wallet, here from 0 to 359. 0x18 hashes to 15, 0xe9 to 345.",pc:[1],w:"The hash decides where a key lives. The same key always gets the same number."},
+ {t:"Three nodes: node = hash mod 3",b:"Line 1 with N = 3. Line 2: 0x18 has hash 15, and 15 mod 3 = 0, so node A. 0x9f: 40 mod 3 = 1, node B.",pc:[1,2],w:"Simple and even. Every client computes the same answer with no lookup.",n3:true},
+ {t:"Node D joins: node = hash mod 4",b:"A fourth node joins. Line 3 sets N to 4, and line 4 recomputes every key: 0x18 is now 15 mod 4 = 3, node D.",pc:[3,4],w:"Changing N changes the remainder of almost every number.",n3:true,n4:true},
+ {t:"Count the moves",b:"Line 5 compares the old and new node per key. Only 170 and 230 give the same remainder for 3 and 4. Line 6: 10 of 12 keys move.",pc:[4,5,6],w:"With mod N, adding one node moves almost every key, not just the share the new node should take.",n3:true,n4:true,diff:true},
+ {t:"The failure: the cache empties",b:"Each of the 10 moved keys is looked up on its new node, where it is not cached. 10 of 12 lookups miss at once and go to the warehouse. Line 7, the ring, is what avoids this.",pc:[5,6,7],w:"Adding capacity caused an outage. The warehouse takes almost all the traffic in the same second.",n3:true,n4:true,diff:true,note:"each one is now a cache miss",ban:"Adding one node turned 10 of 12 cache hits into misses at the same moment."}
+],
+ring:[
+ {t:"Put the nodes on a ring",b:"Line 1 hashes each node onto the ring of 0 to 359: A at 120, B at 240, C at 360, which is the same point as 0.",pc:[1],w:"Nodes and keys now share one space. Position decides ownership.",nodes:N3,ptitle:"Which arc each node owns"},
+ {t:"Put the keys on the same ring",b:"Each wallet sits at its own hash number: the same twelve wallets and numbers as in the first tab.",pc:[2],w:"Nothing is owned yet. Next comes the one rule.",nodes:N3,keys:true,ptitle:"Keys per node"},
+ {t:"A key belongs to the next node clockwise",b:"Line 3 walks clockwise from the key, and line 4 stops at the first node at or after it. 0x18 at 15 meets A at 120. 0xe9 at 345 meets C at 360. A, B and C own 4 keys each.",pc:[2,3,4,5],w:"The rule needs no table. Any client that knows the node positions finds the owner.",nodes:N3,keys:true,own:true,ptitle:"Keys per node"},
+ {t:"Node D joins at 300",b:"Line 1 places the new node D at 300, inside C's arc from 240 to 360.",pc:[1,6],w:"Only the arc D lands in is affected. A's and B's arcs do not change.",nodes:[["A",120],["B",240],["C",360],["D",300,1]],keys:true,ptitle:"Keys per node, before the move",prow:[["A",4/6,"4 keys"],["B",4/6,"4 keys"],["C",4/6,"4 keys"],["D",0,"0 keys"]]},
+ {t:"Only two keys move",b:"Line 7 asks for each key: is the owner before different from the owner after? Only 0xa3 at 255 and 0xb6 at 280 now meet D at 300 first. 2 of 12 move, from C to D.",pc:[6,7],w:"2 of 12 moved, against 10 of 12 with mod N. A new node takes keys only from its clockwise neighbour, about 1/N of all keys.",nodes:N4,keys:true,own:true,moved:["0xa3","0xb6"],ptitle:"Keys per node"},
+ {t:"Virtual nodes even out the arcs",b:"Line 8 places each machine at 3 points, every 30 degrees: A at 30, B at 60, C at 90, D at 120, and round again. Each machine now owns 3 keys.",pc:[8],w:"Many small arcs average out. Each machine now owns three keys, and a joining machine takes a little from many neighbours.",nodes:VN,small:true,keys:true,own:true,ptitle:"Keys per machine, with virtual nodes"},
+ {t:"The failure: one hot wallet",b:"Wallet 0x18 gets most of the traffic. Line 4 still sends every lookup for hash 15 to the same point, A. Line 9: one key has one owner, however many nodes exist.",pc:[9],w:"Hashing spreads keys, not popularity. More nodes or virtual nodes do not help a single hot key.",nodes:N4,keys:true,own:true,hot:["0x18"],ptitle:"Share of traffic",prow:HOTP,ban:"Wallet 0x18 is hot. All of its traffic lands on node A."},
+ {t:"Split the hot key",b:"Line 10 stores the hot wallet under three keys: 0x18#1 hashes to 15 (A), #2 to 140 (B), #3 to 325 (C). A read picks one at random, so three nodes share the load.",pc:[10],w:"The load of one key is now shared by three nodes. The other fix is to give the hot key a node of its own.",nodes:N4,keys:true,own:true,keyset:SPLITK,hot:["18#1","18#2","18#3"],ptitle:"Share of traffic",prow:[["A",.6,"one third of 0x18"],["B",.6,"one third of 0x18"],["C",.6,"one third of 0x18"],["D",.4,"normal"]]}
+]};
+const code={"mod": {"label": "Go", "pc": ["node(key) = nodes[hash(key) mod N]", "  0x18: 15 mod 3 = 0, so node A", "on a node joining: N = N + 1", "  recompute node(key) for every key", "  if node(key) changed: the key moves     # a cache miss", "moved = 10 of 12                          # almost every key", "fix: put nodes and keys on a ring         # the next tab"], "real": ["// Key is a wallet with its hash on the 0-359 ring.", "type Key struct {", "\tname string", "\thash int", "}", "", "// ModN picks node hash mod N: remainder 0 is A, 1 is B, 2 is C, 3 is D.", "func ModN(hash, n int) string { return string(rune('A' + hash%n)) }", "", "// MovesModN lists the keys whose node changes when N goes from `from` to `to`.", "func MovesModN(ks []Key, from, to int) []string {", "\tvar m []string", "\tfor _, k := range ks {", "\t\tif ModN(k.hash, from) != ModN(k.hash, to) {", "\t\t\tm = append(m, k.name) // a different node: the next lookup misses", "\t\t}", "\t}", "\treturn m", "}"], "map": {"1": [8], "2": [8], "3": [11], "4": [13], "5": [14, 15], "6": [18], "7": [2]}}, "ring": {"label": "Go", "pc": ["place each node point at hash(node) on the 0-359 ring", "owner(key):", "  walk clockwise from hash(key)", "  return the first node point at or after it", "  past the last point: wrap to the first", "on node D joining at 300:", "  a key moves only if its owner changed   # keys in 240..300", "virtual nodes: each machine at many points   # evens the arcs", "hot key: one key, one owner                  # spreads keys, not load", "fix: split it into key#1, key#2, key#3       # three owners"], "real": ["// Point is one place of a node on the ring. A node may have several.", "type Point struct {", "\tnode string", "\tpos  int", "}", "", "// Owner walks clockwise from the key to the first node point at or after it.", "func Owner(hash int, ring []Point) string {", "\tsort.Slice(ring, func(i, j int) bool { return ring[i].pos < ring[j].pos })", "\tfor _, p := range ring {", "\t\tif p.pos >= hash {", "\t\t\treturn p.node", "\t\t}", "\t}", "\treturn ring[0].node // past the last point: wrap around to the first", "}", "", "// Moved lists the keys whose owner differs between two rings.", "func Moved(ks []Key, before, after []Point) []string {", "\tvar m []string", "\tfor _, k := range ks {", "\t\tif Owner(k.hash, before) != Owner(k.hash, after) {", "\t\t\tm = append(m, k.name)", "\t\t}", "\t}", "\treturn m", "}", "", "// VirtualRing places each machine at several points, here every 30 degrees.", "func VirtualRing(machines []string, perMachine int) []Point {", "\tvar r []Point", "\tstep := 360 / (len(machines) * perMachine)", "\tfor i := 1; i <= len(machines)*perMachine; i++ {", "\t\tr = append(r, Point{machines[(i-1)%len(machines)], i * step})", "\t}", "\treturn r", "}"], "map": {"1": [2], "2": [8], "3": [9], "4": [11, 12], "5": [15], "6": [19], "7": [22], "8": [30, 34], "9": [8], "10": [8]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

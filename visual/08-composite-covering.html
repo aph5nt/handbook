@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Composite and covering</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Composite and covering indexes: column order decides</h1>
+  <p class="lede">A wallet history page asks for the transfers of <b>0xb7</b> after a height, in height order. The index on <code>(from_address, block_height)</code> is drawn as its twelve entries, in sorted order. Watch how many entries and table pages each query touches.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="prefix">Leftmost prefix</button>
+    <button role="tab" aria-selected="false" data-mode="cover">Covering index</button>
+    <button role="tab" aria-selected="false" data-mode="wrong">Wrong order fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">Twelve sorted index entries, an optional INCLUDE column, and four table pages</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text id="hdr" data-t="index (from_address, block_height)" x="40" y="44" text-anchor="start" font-size="13" font-weight="400" fill="var(--muted)">index (from_address, block_height)</text>
+<rect id="e0" class="box" data-f="var(--line)" x="40" y="56" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e0-t" data-t="0xa1   20,100,004" x="165" y="71" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xa1   20,100,004</text>
+<rect id="e1" class="box" data-f="var(--line)" x="40" y="80" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e1-t" data-t="0xa1   21,050,300" x="165" y="95" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xa1   21,050,300</text>
+<rect id="e2" class="box" data-f="var(--line)" x="40" y="104" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e2-t" data-t="0xa1   21,700,800" x="165" y="119" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xa1   21,700,800</text>
+<rect id="e3" class="box" data-f="var(--line)" x="40" y="128" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e3-t" data-t="0xb7   20,900,010" x="165" y="143" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xb7   20,900,010</text>
+<rect id="e4" class="box" data-f="var(--line)" x="40" y="152" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e4-t" data-t="0xb7   21,400,120" x="165" y="167" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xb7   21,400,120</text>
+<rect id="e5" class="box" data-f="var(--line)" x="40" y="176" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e5-t" data-t="0xb7   21,400,980" x="165" y="191" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xb7   21,400,980</text>
+<rect id="e6" class="box" data-f="var(--line)" x="40" y="200" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e6-t" data-t="0xb7   21,650,000" x="165" y="215" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xb7   21,650,000</text>
+<rect id="e7" class="box" data-f="var(--line)" x="40" y="224" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e7-t" data-t="0xc3   19,800,500" x="165" y="239" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xc3   19,800,500</text>
+<rect id="e8" class="box" data-f="var(--line)" x="40" y="248" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e8-t" data-t="0xc3   21,420,000" x="165" y="263" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xc3   21,420,000</text>
+<rect id="e9" class="box" data-f="var(--line)" x="40" y="272" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e9-t" data-t="0xc3   21,990,700" x="165" y="287" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xc3   21,990,700</text>
+<rect id="e10" class="box" data-f="var(--line)" x="40" y="296" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e10-t" data-t="0xd9   21,100,000" x="165" y="311" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xd9   21,100,000</text>
+<rect id="e11" class="box" data-f="var(--line)" x="40" y="320" width="250" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="e11-t" data-t="0xd9   21,600,200" x="165" y="335" text-anchor="middle" font-size="12" font-family="ui-monospace,Menlo,monospace" fill="var(--fg)">0xd9   21,600,200</text>
+<g id="inc" class="msg">
+<text x="300" y="44" text-anchor="start" font-size="13" font-weight="400" fill="var(--undo)">INCLUDE (to_address, amount)</text>
+<rect id="i0" class="box" data-f="var(--line)" x="300" y="56" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i0-t" data-t="to_address · amount" x="395" y="71" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i1" class="box" data-f="var(--line)" x="300" y="80" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i1-t" data-t="to_address · amount" x="395" y="95" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i2" class="box" data-f="var(--line)" x="300" y="104" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i2-t" data-t="to_address · amount" x="395" y="119" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i3" class="box" data-f="var(--line)" x="300" y="128" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i3-t" data-t="to_address · amount" x="395" y="143" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i4" class="box" data-f="var(--line)" x="300" y="152" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i4-t" data-t="to_address · amount" x="395" y="167" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i5" class="box" data-f="var(--line)" x="300" y="176" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i5-t" data-t="to_address · amount" x="395" y="191" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i6" class="box" data-f="var(--line)" x="300" y="200" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i6-t" data-t="to_address · amount" x="395" y="215" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i7" class="box" data-f="var(--line)" x="300" y="224" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i7-t" data-t="to_address · amount" x="395" y="239" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i8" class="box" data-f="var(--line)" x="300" y="248" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i8-t" data-t="to_address · amount" x="395" y="263" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i9" class="box" data-f="var(--line)" x="300" y="272" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i9-t" data-t="to_address · amount" x="395" y="287" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i10" class="box" data-f="var(--line)" x="300" y="296" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i10-t" data-t="to_address · amount" x="395" y="311" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+<rect id="i11" class="box" data-f="var(--line)" x="300" y="320" width="190" height="20" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="i11-t" data-t="to_address · amount" x="395" y="335" text-anchor="middle" font-size="12" fill="var(--fg)">to_address · amount</text>
+</g>
+<text x="640" y="44" text-anchor="start" font-size="13" font-weight="400" fill="var(--muted)">table pages</text>
+<rect id="tp0" class="box" data-f="var(--line)" x="640" y="60" width="230" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="tp0-t" data-t="table page 1" x="755" y="88" text-anchor="middle" font-size="13" fill="var(--fg)">table page 1</text>
+<rect id="tp1" class="box" data-f="var(--line)" x="640" y="126" width="230" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="tp1-t" data-t="table page 2" x="755" y="154" text-anchor="middle" font-size="13" fill="var(--fg)">table page 2</text>
+<rect id="tp2" class="box" data-f="var(--line)" x="640" y="192" width="230" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="tp2-t" data-t="table page 3" x="755" y="220" text-anchor="middle" font-size="13" fill="var(--fg)">table page 3</text>
+<rect id="tp3" class="box" data-f="var(--line)" x="640" y="258" width="230" height="46" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="tp3-t" data-t="table page 4" x="755" y="286" text-anchor="middle" font-size="13" fill="var(--fg)">table page 4</text>
+<path id="lk4" class="msg" d="M292 162 C 460 162, 520 149, 636 149" stroke="var(--wait)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="lk5" class="msg" d="M292 186 C 460 186, 520 281, 636 281" stroke="var(--wait)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<path id="lk6" class="msg" d="M292 210 C 460 210, 520 83, 636 83" stroke="var(--wait)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect x="20" y="352" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="378" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="WHERE from_address = 0xb7 …" x="862" y="377" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)">WHERE from_address = 0xb7 …</text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-composite-covering/main.go</code> (<code>go run .</code>). The program models the index in memory as a sorted list of twelve entries, and counts entries read and table lookups.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">entry read</span>
+    <span style="--c:var(--ok)">entry the query keeps</span>
+    <span style="--c:var(--wait)">extra read or write cost</span>
+    <span style="--c:var(--fail)">read for nothing</span>
+    <span style="--c:var(--undo)">included columns</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>The wallet history page: <code>(from_address, block_height)</code> plus included columns, which also serves keyset pages. A filter with few values, such as status: put it behind a selective column, or partition by it. A column store such as StarRocks has no such index: sort the table by <code>(from_address, block_height)</code> and zone maps do the same job.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Equality columns first, the range column last. Include the selected columns only for hot queries, because every extra column makes every write heavier. Test selectivity: an index helps when it picks out a small share of rows.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Single column</th><th>Composite (a, b)</th><th>Covering (a, b) INCLUDE (c)</th></tr>
+      <tr><td>Serves</td><td>that column</td><td>a, or a and b, and ORDER BY b inside a</td><td>the same, and the SELECT list</td></tr>
+      <tr><td>Does not serve</td><td>other columns</td><td>b alone</td><td>b alone</td></tr>
+      <tr><td>Table lookups</td><td>one per row</td><td>one per row</td><td>none</td></tr>
+      <tr><td>Write cost</td><td>low</td><td>medium</td><td>highest</td></tr>
+      <tr><td>Interview line</td><td colspan=3>"Equality columns first, the range column last, and include the selected columns when the query is hot."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+prefix:[
+ {"t": "One index, sorted twice", "b": "The index on (from_address, block_height) is sorted by address first. Inside each address, the heights are in order. Like a phone book: surname, then first name.", "w": "The order of the columns decides which questions the index can answer.", "x": {"big": "twelve index entries, four addresses", "sql": "index (from_address, block_height)"}, "pc": [1, 2], "rl": [1, 2]},
+ {"t": "WHERE from_address = 0xb7", "b": "The wallet history page asks for address 0xb7. The first column has an equality, so binary search on the sorted list lands on the first 0xb7 entry. The walk ends at 0xc3, the first entry that is not 0xb7.", "w": "Equality on the first column is a seek.", "f": {"e3": "c", "e4": "c", "e5": "c", "e6": "c"}, "x": {"big": "seek to 0xb7: 4 entries", "sql": "WHERE from_address = 0xb7"}, "pc": [3, 4, 5], "rl": [7, 11, 12]},
+ {"t": "AND block_height > 21,400,000", "b": "Inside 0xb7 the heights are sorted, so the search key becomes (0xb7, 21,400,000). The search lands on 21,400,120, entry 5 of 12. The walk stops at the first entry of 0xc3.", "w": "This is the leftmost-prefix rule: the index serves a, and a with b, in one seek.", "f": {"e4": "ok", "e5": "ok", "e6": "ok"}, "x": {"big": "seek to (0xb7, 21,400,000): 3 entries", "sql": "WHERE from_address = 0xb7 AND block_height > …"}, "pc": [3, 4, 5, 6], "rl": [8, 11, 12]},
+ {"t": "ORDER BY block_height: free", "b": "The three entries come out of the index already in height order. The plan has no sort step.", "w": "A good composite index does the filter and the sort in one walk.", "f": {"e4": "ok", "e5": "ok", "e6": "ok"}, "x": {"big": "already in height order: no sort", "sql": "… ORDER BY block_height"}, "pc": [5, 7], "rl": [9, 13]},
+ {"t": "Fetch the other columns from the table", "b": "The page also shows to_address and amount. The check for each selected column is: is it in the index? No, so each of the 3 entries follows its pointer to a table page.", "w": "Each lookup is one more page read. On a hot page that adds up.", "f": {"e4": "ok", "e5": "ok", "e6": "ok", "tp0": "w", "tp1": "w", "tp3": "w"}, "on": ["lk4", "lk5", "lk6"], "x": {"big": "3 entries + 3 table lookups", "sql": "SELECT to_address, amount …"}, "pc": [8, 9], "rl": [5, 14]}
+],
+cover:[
+ {"t": "INCLUDE the selected columns", "b": "Build the index as (from_address, block_height) INCLUDE (to_address, amount). The extra columns ride along in each entry. They are not part of the sort.", "w": "Included columns answer the SELECT list. They do not help the seek.", "x": {"big": "a wider index", "sql": "… INCLUDE (to_address, amount)"}, "pc": [2, 10], "rl": [1, 2, 3]},
+ {"t": "Same query, no table", "b": "The engine seeks, walks three entries, and checks each selected column: to_address and amount are in the entry now, so no pointer is followed.", "w": "A covering index answers the query without touching the table.", "f": {"e4": "ok", "e5": "ok", "e6": "ok", "i4": "ok", "i5": "ok", "i6": "ok"}, "x": {"big": "3 entries + 0 table lookups", "sql": "WHERE from_address = 0xb7 AND block_height > …"}, "pc": [3, 4, 5, 8, 10], "rl": [5, 12, 13, 14]},
+ {"t": "Keyset pages from the same index", "b": "The history page shows two rows per page. Page 1 seeks to (0xb7, 21,400,000) and stops after LIMIT 2 entries: 21,400,120 and 21,400,980.", "w": "The index already holds the order the pages need.", "f": {"e4": "ok", "e5": "ok", "i4": "ok", "i5": "ok"}, "x": {"big": "page 1: 2 entries", "sql": "… LIMIT 2"}, "pc": [3, 4, 5, 6, 12], "rl": [9, 10, 12, 13]},
+ {"t": "Page 2: one more seek", "b": "Page 2 remembers the last height it showed, 21,400,980, and seeks past it.", "w": "One index serves the filter, the order and every page.", "f": {"e4": "c", "e5": "c", "e6": "ok", "i6": "ok"}, "x": {"big": "page 2: seek past 21,400,980", "sql": "… AND block_height > 21,400,980 LIMIT 2"}, "pc": [3, 4, 5, 6, 12], "rl": [16, 17, 18, 19]},
+ {"t": "The price: every write", "b": "Each new transfer must also go into the index, with its two extra columns. The more columns you include, the heavier every write.", "w": "Cover the hot queries only. Covering everything makes every write slower.", "f": {"i0": "w", "i1": "w", "i2": "w", "i3": "w", "i4": "w", "i5": "w", "i6": "w", "i7": "w", "i8": "w", "i9": "w", "i10": "w", "i11": "w", "e11": "w"}, "x": {"big": "each insert writes the table and a wider index", "sql": "INSERT INTO transfers …"}, "pc": [13], "rl": [21, 22, 23]}
+],
+wrong:[
+ {"t": "A query by height alone", "b": "A new report asks for every transfer above height 21,400,000, from any address. The matching entries are spread over all four addresses.", "w": "The index is sorted by address first. Heights are in order only inside one address.", "f": {"e2": "w", "e4": "w", "e5": "w", "e6": "w", "e8": "w", "e9": "w", "e11": "w"}, "x": {"big": "matches are scattered", "sql": "WHERE block_height > 21,400,000"}, "pc": [3, 11], "rl": [1, 2]},
+ {"t": "No seek: read everything", "b": "The leftmost column has no predicate, so the search key would start with an unknown. There is no single place to seek to. The engine reads all 12 entries and finds 7 that match.", "w": "Phone book again: you can find every Smith, never every John.", "f": {"e0": "f", "e1": "f", "e2": "w", "e3": "f", "e4": "w", "e5": "w", "e6": "w", "e7": "f", "e8": "w", "e9": "w", "e10": "f", "e11": "w"}, "x": {"big": "12 of 12 entries: a full scan", "sql": "WHERE block_height > 21,400,000"}, "pc": [11], "rl": [2, 3]},
+ {"t": "Flip the columns: (block_height, from_address)", "b": "Someone fixes it by putting height first. Now the wallet history query for 0xb7 seeks on height first.", "w": "Column order by habit instead of by the query.", "x": {"e0-t": "19,800,500   0xc3", "e1-t": "20,100,004   0xa1", "e2-t": "20,900,010   0xb7", "e3-t": "21,050,300   0xa1", "e4-t": "21,100,000   0xd9", "e5-t": "21,400,120   0xb7", "e6-t": "21,400,980   0xb7", "e7-t": "21,420,000   0xc3", "e8-t": "21,600,200   0xd9", "e9-t": "21,650,000   0xb7", "e10-t": "21,700,800   0xa1", "e11-t": "21,990,700   0xc3", "hdr": "index (block_height, from_address)", "big": "same twelve entries, sorted by height", "sql": "WHERE from_address = 0xb7 AND block_height > …"}, "pc": [2], "rl": [5, 6]},
+ {"t": "The range stops the seek", "b": "The search key is only the height: the first entry above 21,400,000. Above it, addresses are mixed, so the address cannot narrow the walk. All 7 entries are read, and the address check keeps 3.", "w": "A range on a column ends the seek. Put equality columns first and the range column last.", "f": {"e5": "ok", "e6": "ok", "e7": "f", "e8": "f", "e9": "ok", "e10": "f", "e11": "f"}, "x": {"e0-t": "19,800,500   0xc3", "e1-t": "20,100,004   0xa1", "e2-t": "20,900,010   0xb7", "e3-t": "21,050,300   0xa1", "e4-t": "21,100,000   0xd9", "e5-t": "21,400,120   0xb7", "e6-t": "21,400,980   0xb7", "e7-t": "21,420,000   0xc3", "e8-t": "21,600,200   0xd9", "e9-t": "21,650,000   0xb7", "e10-t": "21,700,800   0xa1", "e11-t": "21,990,700   0xc3", "hdr": "index (block_height, from_address)", "big": "7 entries read to keep 3", "sql": "WHERE from_address = 0xb7 AND block_height > …"}, "pc": [3, 4, 5, 6], "rl": [8, 9, 10, 11, 12]},
+ {"t": "Low selectivity: an index never used", "b": "An index on is_contract has two values. Nine rows in twelve match false. The planner compares: 9 index entries plus 9 table lookups is 18 reads, one sweep of the table is 12. It picks the sweep.", "w": "Selectivity is the test for any index. One on tx_hash is always used. One on true or false never is.", "f": {"e0": "f", "e1": "f", "e2": "f", "e3": "f", "e4": "f", "e5": "f", "e6": "f", "e7": "f", "e8": "f"}, "x": {"e0-t": "false   → row", "e1-t": "false   → row", "e2-t": "false   → row", "e3-t": "false   → row", "e4-t": "false   → row", "e5-t": "false   → row", "e6-t": "false   → row", "e7-t": "false   → row", "e8-t": "false   → row", "e9-t": "true   → row", "e10-t": "true   → row", "e11-t": "true   → row", "hdr": "index (is_contract)", "big": "9 of 12 match: a scan is cheaper", "sql": "WHERE is_contract = false"}, "pc": [14], "rl": [14, 15, 16, 17]}
+]
+};
+const base={};
+const code={
+"prefix":{
+ label:"SQL",
+ pc:["index entries are sorted by (from_address, block_height)", "query(a = :addr AND b > :h, select to, amount):", "  key = equality columns from the left, then the first range", "  pos = binary search for key               # the seek", "  walk from pos while the equality prefix still matches", "  entries come out in b order               # so ORDER BY b needs no sort", "  (nothing to sort, the plan has no Sort step)", "  for each entry:", "    if a selected column is not in the entry: read the table page", "  INCLUDE columns ride in the entry: no table read", "  if the leftmost column has no predicate: scan every entry", "  keyset page: key = (addr, last height shown), stop after LIMIT", "every insert writes the table and each index, with its INCLUDE columns", "planner: use the index only if entries + lookups < a table sweep"],
+ real:["CREATE INDEX t_from_height", "  ON transfers (from_address, block_height);", "", "-- the wallet history page", "SELECT to_address, amount", "FROM   transfers", "WHERE  from_address = '0xb7'", "  AND  block_height > 21400000", "ORDER  BY block_height;", "", "-- Index Scan using t_from_height   rows=3", "--   Index Cond: from_address = '0xb7' AND block_height > 21400000", "--   (no Sort node: the index gives the order)", "--   Heap Fetches: 3"],
+ map:{"1": [1, 2], "2": [5, 6, 7, 8], "3": [7, 8, 12], "4": [11, 12], "5": [11], "6": [9, 13], "7": [13], "8": [14], "9": [5, 14]}},
+"cover":{
+ label:"SQL",
+ pc:["index entries are sorted by (from_address, block_height)", "query(a = :addr AND b > :h, select to, amount):", "  key = equality columns from the left, then the first range", "  pos = binary search for key               # the seek", "  walk from pos while the equality prefix still matches", "  entries come out in b order               # so ORDER BY b needs no sort", "  (nothing to sort, the plan has no Sort step)", "  for each entry:", "    if a selected column is not in the entry: read the table page", "  INCLUDE columns ride in the entry: no table read", "  if the leftmost column has no predicate: scan every entry", "  keyset page: key = (addr, last height shown), stop after LIMIT", "every insert writes the table and each index, with its INCLUDE columns", "planner: use the index only if entries + lookups < a table sweep"],
+ real:["CREATE INDEX t_from_height_cover", "  ON transfers (from_address, block_height)", "  INCLUDE (to_address, amount);", "", "SELECT to_address, amount", "FROM   transfers", "WHERE  from_address = '0xb7'", "  AND  block_height > 21400000", "ORDER  BY block_height", "LIMIT  2;", "", "-- Index Only Scan using t_from_height_cover", "--   Index Cond: from_address = '0xb7' AND block_height > 21400000", "--   Heap Fetches: 0", "", "-- page 2: seek past the last height shown", "SELECT to_address, amount FROM transfers", "WHERE  from_address = '0xb7' AND block_height > 21400980", "ORDER  BY block_height LIMIT 2;", "", "-- the price: this one row writes the table and the wider index", "INSERT INTO transfers (from_address, block_height, to_address, amount)", "VALUES ('0xd9', 22000000, '0xa1', 12.5);"],
+ map:{"2": [5, 6, 7, 8, 9], "3": [13], "4": [12, 13], "5": [12], "6": [9, 12], "8": [12], "10": [3, 14], "12": [10, 16, 17, 18, 19], "13": [21, 22, 23]}},
+"wrong":{
+ label:"SQL",
+ pc:["index entries are sorted by (from_address, block_height)", "query(a = :addr AND b > :h, select to, amount):", "  key = equality columns from the left, then the first range", "  pos = binary search for key               # the seek", "  walk from pos while the equality prefix still matches", "  entries come out in b order               # so ORDER BY b needs no sort", "  (nothing to sort, the plan has no Sort step)", "  for each entry:", "    if a selected column is not in the entry: read the table page", "  INCLUDE columns ride in the entry: no table read", "  if the leftmost column has no predicate: scan every entry", "  keyset page: key = (addr, last height shown), stop after LIMIT", "every insert writes the table and each index, with its INCLUDE columns", "planner: use the index only if entries + lookups < a table sweep"],
+ real:["-- a report by height alone, on (from_address, block_height)", "SELECT * FROM transfers WHERE block_height > 21400000;", "-- Seq Scan   Filter: block_height > 21400000   rows=7 of 12", "", "-- the flip: height first", "CREATE INDEX t_height_from ON transfers (block_height, from_address);", "", "SELECT to_address, amount FROM transfers", "WHERE  from_address = '0xb7' AND block_height > 21400000;", "-- Index Scan using t_height_from", "--   Index Cond: block_height > 21400000 AND from_address = '0xb7'", "--   Index read: 7 entries to keep 3", "", "-- low selectivity: the index exists and is never picked", "CREATE INDEX t_is_contract ON addresses (is_contract);", "SELECT * FROM addresses WHERE is_contract = false;", "-- Seq Scan   Filter: NOT is_contract   rows=9 of 12"],
+ map:{"2": [6, 8, 9], "3": [9, 11], "4": [10, 11], "5": [12], "6": [12], "11": [2, 3], "14": [15, 16, 17]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

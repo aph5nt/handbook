@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTTP Caching</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>HTTP caching: the browser and the CDN do the work</h1>
+  <p class="lede">A public endpoint serves the facts of a sealed day of chain data. Press <b>Next</b> and watch headers decide who keeps a copy and for how long. Then switch tabs and watch one wrong header show one user's page to another.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="day">Sealed day: max-age and ETag</button>
+    <button role="tab" aria-selected="false" data-mode="leak">The leak: a personal page marked public</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A browser, a CDN edge and an origin server exchanging HTTP requests, with the copy each one holds</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <g font-size="16" font-weight="700" text-anchor="middle">
+          <rect id="a-b" class="box" x="15" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-b" x="110" y="48" fill="#fff">Browser</text>
+          <line x1="110" y1="68" x2="110" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+          <rect id="c-b" class="box" x="10" y="324" width="200" height="34" rx="17" fill="var(--line)"/><text id="t-b" data-on="c-b" x="110" y="346" font-size="14" fill="var(--fg)"></text>
+          <rect id="a-e" class="box" x="355" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-e" x="450" y="48" fill="#fff">CDN edge</text>
+          <line x1="450" y1="68" x2="450" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+          <rect id="c-e" class="box" x="350" y="324" width="200" height="34" rx="17" fill="var(--line)"/><text id="t-e" data-on="c-e" x="450" y="346" font-size="14" fill="var(--fg)"></text>
+          <rect id="a-o" class="box" x="695" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-o" x="790" y="48" fill="#fff">Origin</text>
+          <line x1="790" y1="68" x2="790" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+          <rect id="c-o" class="box" x="690" y="324" width="200" height="34" rx="17" fill="var(--line)"/><text id="t-o" data-on="c-o" x="790" y="346" font-size="14" fill="var(--fg)"></text>
+        </g>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-http-caching/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">fresh copy, or a good answer</span>
+    <span style="--c:var(--wait)">stale copy, or a copy that will need a check</span>
+    <span style="--c:var(--undo)">stale copy served while it refreshes</span>
+    <span style="--c:var(--fail)">wrong user's data</span>
+    <span style="--c:var(--line)">no copy</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every browser and every content delivery network (CDN) such as Cloudflare, Fastly or CloudFront. Hashed static files like <code>app.3f9a.js</code> get a max-age of a year, because a deploy changes the name. A CDN can purge by tag, but hashed URLs mean you never need to.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Pick the header by how the answer changes. Never changes: long max-age and a hashed URL. Changes sometimes: short max-age and an ETag. Per user: private. Sensitive or changing every moment: no-store.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Who may keep a copy</th><th>Use it for</th></tr>
+      <tr><td><code>public, max-age=86400</code></td><td>Browser and edge, fresh for a day</td><td>A sealed day of chain data</td></tr>
+      <tr><td><code>max-age</code> + <code>ETag</code></td><td>Browser and edge, then check for a 304</td><td>Data that changes now and then</td></tr>
+      <tr><td><code>private</code></td><td>Only the browser</td><td>A per-user page</td></tr>
+      <tr><td><code>no-cache</code></td><td>Anyone, but check before every use</td><td>Must be current, often unchanged</td></tr>
+      <tr><td><code>no-store</code></td><td>Nobody</td><td>Sensitive data, the live chain head</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Immutable things get a long max-age and a hashed URL, changing things get a short max-age with an ETag, per-user things are private, and sensitive things are no-store.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[160,240,580];
+const DAY="GET /facts/day/2026-10-06";
+const steps={
+"day":[
+ {pc:[2, 4, 7, 8],t:"First visit: nobody has a copy",b:"A browser asks a public endpoint for the facts of a sealed day of chain data. The content delivery network (CDN) edge has no copy, so it asks the origin server.",w2:"A sealed day never changes. That fact decides every header that follows.",
+  text:{"t-b":"no copy","t-e":"no copy","t-o":"day 2026-10-06"},fill:{"c-o":SVC},a:[[110,100,448,100,DAY],[450,130,788,130,"miss: ask origin"]]},
+ {pc:[14, 16],t:"The origin answers with headers",b:"The origin replies 200 with Cache-Control: public, max-age=86400 and ETag: v7. The edge and the browser both keep a copy.",w2:"max-age is how long a copy is fresh, here one day. public lets the shared edge keep it. The ETag is a version tag of this response.",
+  fill:{"c-b":OK,"c-e":OK},text:{"t-b":"copy v7, fresh 1 day","t-e":"copy v7, fresh 1 day"},a:[[790,170,452,170,"200, max-age=86400, ETag v7",OK],[450,200,112,200,"200 + body",OK]]},
+ {pc:[2, 3],t:"Reload: no request at all",b:"The user reloads the page an hour later. The check on line 2: is 3,600 seconds under max-age, 86,400? Yes. So the browser answers from its own cache.",w2:"The fastest request is the one never sent. Nothing reaches the edge or the origin.",ban:["browser cache answers: 0 network requests",240]},
+ {pc:[2, 7],t:"Another reader, same city",b:"A second user asks for the same day. Line 2 finds no copy in their browser. The check on line 7 finds a public copy at the edge that is still fresh. The edge answers. The origin does nothing.",w2:"One origin response serves a whole region. That is what the edge is for.",
+  text:{"n-b":"Browser (2nd user)"},a:[[110,100,448,100,DAY],[450,130,112,130,"200 from edge",OK]]},
+ {pc:[2, 8],t:"After a day: ask, do not download",b:"The copy is now older than max-age. The browser sends If-None-Match: v7. The edge asks the origin the same question.",w2:"The copy is stale but probably still right. Revalidation asks if v7 is still current, without fetching the body.",
+  fill:{"c-b":WAIT,"c-e":WAIT},text:{"n-b":"Browser","t-b":"copy v7, stale","t-e":"copy v7, stale"},a:[[110,100,448,100,"GET, If-None-Match: v7"],[450,130,788,130,"GET, If-None-Match: v7"]]},
+ {pc:[12, 13],t:"304 Not Modified",b:"The check on line 12: does v7 equal the current ETag, v7? Yes. So the origin answers 304 Not Modified with no body. The edge passes it on. Both keep the body they already hold, fresh for another day.",w2:"A 304 costs a round trip but no download. For large responses that is most of the cost.",
+  fill:{"c-b":OK,"c-e":OK},text:{"t-b":"copy v7, fresh again","t-e":"copy v7, fresh again"},a:[[790,170,452,170,"304, no body",OK],[450,200,112,200,"304, no body",OK]]},
+ {pc:[9],t:"stale-while-revalidate",b:"With stale-while-revalidate, the edge serves its old copy at once and checks with the origin in the background.",w2:"The reader never waits for the check. The next reader gets the result of it.",
+  fill:{"c-e":UNDO},text:{"t-e":"serves stale, checks"},a:[[110,100,448,100,DAY],[450,130,112,130,"200 at once (stale)",UNDO],[450,170,788,170,"background check",FG,true]]}
+],
+"leak":[
+ {pc:[14, 16],t:"A personal page, marked public",b:"The account page /me shows the signed-in user. By mistake it is sent with Cache-Control: public, max-age=300, and no Vary: Authorization.",w2:"public tells the shared edge it may keep one copy for everyone. Without Vary, the edge ignores who asked.",
+  text:{"n-b":"Alice's browser","t-b":"no copy","t-e":"no copy","t-o":"per-user pages"},fill:{"c-o":SVC},a:[[110,100,448,100,"GET /me (Alice)"],[450,130,788,130,"miss: ask origin"]]},
+ {pc:[8, 16],t:"The edge keeps Alice's page",b:"The origin answers with Alice's account page. The edge stores it under the key /me.",w2:"The key is the URL. Nothing in the key says the copy belongs to Alice.",
+  fill:{"c-e":WAIT,"c-b":OK},text:{"t-e":"/me = Alice's page","t-b":"Alice's page"},a:[[790,170,452,170,"200, public, max-age=300",WAIT],[450,200,112,200,"Alice's page",OK]]},
+ {pc:[7, 16],t:"The failure that matters: Bob sees Alice",b:"Bob signs in and opens /me. The check on line 7 only looks at the URL: is there a public, fresh copy for /me? Yes. So the edge returns it. Bob sees Alice's name and account.",w2:"One header leaked private data to a stranger. This is the HTTP caching bug interviewers ask about.",
+  fill:{"c-e":FAIL,"c-b":FAIL,"a-b":FAIL},text:{"n-b":"Bob's browser","t-b":"shows Alice's page!"},a:[[110,100,448,100,"GET /me (Bob)"],[450,130,112,130,"200: Alice's page",FAIL]],ban:["Bob is shown Alice's account",240]},
+ {pc:[17],t:"Fix: per-user means private",b:"The origin now sends Cache-Control: private. Only the browser may keep a copy. The edge must pass every /me request to the origin.",w2:"Per-user answers are private. Each browser keeps only its own.",
+  fill:{"c-e":LINE,"c-b":OK,"a-b":COORD},text:{"t-e":"no copy allowed","t-b":"Bob's own page"},a:[[110,100,448,100,"GET /me (Bob)"],[450,130,788,130,"forward"],[790,170,452,170,"200, private",OK],[450,200,112,200,"Bob's page",OK]]},
+ {pc:[18],t:"Sensitive: no-store",b:"The payment details page sends Cache-Control: no-store. Nobody keeps a copy, not even the browser.",w2:"no-store is for data that must not sit on disk anywhere. The chain head endpoint, which changes every tenth of a second, also gets no-store.",
+  fill:{"c-b":LINE},text:{"t-b":"no copy kept"},a:[[110,100,448,100,"GET /payment"],[450,130,788,130,"forward"],[790,170,452,170,"200, no-store"],[450,200,112,200,"200, not kept"]]},
+ {pc:[19],t:"The trap in the name: no-cache",b:"no-cache does not mean do not cache. It means keep a copy, but check with the origin before every use.",w2:"no-cache plus an ETag gives a 304 on every visit: always correct, rarely a full download.",
+  fill:{"c-b":WAIT},text:{"t-b":"copy, check each use"},a:[[110,100,448,100,"If-None-Match: v3"],[450,130,788,130,"forward"],[790,170,452,170,"304",OK],[450,200,112,200,"304: use your copy",OK]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"day": {
+"label": "Go",
+"pc": [
+"browser.get(url):",
+"  if a copy is younger than max-age:     # fresh",
+"    return it                            # 0 network requests",
+"  edge.get(url)",
+"",
+"edge.get(url):",
+"  if a public copy is younger than max-age: return it   # origin idle",
+"  send to the origin, with If-None-Match: savedTag",
+"  stale-while-revalidate: serve the old copy, check in the background",
+"",
+"origin.get(url):",
+"  if If-None-Match == current ETag:      # nothing changed",
+"    answer 304, no body                  # both keep their body",
+"  answer 200, Cache-Control, ETag",
+"",
+"public:    the shared edge may keep it, under the URL",
+"private:   only the browser may keep it  # per-user answers",
+"no-store:  nobody keeps it",
+"no-cache:  keep it, but check before every use"
+],
+"real": [
+"func (w *World) Get(browser *Cache, path, user string) (string, string) {",
+"\tif e, _, fresh := browser.lookup(path, w.now); fresh {",
+"\t\treturn e.body, \"browser cache, no request\"",
+"\t}",
+"\tw.network++",
+"\tif e, ok, fresh := w.edge.lookup(path, w.now); ok && fresh && e.public {",
+"\t\tbrowser.store[path] = e",
+"\t\treturn e.body, \"edge hit, origin idle\"",
+"\t}",
+"\tinm := \"\"",
+"\told, had, _ := w.edge.lookup(path, w.now)",
+"\tif had {",
+"\t\tinm = old.etag",
+"\t}",
+"\tbody, etag, maxAge, public, nm := fetch(w.origin+path, user, inm, &w.st)",
+"\thow := \"origin 200\"",
+"\tif nm {",
+"\t\tbody, etag, how = old.body, old.etag, \"origin 304, no body\"",
+"\t}",
+"\te := copyOf{body, etag, maxAge, w.now, public}",
+"\tif public { // a shared cache keeps only what is public",
+"\t\tw.edge.store[path] = e",
+"\t}",
+"\tif maxAge > 0 {",
+"\t\tbrowser.store[path] = e",
+"\t}",
+"\treturn body, how",
+"}",
+"",
+"// the origin",
+"w.Header().Set(\"Cache-Control\", \"public, max-age=86400\")",
+"w.Header().Set(\"ETag\", `\"v7\"`)",
+"if r.Header.Get(\"If-None-Match\") == `\"v7\"` {",
+"\tw.WriteHeader(http.StatusNotModified)",
+"\treturn",
+"}",
+"",
+"// in fetch: two directives change what is kept",
+"if strings.Contains(cc, \"no-store\") { // nobody keeps it",
+"\tmaxAge, public = 0, false",
+"}",
+"if strings.Contains(cc, \"no-cache\") { // keep it, but check before every use",
+"\tmaxAge = 0",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+3
+],
+"4": [
+5
+],
+"6": [
+6
+],
+"7": [
+6,
+7,
+8
+],
+"8": [
+10,
+11,
+12,
+13,
+14,
+15
+],
+"9": [
+10,
+11,
+12,
+13,
+14,
+15
+],
+"11": [
+30
+],
+"12": [
+33
+],
+"13": [
+34,
+35
+],
+"14": [
+31,
+32
+],
+"16": [
+21,
+22
+],
+"17": [
+21,
+24,
+25
+],
+"18": [
+39,
+40,
+41
+],
+"19": [
+42,
+43,
+44
+]
+}
+},
+"leak": {
+"label": "Go",
+"pc": [
+"browser.get(url):",
+"  if a copy is younger than max-age:     # fresh",
+"    return it                            # 0 network requests",
+"  edge.get(url)",
+"",
+"edge.get(url):",
+"  if a public copy is younger than max-age: return it   # origin idle",
+"  send to the origin, with If-None-Match: savedTag",
+"  stale-while-revalidate: serve the old copy, check in the background",
+"",
+"origin.get(url):",
+"  if If-None-Match == current ETag:      # nothing changed",
+"    answer 304, no body                  # both keep their body",
+"  answer 200, Cache-Control, ETag",
+"",
+"public:    the shared edge may keep it, under the URL",
+"private:   only the browser may keep it  # per-user answers",
+"no-store:  nobody keeps it",
+"no-cache:  keep it, but check before every use"
+],
+"real": [
+"func (w *World) Get(browser *Cache, path, user string) (string, string) {",
+"\tif e, _, fresh := browser.lookup(path, w.now); fresh {",
+"\t\treturn e.body, \"browser cache, no request\"",
+"\t}",
+"\tw.network++",
+"\tif e, ok, fresh := w.edge.lookup(path, w.now); ok && fresh && e.public {",
+"\t\tbrowser.store[path] = e",
+"\t\treturn e.body, \"edge hit, origin idle\"",
+"\t}",
+"\tinm := \"\"",
+"\told, had, _ := w.edge.lookup(path, w.now)",
+"\tif had {",
+"\t\tinm = old.etag",
+"\t}",
+"\tbody, etag, maxAge, public, nm := fetch(w.origin+path, user, inm, &w.st)",
+"\thow := \"origin 200\"",
+"\tif nm {",
+"\t\tbody, etag, how = old.body, old.etag, \"origin 304, no body\"",
+"\t}",
+"\te := copyOf{body, etag, maxAge, w.now, public}",
+"\tif public { // a shared cache keeps only what is public",
+"\t\tw.edge.store[path] = e",
+"\t}",
+"\tif maxAge > 0 {",
+"\t\tbrowser.store[path] = e",
+"\t}",
+"\treturn body, how",
+"}",
+"",
+"// the origin",
+"w.Header().Set(\"Cache-Control\", \"public, max-age=86400\")",
+"w.Header().Set(\"ETag\", `\"v7\"`)",
+"if r.Header.Get(\"If-None-Match\") == `\"v7\"` {",
+"\tw.WriteHeader(http.StatusNotModified)",
+"\treturn",
+"}",
+"",
+"// in fetch: two directives change what is kept",
+"if strings.Contains(cc, \"no-store\") { // nobody keeps it",
+"\tmaxAge, public = 0, false",
+"}",
+"if strings.Contains(cc, \"no-cache\") { // keep it, but check before every use",
+"\tmaxAge = 0",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+3
+],
+"4": [
+5
+],
+"6": [
+6
+],
+"7": [
+6,
+7,
+8
+],
+"8": [
+10,
+11,
+12,
+13,
+14,
+15
+],
+"9": [
+10,
+11,
+12,
+13,
+14,
+15
+],
+"11": [
+30
+],
+"12": [
+33
+],
+"13": [
+34,
+35
+],
+"14": [
+31,
+32
+],
+"16": [
+21,
+22
+],
+"17": [
+21,
+24,
+25
+],
+"18": [
+39,
+40,
+41
+],
+"19": [
+42,
+43,
+44
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

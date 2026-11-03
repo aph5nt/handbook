@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embeddings and vector search</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Embeddings turn meaning into distance</h1>
+  <p class="lede">An engineer types "where do swaps live". The right document says "the table that holds exchange trades". They share no word. Press <b>Next</b> and watch the question become a point, land next to the right document, and get found by an index that does not look at everything.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="find">Find the neighbour</button>
+    <button role="tab" aria-selected="false" data-mode="fail">Two models, and missed neighbours</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Documents as points in a meaning space, a query point, and the index walk that finds its nearest neighbour</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-embeddings-vector-index/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a document chunk</span>
+    <span style="--c:var(--undo)">the query</span>
+    <span style="--c:var(--ok)">the true nearest neighbour</span>
+    <span style="--c:var(--wait)">checked by the index</span>
+    <span style="--c:var(--fail)">wrong answer, or a missed neighbour</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>RAG (retrieval-augmented generation) over runbooks and table docs. A warehouse that holds the documents adds a vector column and an HNSW index, so one system serves facts and similarity. Hybrid search adds keyword search for exact names like <code>core_dex_swaps</code>.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Under about a million vectors, flat exact search is often enough. Above that, HNSW for speed and recall if memory allows, IVF when memory is tight. Pin the embedding model version, re-embed everything when it changes, and measure recall on a golden set.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>HNSW</th><th>IVF</th></tr>
+      <tr><td>How it searches</td><td>Walks a layered graph from far hops to near hops</td><td>Clusters the vectors, probes the few nearest clusters</td></tr>
+      <tr><td>Speed and recall</td><td>Fast, high recall</td><td>Fast, recall set by how many clusters you probe</td></tr>
+      <tr><td>Memory</td><td>Hungry: stores the graph links</td><td>Lighter</td></tr>
+      <tr><td>Misses when</td><td>The walk gets stuck in a local corner</td><td>The neighbour sits in a cluster not probed</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"An embedding turns meaning into distance, and an ANN index finds the near ones fast, at a recall I measure."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={
+"all": {
+"pc": [
+"q = embed(question)                      # same model as the documents",
+"keyword: docs that share a word with q   # 0 found",
+"for each doc d: compare q with d         # exact: 8 of 8",
+"return the closest",
+"cos = dot(a, b) / (len(a) * len(b))      # 1 = same direction",
+"here = entry point                       # HNSW bottom layer",
+"loop:",
+"  best = neighbour of here closest to q",
+"  if best is not closer than here:",
+"    return here                          # can stop early",
+"  here = best",
+"order clusters by distance(q, centroid)  # IVF",
+"search only the first nprobe clusters   # 3 of 8 checked",
+"if query model != document model:",
+"  refuse, re-embed every document        # else distances mean nothing"
+],
+"real": [
+"Q = (430, 128)  # \"where do swaps live\", embedded by model A",
+"words = set(\"where do swaps live\".split())",
+"hits = [n for n in NAMES if words & set(n.split())]",
+"def cosine(a, b):",
+"    \"\"\"The angle between two arrows from the origin: 1 = same direction.\"\"\"",
+"    a = (a[0] - ORIGIN[0], ORIGIN[1] - a[1])",
+"    b = (b[0] - ORIGIN[0], ORIGIN[1] - b[1])",
+"    return (a[0] * b[0] + a[1] * b[1]) / (math.hypot(*a) * math.hypot(*b))",
+"",
+"def check_models(query_model, doc_model):",
+"    \"\"\"Vectors from two models live in two spaces: never compare them.\"\"\"",
+"    if query_model != doc_model:",
+"        raise ValueError(f\"query from model {query_model}, documents from model {doc_model}: re-embed\")",
+"",
+"def exact(q, docs):",
+"    \"\"\"Compare the question with every vector. Correct, and slow at scale.\"\"\"",
+"    return min(range(len(docs)), key=lambda i: math.dist(q, docs[i])), len(docs)",
+"",
+"def greedy_walk(q, docs, edges, entry):",
+"    \"\"\"HNSW bottom layer: hop to the neighbour closest to q until none is closer.\"\"\"",
+"    nbrs = {i: set() for i in range(len(docs))}",
+"    for a, b in edges:",
+"        nbrs[a].add(b)",
+"        nbrs[b].add(a)",
+"    path = [entry]",
+"    while True:",
+"        here = path[-1]",
+"        best = min(nbrs[here], key=lambda n: math.dist(q, docs[n]))",
+"        if math.dist(q, docs[best]) >= math.dist(q, docs[here]):",
+"            return path                  # no neighbour is closer: stop here",
+"        path.append(best)",
+"",
+"def ivf(q, docs, clusters, nprobe):",
+"    \"\"\"IVF: compare q with the centroids, search only the nearest nprobe clusters.\"\"\"",
+"    def centroid(ids):",
+"        return (sum(docs[i][0] for i in ids) / len(ids), sum(docs[i][1] for i in ids) / len(ids))",
+"    order = sorted(clusters, key=lambda ids: math.dist(q, centroid(ids)))",
+"    checked = [i for ids in order[:nprobe] for i in ids]",
+"    return min(checked, key=lambda i: math.dist(q, docs[i])), len(checked)"
+],
+"map": {
+"1":[1],
+"2":[3],
+"3": [
+17
+],
+"4": [
+17
+],
+"5": [
+8
+],
+"6": [
+25
+],
+"7": [
+26
+],
+"8": [
+28
+],
+"9": [
+29
+],
+"10": [
+30
+],
+"11":[27, 31],
+"12": [
+37
+],
+"13": [
+38,
+39
+],
+"14": [
+12
+],
+"15": [
+13
+]
+}
+}
+};
+const D=[["the table that holds exchange trades",400,104],["liquidity pool events",300,70],["price feed for tokens",470,220],["graph sync layers",230,175],["wallet risk scores",60,205],["Grafana board conventions",130,250],["lane reset runbook",300,290],["alert routes",120,325]];
+const DB=[[400,104,250,260],[300,70,110,300],[470,220,200,60],[230,175,420,150],[60,205,500,300],[130,250,455,125],[300,290,90,180],[60,320,330,90]];
+const Q=[430,128],QB=[175,282];
+const EDGES=[[7,5],[5,3],[3,1],[1,0],[3,4],[0,2],[6,3],[5,6],[4,1],[2,6]];
+const CL=[[400,140,110,[0,1,2]],[170,150,95,[3,4]],[160,295,110,[5,6,7]]];
+code.fail=Object.assign({},code.all,{real:code.all.real.map((l,i)=>i===0?"QB = (175, 282)  # the same question, embedded by model B":l)});
+const steps={
+"find":[
+ {t:"Every document is a point",b:"An embedding model turns each document chunk into a vector: hundreds to thousands of numbers. Here it is drawn in two dimensions. Similar meanings sit close together.",w:"Distance now means difference in meaning.",dots:1,pc:[1]},
+ {t:"The question becomes a point",b:"The question \"where do swaps live\" goes through the same embedding model. It lands at its own point in the same space.",w:"Same model for documents and question, or the points cannot be compared.",dots:1,q:1,pc:[1]},
+ {t:"Keyword search finds nothing",b:"Keyword search keeps the documents that share a word with the question. It checks \"where\", \"do\", \"swaps\", \"live\" against all 8 titles: 0 shared words, so 0 results.",w:"Words differ, meaning matches. This is the gap embeddings close.",dots:1,q:1,kw:1,pc:[2]},
+ {t:"Cosine: the angle between arrows",b:"Cosine similarity measures the angle between two vectors. The question and \"exchange trades\" point almost the same way. The cosine is the dot product divided by the two lengths: 0.997 here, the highest of the eight. 1 means the same direction, 0 means unrelated.",w:"A small angle means close in meaning, whatever the words.",dots:1,q:1,cos:1,pc:[5]},
+ {t:"Exact search checks every point",b:"Exact search measures the distance from the question to every vector and keeps the smallest. 8 of 8 compared, and the nearest is exchange trades. In a real index it is millions, for every question.",w:"Correct, but slow at scale. An ANN (approximate nearest neighbour) index trades a little recall for speed.",dots:1,q:1,all:1,pc:[3, 4]},
+ {t:"HNSW: a graph walk",b:"HNSW (hierarchical navigable small world) links each point to near points. The walk starts at the entry point, alert routes. At each point it asks: which neighbour is closest to the question, and is it closer than where I stand? Yes, so hop: Grafana, graph sync, liquidity, exchange trades. At exchange trades no neighbour is closer, so it stops.",w:"It checks 5 points instead of 8 and reaches the right one. The upper layers give the long hops.",dots:1,q:1,edges:1,path:[7,5,3,1,0],pc:[6, 7, 8, 9, 10, 11]},
+ {t:"IVF: probe the near cluster",b:"IVF (inverted file index) groups the points into clusters. It measures the question against the 3 cluster centres, probes only the nearest one (exchange trades, liquidity, price feed) and checks those 3 points.",w:"Less memory than a graph. Probe more clusters for more recall.",dots:1,q:1,ivf:1,pc:[12, 13]},
+ {t:"The answer comes back",b:"The top match is \"the table that holds exchange trades\". A metadata filter keeps only current docs, and the chunk goes into the prompt.",w:"The engineer gets the right table without knowing its words.",dots:1,q:1,hit:1,pc:[4]}
+],
+"fail":[
+ {t:"The documents, embedded by model A",b:"Every document was embedded last month with embedding model A.",w:"The positions only mean something inside model A's space.",dots:1,pc:[1]},
+ {t:"A new model embeds the question",b:"The service switched to model B. The question is embedded with model B. Model B places meanings in a different layout.",w:"Two models, two spaces. The axes do not line up.",dots:1,qb:1,pc:[1]},
+ {t:"The failure: nonsense neighbours",b:"The model-B question lands next to \"Grafana board conventions\" in model A's space. The check that compares the query model with the document model is switched off, so the search returns it with full confidence.",w:"Comparing vectors from two models gives distances that mean nothing. No error is raised.",dots:1,qb:1,wrong:1,pc:[14, 15]},
+ {t:"The fix: re-embed everything",b:"With the check on, the search refuses: query from model B, documents from model A. Every document is embedded again with model B, and the question lands next to \"exchange trades\" again.",w:"When the model changes, re-embed the whole store. Pin the model version.",dotsB:1,qb:1,hitB:1,pc:[15]},
+ {t:"A second failure: the walk stops early",b:"Remove one link, liquidity to exchange trades. The walk reaches liquidity pool events and asks: is any neighbour closer than here? Graph sync and wallet risk are both further. No, so it stops and misses the true neighbour.",w:"ANN is approximate. Its recall is below 100%.",dots:1,q:1,edges:1,path:[7,5,3,1],stuck:1,pc:[8, 9, 10]},
+ {t:"Measure recall on a golden set",b:"Run ten golden questions with known right documents through the walk with the missing link. It finds 7 of 10: recall 70%. The team adds the link back and measures again: 9 of 10.",w:"Treat recall as a number you measure, never as exact.",gold:[0,1,1,1,0,0,1,1,1,1],pc:[6, 7, 8, 9, 10, 11]}
+]};
+function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+function scene(s){
+  let h=O(20,20,560,325);h+=T(30,40,"Meaning space (drawn in 2D)","var(--muted)",13);
+  if(s.ivf)CL.forEach((c,k)=>h+=`<circle cx="${c[0]}" cy="${c[1]}" r="${c[2]}" fill="${k===0?"var(--wait)":"none"}" fill-opacity=".15" stroke="${k===0?"var(--wait)":"var(--line)"}" stroke-width="2" stroke-dasharray="6 4"/>`);
+  const pts=s.dotsB?DB.map(p=>[p[2],p[3]]):D.map(p=>[p[1],p[2]]);
+  if(s.edges)EDGES.forEach(([a,b])=>h+=`<line x1="${pts[a][0]}" y1="${pts[a][1]}" x2="${pts[b][0]}" y2="${pts[b][1]}" stroke="var(--line)" stroke-width="2"/>`);
+  if(s.path)for(let k=1;k<s.path.length;k++){const a=pts[s.path[k-1]],b=pts[s.path[k]];h+=A(a[0],a[1],b[0],b[1],"var(--wait)");}
+  const q=s.qb?(s.hitB?[DB[0][2]+30,DB[0][3]+24]:QB):Q;
+  if(s.all&&(s.q))pts.forEach(p=>h+=`<line x1="${q[0]}" y1="${q[1]}" x2="${p[0]}" y2="${p[1]}" stroke="var(--wait)" stroke-width="1.5" stroke-dasharray="3 3"/>`);
+  if(s.cos){h+=`<circle cx="30" cy="335" r="4" fill="var(--fg)"/>`+A(30,335,q[0],q[1],"var(--undo)")+A(30,335,pts[0][0],pts[0][1],"var(--ok)");}
+  if(s.dots||s.dotsB)pts.forEach((p,k)=>{
+    const near=(k===0&&(s.hit||s.hitB||s.cos));const wr=(s.wrong&&k===5)||(s.stuck&&k===1);
+    const chk=(s.path&&s.path.includes(k))||(s.ivf&&CL[0][3].includes(k));
+    const col=wr?"var(--fail)":near?"var(--ok)":chk?"var(--wait)":s.dotsB?"var(--undo)":"var(--svc)";
+    h+=`<circle class="box" cx="${p[0]}" cy="${p[1]}" r="${near||wr?10:7}" fill="${col}"/>`;
+    const lx=p[0]>380?p[0]-12:p[0]+12,a=p[0]>380?"end":"start";
+    h+=T(lx,p[1]-10,D[k][0],wr?"var(--fail)":"var(--fg)",12,a,near||wr);});
+  if(s.q||s.qb){h+=`<rect class="box" x="${q[0]-8}" y="${q[1]-8}" width="16" height="16" transform="rotate(45 ${q[0]} ${q[1]})" fill="var(--undo)"/>`;
+    h+=q[0]<300?T(q[0]-16,q[1]+5,"question (model B)","var(--undo)",13,"end",1):T(q[0]+14,q[1]+22,s.qb?"question (model B)":"question","var(--undo)",13,"start",1);}
+  let info=[];
+  if(s.kw)info=["Keyword search","\"where do swaps live\"","shared words: 0","result: nothing"];
+  else if(s.cos)info=["Cosine similarity","question vs exchange trades","small angle","cosine near 1"];
+  else if(s.all)info=["Exact search","compared: 8 of 8","at scale: millions","per question"];
+  else if(s.path)info=["HNSW walk",`checked: ${s.path.length} of 8`,s.stuck?"stopped early":"reached the neighbour",s.stuck?"missed: exchange trades":""];
+  else if(s.ivf)info=["IVF probe","clusters: 3","probed: 1","checked: 3 of 8"];
+  else if(s.hit||s.hitB)info=["Top match","the table that holds","exchange trades","into the prompt"];
+  else if(s.wrong)info=["Top match","Grafana board","conventions","wrong, no error"];
+  else if(s.qb)info=["Documents: model A","Question: model B","different spaces"];
+  if(info.length){h+=O(610,40,270,140,s.stuck||s.wrong?"var(--fail)":"var(--line)");info.forEach((l,k)=>h+=T(626,72+k*28,l,k===0?"var(--fg)":(s.stuck||s.wrong)&&k>=2?"var(--fail)":"var(--fg)",15,"start",k===0));}
+  if(s.gold){h=O(20,20,860,325)+T(40,56,"Golden set: 10 questions with a known right document",null,16,"start",1);
+    s.gold.forEach((g,k)=>{const x=50+k*82;h+=R(x,90,70,70,g?"var(--ok)":"var(--fail)",g?"found":"miss","#fff",15)+T(x+35,186,"Q"+(k+1),"var(--muted)",13,"middle");});
+    h+=T(40,240,"Recall: 7 of 10 = 70%. With the link back: 9 of 10.","var(--fg)",20,"start",1)+T(40,272,"Add links per point or probe more clusters, then measure again.","var(--muted)",15);}
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

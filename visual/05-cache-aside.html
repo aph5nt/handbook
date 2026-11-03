@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache-Aside</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache-aside: the miss, the load, and the order of a delete</h1>
+  <p class="lede">An investigator screens address 0x18 for risk. Press <b>Next</b> and watch the app load the answer and store it for 60 seconds. Then see how deleting a key too early puts the old score back.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="flow">Miss, load, set</button>
+    <button role="tab" aria-selected="false" data-mode="race">Delete before commit</button>
+    <button role="tab" aria-selected="false" data-mode="fix">Delete after commit</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A writer, a reader, a Redis cache and a graph database, with the value each one holds</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="wr" class="box" x="20" y="30" width="210" height="66" rx="8" fill="var(--coord)"/>
+        <text id="h-wr" data-on="wr" x="125.0" y="56" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Writer</text>
+        <text id="s-wr" data-on="wr" x="125.0" y="80" text-anchor="middle" font-size="14" fill="#fff">label update</text>
+        <rect id="rd" class="box" x="20" y="262" width="210" height="66" rx="8" fill="var(--svc)"/>
+        <text id="h-rd" data-on="rd" x="125.0" y="288" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Reader</text>
+        <text id="s-rd" data-on="rd" x="125.0" y="312" text-anchor="middle" font-size="14" fill="#fff">investigator</text>
+        <rect id="ca" class="box" x="345" y="132" width="210" height="66" rx="8" fill="var(--coord)"/>
+        <text id="h-ca" data-on="ca" x="450.0" y="158" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Redis cache</text>
+        <text id="s-ca" data-on="ca" x="450.0" y="182" text-anchor="middle" font-size="14" fill="#fff">risk:0x18</text>
+        <rect id="db" class="box" x="670" y="132" width="210" height="66" rx="8" fill="var(--coord)"/>
+        <text id="h-db" data-on="db" x="775.0" y="158" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Graph database</text>
+        <text id="s-db" data-on="db" x="775.0" y="182" text-anchor="middle" font-size="14" fill="#fff">risk:0x18</text>
+        <rect id="cv" class="box" x="345" y="208" width="210" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-cv" data-on="cv" x="450.0" y="230.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">empty</text>
+        <rect id="dv" class="box" x="670" y="208" width="210" height="34" rx="17.0" fill="var(--ok)"/>
+        <text id="t-dv" data-on="dv" x="775.0" y="230.0" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">committed: 40</text>
+        <rect id="tx" class="box" x="670" y="92" width="210" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-tx" data-on="tx" x="775.0" y="114.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <text id="ck" x="345" y="350" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-aside/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">correct value</span>
+    <span style="--c:var(--wait)">open transaction, or a copy about to go</span>
+    <span style="--c:var(--fail)">a miss, or a wrong value</span>
+    <span style="--c:var(--undo)">a delete</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Read-heavy lookups: address risk, user profiles, product pages. Any service that holds a Redis client and a database client, and writes the few lines between them itself.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Commit first, then delete the key. Delete instead of update, so two writers cannot leave the older value behind. Always keep a TTL, because it ends every race and every failed delete.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Delete, then commit</th><th>Commit, then delete</th></tr>
+      <tr><td>A reader during the update</td><td>Misses and sets the old value</td><td>Hits the old value, still the truth</td></tr>
+      <tr><td>Old score after the update ends</td><td>Up to one full TTL: 59 seconds here</td><td>0 seconds, unless a reader stalls</td></tr>
+      <tr><td>Needed to go wrong</td><td>Any read during the transaction</td><td>A read before the commit and a set after the delete</td></tr>
+      <tr><td>What ends it</td><td>The TTL</td><td>The TTL</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Cache-aside is my default: on a miss read the source and set with a TTL, and on a write commit first, then delete the key, because a delete before the commit lets a reader put the old value back.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[290,20,350];
+const steps={
+"flow":[
+ {pc:[5],t:"Start: the cache is empty",b:"Redis holds nothing for risk:0x18. The database holds a risk score of 40. The clock is at 0 seconds and the TTL (time to live) is 60 seconds.",w2:"In cache-aside the cache knows nothing about the database. The app does all the work.",fill:{cv:LINE,dv:OK,tx:PANEL},text:{"t-cv":"empty","t-dv":"committed: 40","t-tx":"",ck:"t = 0 s, database queries: 0"}},
+ {pc:[2, 6],t:"The miss",b:"The reader asks Redis for risk:0x18. The check on line 2 asks two things: was the key ever set, and has its TTL run out? It was never set, so the answer is a miss.",w2:"A miss costs one extra round trip before the real work starts.",a:[[230,285,345,190,"get: miss",FAIL,false,[-30,-10]]]},
+ {pc:[7],t:"The load",b:"On a miss the app reads the source itself. The database returns the last committed value, 40. The query count goes from 0 to 1.",w2:"This is the slow, costly work the cache exists to avoid.",text:{ck:"t = 0 s, database queries: 1"},a:[[230,312,670,240,"read: 40",FG,false,[0,32]]]},
+ {pc:[8, 9],t:"The set with a TTL",b:"The app stores 40 in Redis with a TTL of 60. The entry expires at now + 60 = 60 seconds. Then the app returns 40.",w2:"The app filled the cache. The TTL is the safety net: any wrong copy dies by itself.",fill:{cv:OK},text:{"t-cv":"40, expires at 60 s"},a:[[230,270,345,175,"set 40, TTL 60",OK,false,[-52,-22]]]},
+ {pc:[3, 6],t:"The next read is a hit",b:"At 20 seconds a second reader asks. Line 2 checks: the key exists, and 20 is below 60, so it is fresh. Redis returns 40. The query count stays at 1.",w2:"The database rests. That is the whole point.",text:{ck:"t = 20 s, database queries: 1"},a:[[230,285,345,190,"get: hit, 40",OK,false,[-30,-10]]]},
+ {pc:[2, 7, 8],t:"The TTL runs out",b:"At 60 seconds line 2 checks now >= expires: 60 >= 60, so the key counts as gone. This read misses, loads 40 again and sets a new entry that expires at 120 seconds. The count goes to 2.",w2:"Expiry costs one reload. It also bounds how long a wrong value can live.",fill:{cv:OK},text:{"t-cv":"40, expires at 120 s",ck:"t = 60 s, database queries: 2"},a:[[230,285,345,190,"get: miss, expired",FAIL,false,[-30,-10]],[230,312,670,240,"read: 40",FG,false,[0,32]]]}
+],
+"race":[
+ {pc:[12],t:"Start: the cache holds 40",b:"Redis and the database both say 40. A label update will raise the risk score of 0x18 to 90. This writer deletes the key first, then commits.",w2:"Delete first looks safe: no old copy can be served, so the next read must load the new value. Watch why that is false.",fill:{cv:OK,dv:OK,tx:PANEL},text:{"t-cv":"40, expires at 60 s","t-dv":"committed: 40","t-tx":"",ck:"t = 10 s"}},
+ {pc:[13],t:"The writer deletes the key",b:"Line 13 runs: the key is gone from Redis. The transaction is still open. The new value 90 is written, but it is not committed yet.",w2:"The cache is empty while the database still shows the old value to everyone else.",fill:{cv:LINE,tx:WAIT},text:{"t-cv":"empty","t-tx":"open, not committed: 90"},a:[[230,70,345,150,"delete key",UNDO,false,[62,-6]],[230,50,670,108,"write 90",WAIT,false,[0,-12]]]},
+ {pc:[2, 6, 7, 14],t:"A reader misses and reads the old value",b:"A reader arrives. The check on line 2 finds no key, so it is a miss. It reads the database, which shows committed values only. The only committed value is 40.",w2:"The reader did nothing wrong. 40 is the correct answer at this moment.",a:[[230,285,345,190,"get: miss",FAIL,false,[-30,-10]],[230,312,670,240,"read: 40",FG,false,[0,32]]]},
+ {pc:[8, 14],t:"The reader puts the old value back",b:"The reader follows the rule on line 8: set what you loaded, with a TTL of 60. Redis now holds 40, and it expires at 70 seconds.",w2:"The delete has been undone, and nothing records that it happened.",fill:{cv:FAIL},text:{"t-cv":"40, expires at 70 s"},a:[[230,270,345,175,"set 40, TTL 60",FAIL,false,[-52,-22]]]},
+ {pc:[15],t:"The writer commits",b:"Line 15 runs: the database now says 90. The writer is finished and will not come back. It already did its delete, in the wrong order.",w2:"The two stores now disagree, and no code is left that will fix it.",fill:{dv:OK,tx:PANEL},text:{"t-dv":"committed: 90","t-tx":"",ck:"t = 11 s"},a:[[230,50,670,108,"commit",OK,false,[0,-12]]]},
+ {pc:[3, 6],t:"The failure that matters: 59 seconds of the old score",b:"At 11 seconds a reader gets a hit on 40 while the database says 90. Line 2 finds a fresh key, so it never looks at the database. This goes on until 70 seconds, when the TTL runs out and the next read loads 90.",w2:"An investigator is told a risk of 40 for an address now scored 90. Only the TTL ends it, so the TTL sets the size of the damage.",ban:["cache 40, database 90, until the TTL ends",20],text:{ck:"t = 11 s to 70 s, 59 seconds wrong"},a:[[230,285,345,190,"get: hit, 40",FAIL,false,[-30,-10]]]}
+],
+"fix":[
+ {pc:[18],t:"Same start, new order",b:"Redis and the database say 40. The writer now keeps its transaction first and runs the delete last, on line 21.",w2:"One line moves. Nothing else changes.",fill:{cv:OK,dv:OK,tx:PANEL},text:{"t-cv":"40, expires at 60 s","t-dv":"committed: 40","t-tx":"",ck:"t = 10 s"}},
+ {pc:[3, 6, 19],t:"The transaction is open, the key stays",b:"The writer writes 90 but has not committed. A reader asks. Line 2 finds a fresh key, so it is a hit on 40.",w2:"40 is still the truth: the update has not happened yet for anyone. This hit is correct.",fill:{tx:WAIT},text:{"t-tx":"open, not committed: 90"},a:[[230,50,670,108,"write 90",WAIT,false,[0,-12]],[230,285,345,190,"get: hit, 40",OK,false,[-30,-10]]]},
+ {pc:[20],t:"The writer commits",b:"Line 20 runs: the database says 90. For a moment Redis still says 40.",w2:"This gap is one network call long, not one TTL long.",fill:{dv:OK,tx:PANEL,cv:WAIT},text:{"t-dv":"committed: 90","t-tx":""},a:[[230,50,670,108,"commit",OK,false,[0,-12]]]},
+ {pc:[21],t:"The fix: delete after the commit",b:"Line 21 runs: the key is gone. The commit is already done, so a miss from here on can only load 90.",w2:"The order guarantees the new value is visible before any reader can refill the cache.",fill:{cv:LINE},text:{"t-cv":"empty"},a:[[230,70,345,150,"delete key",UNDO,false,[62,-6]]]},
+ {pc:[2, 7, 8],t:"The next read loads the new value",b:"At 11 seconds a reader misses on line 2, reads 90 and sets it with a TTL of 60. The old score lived for 0 seconds after the update finished.",w2:"Compare with 59 seconds in the other tab, for the same reads and the same update.",fill:{cv:OK},text:{"t-cv":"90, expires at 71 s",ck:"t = 11 s"},a:[[230,285,345,190,"get: miss",FG,false,[52,26]],[230,312,670,240,"read: 90",OK,false,[0,32]],[230,270,345,175,"set 90, TTL 60",OK,false,[-52,-22]]]},
+ {pc:[7, 8, 20, 21],t:"What the fix leaves: a slow reader",b:"The window is not zero. A reader misses and reads 40 just before the commit, then stalls. The writer commits and deletes. The reader wakes and sets its old 40. The next read is a hit on 40 until the TTL ends.",w2:"It needs a read that starts before the commit and a set that lands after the delete, which is rare. The TTL still ends it. If even that is too much, set only when the version is still current.",fill:{cv:FAIL},text:{"t-cv":"40, expires at 70 s",ck:"rare, and bounded by the TTL"},ban:["rare: a set that lands after the delete",20],a:[[230,270,345,175,"late set 40",FAIL,false,[-52,-22]]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"flow": {
+"label": "Go",
+"pc": [
+"function get(key):",
+"  if key missing or now >= expires: miss",
+"  else: hit",
+"",
+"function read(key):",
+"  if get(key) hits: return value           # the database rests",
+"  v = database.read(key)                   # miss: committed values only",
+"  cache.set(key, v, ttl 60)                # the app fills the cache",
+"  return v",
+"",
+"the bug, delete first:",
+"function update(key, v):",
+"  cache.delete(key)",
+"  a reader can miss here, load the old value and set it",
+"  database.commit(key, v)",
+"",
+"the fix, delete after the commit:",
+"function update(key, v):",
+"  a reader here gets the old value, still the truth",
+"  database.commit(key, v)",
+"  cache.delete(key)"
+],
+"real": [
+"func (c Cache) Get(key string) (int, bool) {",
+"\te, ok := c[key]",
+"\tif !ok || now >= e.expires { // never set, or the TTL ran out",
+"\t\treturn 0, false",
+"\t}",
+"\treturn e.val, true",
+"}",
+"",
+"func (c Cache) Set(key string, v, ttl int) { c[key] = entry{v, now + ttl} }",
+"",
+"func (s *Service) Read(key string) (int, string) {",
+"\tif v, ok := s.cache.Get(key); ok {",
+"\t\treturn v, \"hit\"",
+"\t}",
+"\tv := s.db.Read(key)      // miss: the app reads the source",
+"\ts.cache.Set(key, v, ttl) // the app fills the cache",
+"\treturn v, \"miss, loaded and set\"",
+"}",
+"",
+"func (s *Service) UpdateDeleteFirst(key string, v int, beforeCommit func()) {",
+"\ts.cache.Delete(key)",
+"\tbeforeCommit() // the transaction is still open",
+"\ts.db.Commit(key, v)",
+"}",
+"",
+"func (s *Service) UpdateDeleteAfter(key string, v int, beforeCommit func()) {",
+"\tbeforeCommit() // the transaction is still open",
+"\ts.db.Commit(key, v)",
+"\ts.cache.Delete(key)",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4
+],
+"3": [
+6,
+13
+],
+"5": [
+11
+],
+"6": [
+12
+],
+"7": [
+15
+],
+"8": [
+16
+],
+"9": [
+17
+],
+"12": [
+20
+],
+"13": [
+21
+],
+"14": [
+22
+],
+"15": [
+23
+],
+"18": [
+26
+],
+"19": [
+27
+],
+"20": [
+28
+],
+"21": [
+29
+]
+}
+},
+"race": {
+"label": "Go",
+"pc": [
+"function get(key):",
+"  if key missing or now >= expires: miss",
+"  else: hit",
+"",
+"function read(key):",
+"  if get(key) hits: return value           # the database rests",
+"  v = database.read(key)                   # miss: committed values only",
+"  cache.set(key, v, ttl 60)                # the app fills the cache",
+"  return v",
+"",
+"the bug, delete first:",
+"function update(key, v):",
+"  cache.delete(key)",
+"  a reader can miss here, load the old value and set it",
+"  database.commit(key, v)",
+"",
+"the fix, delete after the commit:",
+"function update(key, v):",
+"  a reader here gets the old value, still the truth",
+"  database.commit(key, v)",
+"  cache.delete(key)"
+],
+"real": [
+"func (c Cache) Get(key string) (int, bool) {",
+"\te, ok := c[key]",
+"\tif !ok || now >= e.expires { // never set, or the TTL ran out",
+"\t\treturn 0, false",
+"\t}",
+"\treturn e.val, true",
+"}",
+"",
+"func (c Cache) Set(key string, v, ttl int) { c[key] = entry{v, now + ttl} }",
+"",
+"func (s *Service) Read(key string) (int, string) {",
+"\tif v, ok := s.cache.Get(key); ok {",
+"\t\treturn v, \"hit\"",
+"\t}",
+"\tv := s.db.Read(key)      // miss: the app reads the source",
+"\ts.cache.Set(key, v, ttl) // the app fills the cache",
+"\treturn v, \"miss, loaded and set\"",
+"}",
+"",
+"func (s *Service) UpdateDeleteFirst(key string, v int, beforeCommit func()) {",
+"\ts.cache.Delete(key)",
+"\tbeforeCommit() // the transaction is still open",
+"\ts.db.Commit(key, v)",
+"}",
+"",
+"func (s *Service) UpdateDeleteAfter(key string, v int, beforeCommit func()) {",
+"\tbeforeCommit() // the transaction is still open",
+"\ts.db.Commit(key, v)",
+"\ts.cache.Delete(key)",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4
+],
+"3": [
+6,
+13
+],
+"5": [
+11
+],
+"6": [
+12
+],
+"7": [
+15
+],
+"8": [
+16
+],
+"9": [
+17
+],
+"12": [
+20
+],
+"13": [
+21
+],
+"14": [
+22
+],
+"15": [
+23
+],
+"18": [
+26
+],
+"19": [
+27
+],
+"20": [
+28
+],
+"21": [
+29
+]
+}
+},
+"fix": {
+"label": "Go",
+"pc": [
+"function get(key):",
+"  if key missing or now >= expires: miss",
+"  else: hit",
+"",
+"function read(key):",
+"  if get(key) hits: return value           # the database rests",
+"  v = database.read(key)                   # miss: committed values only",
+"  cache.set(key, v, ttl 60)                # the app fills the cache",
+"  return v",
+"",
+"the bug, delete first:",
+"function update(key, v):",
+"  cache.delete(key)",
+"  a reader can miss here, load the old value and set it",
+"  database.commit(key, v)",
+"",
+"the fix, delete after the commit:",
+"function update(key, v):",
+"  a reader here gets the old value, still the truth",
+"  database.commit(key, v)",
+"  cache.delete(key)"
+],
+"real": [
+"func (c Cache) Get(key string) (int, bool) {",
+"\te, ok := c[key]",
+"\tif !ok || now >= e.expires { // never set, or the TTL ran out",
+"\t\treturn 0, false",
+"\t}",
+"\treturn e.val, true",
+"}",
+"",
+"func (c Cache) Set(key string, v, ttl int) { c[key] = entry{v, now + ttl} }",
+"",
+"func (s *Service) Read(key string) (int, string) {",
+"\tif v, ok := s.cache.Get(key); ok {",
+"\t\treturn v, \"hit\"",
+"\t}",
+"\tv := s.db.Read(key)      // miss: the app reads the source",
+"\ts.cache.Set(key, v, ttl) // the app fills the cache",
+"\treturn v, \"miss, loaded and set\"",
+"}",
+"",
+"func (s *Service) UpdateDeleteFirst(key string, v int, beforeCommit func()) {",
+"\ts.cache.Delete(key)",
+"\tbeforeCommit() // the transaction is still open",
+"\ts.db.Commit(key, v)",
+"}",
+"",
+"func (s *Service) UpdateDeleteAfter(key string, v int, beforeCommit func()) {",
+"\tbeforeCommit() // the transaction is still open",
+"\ts.db.Commit(key, v)",
+"\ts.cache.Delete(key)",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+3,
+4
+],
+"3": [
+6,
+13
+],
+"5": [
+11
+],
+"6": [
+12
+],
+"7": [
+15
+],
+"8": [
+16
+],
+"9": [
+17
+],
+"12": [
+20
+],
+"13": [
+21
+],
+"14": [
+22
+],
+"15": [
+23
+],
+"18": [
+26
+],
+"19": [
+27
+],
+"20": [
+28
+],
+"21": [
+29
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

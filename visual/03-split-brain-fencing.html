@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leases and fencing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Split brain, leases and fencing tokens</h1>
+  <p class="lede">Two indexer pods compete for one block range. Pod 1 holds the lease, then freezes in a long garbage-collection pause. Press <b>Next</b> to see what the warehouse does when pod 1 wakes up still believing it is the owner.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="lock" id="tab-lock">Lease only: split brain</button>
+    <button role="tab" aria-selected="false" data-mode="fence" id="tab-fence">Lease plus fencing token</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Sequence of two indexer pods, a lease store and a warehouse</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-split-brain-fencing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">holds the lease</span>
+    <span style="--c:var(--wait)">frozen, or waiting</span>
+    <span style="--c:var(--ok)">write accepted</span>
+    <span style="--c:var(--fail)">stale write, or data damaged</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Kubernetes leader election is a lease object renewed every few seconds. Raft terms, ZooKeeper zxids and etcd revisions are all fencing tokens. Redlock on Redis was shown unsafe because it hands out no token the storage can check.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Write the lease epoch with every batch, and make the warehouse refuse a smaller epoch than the highest it has seen. Never trust the old owner to notice it lost. A process can pause between its check and its write.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Lease only</th><th>Lease plus fencing token</th></tr>
+      <tr><td>Who decides the owner</td><td>The lease store</td><td>The lease store</td></tr>
+      <tr><td>Who stops a stale owner</td><td>The stale owner itself, if it notices</td><td>The storage, by comparing tokens</td></tr>
+      <tr><td>After a long pause</td><td>Old owner writes over the new owner</td><td>Old owner's write is rejected</td></tr>
+      <tr><td>Needs from storage</td><td>Nothing</td><td>Remember the highest token, refuse lower ones</td></tr>
+      <tr><td>Verdict</td><td>A hope, not a lock</td><td>Safe even when a process is wrong about itself</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A lease decides who should act. A fencing token, checked by the storage, makes sure only that one can."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const X={p1:110,ls:340,p2:570,wh:800};
+const NAMES={p1:"Indexer pod 1",ls:"Lease store",p2:"Indexer pod 2",wh:"Warehouse"};
+function scene(s){
+  let b="";
+  for(const k in X){
+    const f=(s.box&&s.box[k])||(k==="ls"?"var(--undo)":k==="wh"?"var(--svc)":"var(--line)");
+    b+=BOX(X[k]-80,16,160,52,f,NAMES[k]);
+    b+=`<line x1="${X[k]}" y1="68" x2="${X[k]}" y2="296" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;
+    const c=s.st[k];b+=CHIP(X[k],302,190,c[0],c[1]==="n"?"var(--line)":KC[c[1]]||"var(--line)");
+  }
+  const msgs=(s.m||[]).map(([a,c,y,txt,kd])=>{
+    if(a==="note")return `<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--wait)" stroke-dasharray="6 4"/>`+T(450,y+1,txt,{c:"var(--fg)"});
+    const x1=X[a],x2=X[c],dx=x1<x2?6:-6;return ARROW(x1+dx,y,x2-dx,y,txt,KC[kd||"n"],{dash:kd==="lost"});});
+  if(s.ban)msgs.push(BANNER(358,s.ban));
+  return{base:b,msgs};
+}
+const own=(t)=>["owner"+(t?", token "+t:""),"c"],idle=["waiting","n"];
+const steps={
+lock:[
+ {t:"Pod 1 takes the lease",b:"Pod 1 asks for block range 1000 to 1999 at 12:00:00. Line 2: no live lease exists. Line 3 raises the token from 32 to 33, and line 4 sets holder pod 1, expires 12:00:10. In this tab nobody ever checks the token.",pc:[1,2,3,4],w:"A lease is a lock with an expiry. If the holder dies, the lock frees itself.",box:{p1:"var(--coord)"},st:{p1:own(),ls:["holder: pod 1","undo"],p2:idle,wh:["empty","n"]},m:[["p1","ls",110,"acquire lease"],["ls","p1",150,"lease, 10 s","ok"]]},
+ {t:"Pod 1 writes its batch",b:"Pod 1 sends its batch (line 7). Line 9, the fencing check, is switched off in this tab, so line 11 stores the rows: rows by pod 1.",pc:[7,8,10,11],w:"So far one owner, one writer. Everything is fine.",box:{p1:"var(--coord)"},st:{p1:own(),ls:["holder: pod 1","undo"],p2:idle,wh:["rows by pod 1","ok"]},m:[["p1","wh",120,"write blocks 1000-1999"],["wh","p1",160,"accepted","ok"]]},
+ {t:"Pod 1 freezes",b:"Line 6 should renew the lease before 12:00:10. The pause stops the whole process for 15 seconds, so line 6 never runs. Pod 1 does not know time is passing.",pc:[5,6],w:"A pause is not a crash. The process will wake up with its memory intact and its beliefs out of date.",box:{p1:"var(--wait)"},st:{p1:["frozen","wait"],ls:["holder: pod 1","undo"],p2:idle,wh:["rows by pod 1","ok"]},m:[["p1","ls",120,"renew (never sent)","lost"],["note",0,200,"pod 1: long garbage-collection pause"]]},
+ {t:"The lease expires. Pod 2 takes it",b:"At 12:00:05 pod 2 asks and line 2 refuses: the lease is live until 12:00:10. At 12:00:11 it has expired. Line 3 gives token 34 and line 4 makes pod 2 the holder until 12:00:21.",pc:[1,2,3,4],w:"The lease store did its job. From its point of view pod 1 is gone.",box:{p1:"var(--wait)",p2:"var(--coord)"},st:{p1:["frozen","wait"],ls:["holder: pod 2","undo"],p2:own(),wh:["rows by pod 1","ok"]},m:[["p2","ls",110,"acquire lease"],["ls","p2",150,"lease, 10 s","ok"]]},
+ {t:"Pod 2 writes the range",b:"Pod 2 writes the same range (line 7). Line 11 stores its rows: rows by pod 2.",pc:[7,8,10,11],w:"This is correct. Pod 2 is the real owner now.",box:{p1:"var(--wait)",p2:"var(--coord)"},st:{p1:["frozen","wait"],ls:["holder: pod 2","undo"],p2:own(),wh:["rows by pod 2","ok"]},m:[["p2","wh",120,"write blocks 1000-1999"],["wh","p2",160,"accepted","ok"]]},
+ {t:"The failure: pod 1 wakes up and writes",b:"At 12:00:15 pod 1 wakes up and sends the batch it started, still with token 33. Line 9 is off, so nothing compares 33 with the highest token 34. Line 11 stores pod 1's older rows over pod 2's.",pc:[8,9,11],w:"Split brain: two pods acted as owner of one range. Pod 2's rows are overwritten with pod 1's older ones.",box:{p1:"var(--fail)",p2:"var(--coord)"},st:{p1:["thinks it owns","fail"],ls:["holder: pod 2","undo"],p2:own(),wh:["rows mixed, damaged","fail"]},m:[["p1","wh",130,"write blocks 1000-1999"],["wh","p1",170,"accepted","fail"]],ban:"Two owners wrote the same block range. The warehouse cannot tell them apart."},
+ {t:"Why a check in pod 1 does not help",b:"Line 13 makes pod 1 ask 'is the holder me?' before writing. At 12:00:09 the answer is yes. The pause then hits between line 13 and the write, which lands at 12:00:15: the same damage.",pc:[12,13],w:"Any check the old owner makes can go stale before it acts. The guard must sit where the write lands.",box:{p1:"var(--fail)",p2:"var(--coord)"},st:{p1:["checked, then froze","fail"],ls:["holder: pod 2","undo"],p2:own(),wh:["rows mixed, damaged","fail"]},m:[["p1","ls",100,"do I hold it?"],["ls","p1",130,"yes","ok"],["note",0,175,"pause hits here, after the check"],["p1","wh",230,"write blocks 1000-1999","fail"]]}
+],
+fence:[
+ {t:"Pod 1 takes the lease, token 33",b:"Same start: line 3 gives pod 1 token 33, line 4 sets expires 12:00:10. This time the warehouse runs line 9 on every write.",pc:[1,2,3,4],w:"The token names the lease. A newer lease always has a bigger number.",box:{p1:"var(--coord)"},st:{p1:own(33),ls:["holder: pod 1, 33","undo"],p2:idle,wh:["highest token: none","n"]},m:[["p1","ls",110,"acquire lease"],["ls","p1",150,"lease, token 33","ok"]]},
+ {t:"Pod 1 writes with token 33",b:"Line 9: is 33 lower than the highest token, 0? No. Line 10 sets highest to 33 and line 11 stores the rows.",pc:[7,8,9,10,11],w:"The storage keeps one number per range. That number is the whole defence.",box:{p1:"var(--coord)"},st:{p1:own(33),ls:["holder: pod 1, 33","undo"],p2:idle,wh:["highest token: 33","ok"]},m:[["p1","wh",120,"write, token 33"],["wh","p1",160,"accepted, highest 33","ok"]]},
+ {t:"Pod 1 freezes",b:"The same 15-second pause. Line 6 never runs, so the lease expires at 12:00:10.",pc:[5,6],w:"Nothing has changed on pod 1's side. It will wake up just as wrong as before.",box:{p1:"var(--wait)"},st:{p1:["frozen, token 33","wait"],ls:["holder: pod 1, 33","undo"],p2:idle,wh:["highest token: 33","ok"]},m:[["p1","ls",120,"renew (never sent)","lost"],["note",0,200,"pod 1: long garbage-collection pause"]]},
+ {t:"Pod 2 takes the lease, token 34",b:"At 12:00:11 line 2 finds the lease expired. Line 3 gives token 34 to pod 2.",pc:[1,2,3,4],w:"Raft terms, ZooKeeper zxids and etcd revisions play exactly this role.",box:{p1:"var(--wait)",p2:"var(--coord)"},st:{p1:["frozen, token 33","wait"],ls:["holder: pod 2, 34","undo"],p2:own(34),wh:["highest token: 33","ok"]},m:[["p2","ls",110,"acquire lease"],["ls","p2",150,"lease, token 34","ok"]]},
+ {t:"Pod 2 writes with token 34",b:"Line 9: is 34 lower than 33? No. Line 10 sets highest to 34. Line 11 stores pod 2's rows.",pc:[8,9,10,11],w:"From this moment, any write carrying 33 or less is refused.",box:{p1:"var(--wait)",p2:"var(--coord)"},st:{p1:["frozen, token 33","wait"],ls:["holder: pod 2, 34","undo"],p2:own(34),wh:["highest token: 34","ok"]},m:[["p2","wh",120,"write, token 34"],["wh","p2",160,"accepted, highest 34","ok"]]},
+ {t:"Pod 1 wakes up and is refused",b:"Pod 1 wakes at 12:00:15 and sends token 33. Line 9: is 33 lower than 34? Yes. The write is refused, and pod 1 steps down.",pc:[8,9],w:"The old owner can be wrong about itself. The storage cannot be fooled. Pod 2's rows stay intact.",box:{p1:"var(--fail)",p2:"var(--coord)"},st:{p1:["rejected, steps down","fail"],ls:["holder: pod 2, 34","undo"],p2:own(34),wh:["rows by pod 2 only","ok"]},m:[["p1","wh",130,"write, token 33"],["wh","p1",170,"rejected: 33 is older than 34","fail"]]}
+]};
+const code={"*": {"label": "Go", "pc": ["lease store, on acquire(pod, now):", "  if a live lease exists: refuse", "  token = token + 1                       # 33, then 34: only grows", "  holder = pod; expires = now + 10 s", "holder pod, while it works:", "  renew before expires                    # a pause skips this line", "  write(batch, token)", "warehouse, on write(batch, token):", "  fix: if token < highest: refuse         # the fencing check", "  highest = max(highest, token)", "  store the rows", "holder pod, lease only:", "  if leaseStore.holder == me: write       # true now, stale when it lands"], "real": ["// Acquire grants the lease if it is free or expired. The token only grows.", "func (s *LeaseStore) Acquire(pod string, now time.Time, ttl time.Duration) (int, bool) {", "\tif s.holder != \"\" && now.Before(s.expires) {", "\t\treturn 0, false // someone else holds a live lease", "\t}", "\ts.token++ // 33, then 34: a newer lease always has a bigger number", "\ts.holder, s.expires = pod, now.Add(ttl)", "\treturn s.token, true", "}", "", "// Warehouse stores the rows of one block range.", "type Warehouse struct {", "\tfencing bool   // check the token on every write?", "\thighest int    // the highest token seen so far", "\trowsBy  string // which pod wrote the rows now stored", "\tdamaged bool   // a stale owner wrote over a newer owner's rows", "}", "", "// Write stores a batch. With fencing on, a token below the highest is refused.", "func (w *Warehouse) Write(pod string, token int) bool {", "\tif w.fencing && token < w.highest {", "\t\treturn false // stale owner: 33 is older than 34", "\t}", "\tif token < w.highest {", "\t\tw.damaged = true // split brain: the old owner overwrote the new one", "\t}", "\tif token > w.highest {", "\t\tw.highest = token", "\t}", "\tw.rowsBy = pod", "\treturn true", "}"], "map": {"1": [2], "2": [3], "3": [6], "4": [7], "5": [2], "6": [7], "7": [20], "8": [20], "9": [21, 22], "10": [27, 28], "11": [30], "12": [25], "13": [24, 25]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

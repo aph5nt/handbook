@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outbox and idempotency</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Outbox and idempotency</h1>
+  <p class="lede">A customer places order 501. The order must be saved, and payment must charge the card exactly once. Pick a tab and press <b>Next</b>. The first tab works. The other two show what breaks without each piece.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Outbox and key</button>
+    <button role="tab" aria-selected="false" data-mode="dual">No outbox: dual write</button>
+    <button role="tab" aria-selected="false" data-mode="dup">No key: duplicate</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Order service, database, relay, broker and payment consumer</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="bx-a" class="box" x="15" y="20" width="150" height="52" rx="8" fill="var(--coord)"/><text x="90" y="52" fill="#fff">Order service</text>
+        <rect class="box" x="195" y="20" width="150" height="52" rx="8" fill="var(--svc)"/><text x="270" y="52" fill="#fff">Database</text>
+        <rect id="bx-r" class="box" x="375" y="20" width="150" height="52" rx="8" fill="var(--coord)"/><text id="lbl-r" x="450" y="52" fill="#fff">Relay</text>
+        <rect class="box" x="555" y="20" width="150" height="52" rx="8" fill="var(--svc)"/><text x="630" y="52" fill="#fff">Broker</text>
+        <rect id="bx-p" class="box" x="735" y="20" width="150" height="52" rx="8" fill="var(--svc)"/><text x="810" y="52" fill="#fff">Payment</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="90" y1="72" x2="90" y2="290"/><line x1="270" y1="72" x2="270" y2="290"/><line x1="450" y1="72" x2="450" y2="290"/>
+        <line x1="630" y1="72" x2="630" y2="290"/><line x1="810" y1="72" x2="810" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" text-anchor="middle">
+        <rect id="st-o" class="box" x="195" y="300" width="150" height="28" rx="14"/><text id="tx-o" x="270" y="319"></text>
+        <rect id="st-b" class="box" x="195" y="338" width="150" height="28" rx="14"/><text id="tx-b" x="270" y="357"></text>
+        <rect id="st-q" class="box" x="555" y="300" width="150" height="28" rx="14"/><text id="tx-q" x="630" y="319"></text>
+        <rect id="st-k" class="box" x="735" y="300" width="150" height="28" rx="14"/><text id="tx-k" x="810" y="319"></text>
+        <rect id="st-c" class="box" x="735" y="338" width="150" height="28" rx="14"/><text id="tx-c" x="810" y="357"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="13" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-outbox-and-idempotency/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">correct state</span>
+    <span style="--c:var(--wait)">pending, not yet published</span>
+    <span style="--c:var(--fail)">lost, lying or doubled</span>
+    <span style="--c:var(--undo)">duplicate rejected by the key</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet the outbox</h2>
+      <p>Debezium reads the outbox table from the database log and publishes to Kafka, so no application code publishes. An EVM (Ethereum Virtual Machine) indexer writes a block's rows and a "block done" marker in one load, and the graph sync reads the markers. The marker is the outbox.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet the key</h2>
+      <p>Stripe's <code>Idempotency-Key</code> header on every payment call. An indexer table with a primary key on <code>(block, tx_index, log_index)</code>, so replaying a block writes the same rows again. Keep keys as long as a retry is possible, often a day.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Outbox and key</th><th>Dual write</th><th>No key</th></tr>
+      <tr><td>Crash after the commit</td><td>Relay publishes later</td><td>Event lost for ever</td><td>Relay publishes later</td></tr>
+      <tr><td>Message delivered twice</td><td>Second copy skipped</td><td>Depends on the consumer</td><td>Card charged twice</td></tr>
+      <tr><td>Extra cost</td><td>One table, one relay, one key table</td><td>None, until it breaks</td><td>None, until it breaks</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Exactly-once does not exist on the wire. I get it at the receiver: an outbox so nothing is lost, and an idempotency key stored with the effect so nothing happens twice."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const X={a:90,d:270,r:450,b:630,p:810};
+const steps={
+"ok":[
+ {t:"Start",b:"A customer places order 501. The order service must save it and tell payment to charge the card. Line 2 is where it happens.",w:"Two systems must change: the database and the broker. They cannot share one transaction.",m:[],st:{o:"orders: none",b:"outbox: empty",q:"topic: empty",k:"keys: none",c:"charges: 0"},pc:[1]},
+ {t:"One local transaction",b:"Line 2 inserts the order row and an outbox row with status pending, in one database transaction, then commits.",w:"Both rows exist, or neither does. There is no moment where the order is saved and the event is forgotten.",m:[["a","d",110,"insert order + outbox, commit"]],st:{o:"orders: 501",b:"outbox: 501 pending",q:"topic: empty",k:"keys: none",c:"charges: 0"},pc:[2]},
+ {t:"The relay reads the outbox",b:"Line 4 runs: the relay reads the outbox table, or the database log with CDC (Change Data Capture), and finds row 501 with status pending.",w:"Publishing is now a separate job that can be retried. The order service is already finished.",m:[["r","d",150,"read pending rows"],["d","r",175,"OrderPlaced 501"]],st:{o:"orders: 501",b:"outbox: 501 pending",q:"topic: empty",k:"keys: none",c:"charges: 0"},pc:[3, 4]},
+ {t:"Publish, then the relay crashes",b:"Line 5 publishes event 501 to the broker. The relay crashes before line 6, so the row stays pending.",w:"The broker has the event. The outbox still says pending. A restart will publish it again.",m:[["r","b",205,"publish 501"],["crash",0,235,"relay crashes before marking sent"]],st:{o:"orders: 501",b:"outbox: 501 pending",q:"topic: 501",k:"keys: none",c:"charges: 0"},crash:true,pc:[5]},
+ {t:"Restart publishes again",b:"The relay restarts. Line 4 asks which rows are pending, and finds 501 again, because line 6 never ran. Line 5 publishes it a second time, and line 6 marks it sent. The topic now holds 501 twice.",w:"This is at-least-once delivery. Nothing was lost, and a duplicate is normal.",m:[["r","b",130,"publish 501 again"],["r","d",160,"mark sent"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501, 501",k:"keys: none",c:"charges: 0"},pc:[4, 5, 6]},
+ {t:"First copy: charge and store the key",b:"Copy one arrives. Line 9 looks up key 501 in the processed table and does not find it. Line 10 charges the card and inserts the key. Line 11 commits both, so charges is 1.",w:"The effect and the key commit together. One cannot exist without the other.",m:[["b","p",200,"OrderPlaced 501"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501, 501",k:"keys: 501",c:"charges: 1"},pc:[7, 8, 9, 10, 11, 12]},
+ {t:"Second copy: key found, skip",b:"Copy two arrives. Line 9 looks up key 501 and finds it, so it commits nothing new, acknowledges and returns. Charges stays at 1.",w:"Delivered twice, charged once. That is effectively-once: at-least-once delivery plus an idempotent consumer.",m:[["b","p",240,"OrderPlaced 501 (copy)"],["dupok",0,270,"key 501 exists, skipped"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501, 501",k:"keys: 501",c:"charges: 1"},skip:true,pc:[7, 9]}
+],
+"dual":[
+ {t:"Start",b:"No outbox now. Line 14 replaces line 2: the service commits the order, then publishes the event from its own code.",w:"This is the dual write: two writes to two systems, one after the other.",m:[],st:{o:"orders: none",b:"no outbox",q:"topic: empty",k:"keys: none",c:"charges: 0"},pc:[13, 14]},
+ {t:"Commit the order",b:"The first half of line 14 runs: order 501 is inserted and committed. The publish has not run yet, and nothing durable says it should.",w:"Half of the work is done. The other half lives only in the process memory.",m:[["a","d",110,"insert order 501, commit"]],st:{o:"orders: 501",b:"no outbox",q:"topic: empty",k:"keys: none",c:"charges: 0"},pc:[14]},
+ {t:"The service crashes",b:"The pod is killed by a deploy between the two halves of line 14. The publish never runs.",w:"Nobody remembers that event 501 should have been sent.",m:[["a","d",110,"insert order 501, commit"],["crash",0,165,"service crashes before publish"]],st:{o:"orders: 501",b:"no outbox",q:"topic: empty",k:"keys: none",c:"charges: 0"},crash:true,pc:[14]},
+ {t:"The order is never charged",b:"Line 14 was the only place that knew about the event. There is no outbox row for line 4 to find, so no relay will ever publish 501. Payment never hears about it, and the customer waits for a phone that never ships.",w:"State and events now disagree, and nothing will ever fix it on its own.",m:[["lost",0,220,"event 501 lost for ever"]],st:{o:"orders: 501",b:"no outbox",q:"topic: empty",k:"keys: none",c:"charges: 0"},bad:true,pc:[4, 14]},
+ {t:"Swap the order, still broken",b:"Order 502 runs line 14 the other way round: publish first, then commit. The commit fails on a constraint. Payment has already charged 1 card for an order that does not exist.",w:"Either order of the two writes can half-fail. The fix is one transaction with an outbox row.",m:[["a","b",110,"publish 502"],["a","d",150,"insert 502, commit fails"],["b","p",190,"OrderPlaced 502"]],st:{o:"orders: 501",b:"no outbox",q:"topic: 502",k:"keys: none",c:"charges: 1 (502, wrong)"},bad:true,pc:[14]},
+ {t:"The fix: one transaction",b:"Order 503 goes through line 2 instead: the order row and the outbox row commit together. Line 4 finds the pending row, line 5 publishes it, and line 6 marks it sent. There is no gap left for a crash.",w:"A crash before the commit leaves neither row. A crash after it leaves the row for the relay to publish. Either way, state and event agree.",m:[["a","d",110,"insert 503 + outbox, commit"],["r","b",160,"publish 503"]],st:{o:"orders: 501, 503",b:"outbox: 503 sent",q:"topic: 502, 503",k:"keys: none",c:"charges: 1 (502, wrong)"},pc:[2,4,5,6]}
+],
+"dup":[
+ {t:"Start",b:"The outbox works and the broker holds event 501. In this tab line 9 and the key insert on line 10 are switched off: payment has no processed table.",w:"Delivery is at-least-once. Something must catch the second copy.",m:[],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501",k:"no key table",c:"charges: 0"},pc:[7, 9]},
+ {t:"Charge the card",b:"Line 10 runs without the key: payment charges the card, and charges goes from 0 to 1.",w:"The effect is real: money has moved.",m:[["b","p",120,"OrderPlaced 501"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501",k:"no key table",c:"charges: 1"},pc:[10]},
+ {t:"Crash before the acknowledgement",b:"Payment crashes after line 10 and before line 12. The acknowledgement is never sent.",w:"The broker thinks the message was never handled.",m:[["b","p",120,"OrderPlaced 501"],["crash",0,170,"payment crashes before ack"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501",k:"no key table",c:"charges: 1"},crash:true,pc:[12]},
+ {t:"Redelivery, charged twice",b:"Payment restarts and the broker delivers 501 again, because it never saw line 12. Line 9, the check that would stop this, is switched off, so line 10 charges again. Charges is 2.",w:"Delivered twice, charged twice. The customer calls the bank.",m:[["b","p",230,"OrderPlaced 501 (again)"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501",k:"no key table",c:"charges: 2"},bad:true,pc:[9, 10]},
+ {t:"The fix",b:"Switch line 9 back on and store the key on line 10, in the same transaction as the charge. The redelivered copy finds key 501 on line 9 and is skipped. Charges stays at 1.",w:"An operation that is safe to repeat is idempotent. \"Charge order 501\" with a key is. \"Charge 50 again\" without one is not.",m:[["dupok",0,180,"with a key: 501 exists, skipped"]],st:{o:"orders: 501",b:"outbox: 501 sent",q:"topic: 501",k:"keys: 501",c:"charges: 1"},skip:true,pc:[9, 10, 11]}
+]};
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const colorFor=(k,v)=>{
+  if(/charges: 2|wrong|lost/.test(v))return"var(--fail)";
+  if(/pending/.test(v))return"var(--wait)";
+  if(/none|empty|no /.test(v)||v==="charges: 0")return"var(--line)";
+  return"var(--ok)";
+};
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const k of["o","b","q","k","c"]){const v=s.st[k];const f=colorFor(k,v);$("tx-"+k).textContent=v;$("st-"+k).setAttribute("fill",f);
+    $("tx-"+k).setAttribute("fill",f==="var(--line)"?"var(--fg)":"#fff");}
+  $("bx-a").setAttribute("fill",s.crash&&mode==="dual"?"var(--fail)":"var(--coord)");
+  $("bx-r").setAttribute("fill",s.crash&&mode==="ok"?"var(--fail)":"var(--coord)");
+  $("bx-p").setAttribute("fill",s.crash&&mode==="dup"?"var(--fail)":"var(--svc)");
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="crash"||m[0]==="lost"||m[0]==="dupok"){
+      const col=m[0]==="dupok"?"var(--undo)":"var(--fail)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="none" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="${col}" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt]=m;const x1=X[a],x2=X[b];const col=s.bad&&b==="p"?"var(--fail)":"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+const code={"*": {"label": "Go", "pc": ["order service, on an order:", "  begin; insert order; insert outbox(id, pending); commit", "relay, all the time:", "  for each outbox row that is pending:", "    broker.publish(row)                   # a crash here means publish again", "    mark the row sent", "payment, on message m:", "  begin", "  if m.key is in processed: commit; ack; return   # a duplicate: skip", "  charge the card; insert m.key into processed", "  commit                                  # the charge and the key together", "  ack                                     # a crash before this: redelivery", "the dual write, the broken way:", "  commit order; then broker.publish(event)  # a crash between loses the event"], "real": ["// PlaceOrder inserts the order and its outbox row in one transaction.", "func (s *Store) PlaceOrder(id int) {", "\ts.orders = append(s.orders, id)", "\ts.outbox = append(s.outbox, &Row{id, \"pending\"})", "}", "", "// RelayOnce publishes pending rows. crash stops it after a publish, before", "// the row is marked sent.", "func RelayOnce(s *Store, topic *[]int, crash bool) {", "\tfor _, row := range s.outbox {", "\t\tif row.status != \"pending\" {", "\t\t\tcontinue", "\t\t}", "\t\t*topic = append(*topic, row.id) // may be a second copy", "\t\tif crash {", "\t\t\treturn // the row stays pending", "\t\t}", "\t\trow.status = \"sent\"", "\t}", "}", "", "// Handle runs one delivery in one transaction, and returns true when the", "// message may be acknowledged.", "func (p *Payment) Handle(id int, crashBeforeAck bool) bool {", "\tif p.keys != nil && p.keys[id] {", "\t\treturn true // duplicate: skip, and acknowledge", "\t}", "\tp.charges++", "\tif p.keys != nil {", "\t\tp.keys[id] = true // commits together with the charge", "\t}", "\treturn !crashBeforeAck", "}", "", "// DualWrite is the broken way: commit, then publish from code.", "func DualWrite(s *Store, topic *[]int, id int, crashBetween bool) {", "\ts.orders = append(s.orders, id)", "\tif crashBetween {", "\t\treturn // the event exists nowhere", "\t}", "\t*topic = append(*topic, id)", "}"], "map": {"1": [2], "2": [3, 4], "3": [9], "4": [10, 11], "5": [14], "6": [18], "7": [24], "8": [22], "9": [25, 26], "10": [28, 30], "11": [30], "12": [32], "13": [36], "14": [37, 39, 41]}}};
+let view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

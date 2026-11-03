@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isolation levels</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Isolation levels: what one transaction sees of another</h1>
+  <p class="lede">Two transactions, <b>T1</b> on top and <b>T2</b> below, touch the same table in the middle. Time runs left to right. Each tab shows the anomaly that level still allows. Press <b>Next</b> and watch for the red flash.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ru">Read uncommitted</button>
+    <button role="tab" aria-selected="false" data-mode="rc">Read committed</button>
+    <button role="tab" aria-selected="false" data-mode="rr">Repeatable read</button>
+    <button role="tab" aria-selected="false" data-mode="ser">Serializable</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Two transaction timelines over one table</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect x="10" y="50" width="56" height="34" rx="6" fill="var(--coord)"/><text x="38" y="73" text-anchor="middle" fill="#fff">T1</text>
+        <rect x="10" y="296" width="56" height="34" rx="6" fill="var(--svc)"/><text x="38" y="319" text-anchor="middle" fill="#fff">T2</text>
+        <text id="lvl" x="880" y="28" text-anchor="end" fill="var(--muted)"></text>
+        <text x="80" y="28" fill="var(--muted)" font-weight="400">time →</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2"><line x1="70" y1="67" x2="880" y2="67"/><line x1="70" y1="313" x2="880" y2="313"/></g>
+      <rect id="band" class="box" x="70" y="140" width="810" height="100" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+      <text x="84" y="160" font-family="Atkinson Hyperlegible,system-ui" font-size="13" fill="var(--muted)" id="tname"></text>
+      <g id="ev" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700"></g>
+      <g id="tbl" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">read</span>
+    <span style="--c:var(--wait)">written, not committed</span>
+    <span style="--c:var(--ok)">committed</span>
+    <span style="--c:var(--undo)">rolled back or aborted</span>
+    <span style="--c:var(--fail)">the anomaly</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL defaults to read committed. Its repeatable read is snapshot isolation, which also stops phantoms. MySQL InnoDB defaults to repeatable read, and some phantoms still pass with locking reads. So say which engine before you say what a level means.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Most apps run read committed and make each rule one statement: <code>UPDATE wallet SET balance = balance - 8 WHERE id = 7 AND balance &gt;= 8</code>. Where a rule spans rows, take a row lock with <code>SELECT ... FOR UPDATE</code>, or run serializable and retry on a serialization failure.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Level</th><th>Dirty read</th><th>Non-repeatable read</th><th>Phantom</th><th>Write skew</th></tr>
+      <tr><td>Read uncommitted</td><td>allowed</td><td>allowed</td><td>allowed</td><td>allowed</td></tr>
+      <tr><td>Read committed</td><td>stopped</td><td>allowed</td><td>allowed</td><td>allowed</td></tr>
+      <tr><td>Repeatable read (ANSI)</td><td>stopped</td><td>stopped</td><td>allowed</td><td>allowed</td></tr>
+      <tr><td>Snapshot</td><td>stopped</td><td>stopped</td><td>stopped</td><td>allowed</td></tr>
+      <tr><td>Serializable</td><td>stopped</td><td>stopped</td><td>stopped</td><td>stopped, by aborting one</td></tr>
+      <tr><td>Interview line</td><td colspan="4">"I name the anomaly first, then the weakest level that stops it. Write skew survives snapshot isolation, so a rule across rows needs a row lock, one atomic statement, or serializable with retries."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Events: [lane 1 or 2, x, label, kind]. Kinds: r read, w uncommitted write, c commit, u undo, b anomaly.
+const S={
+ru:{name:"table wallet",lvl:"Read uncommitted",st:[
+ {t:"Start",b:"Wallet 7 holds a balance of 100. T1 is a payment. T2 is a fraud check that reads the balance.",w:"Read uncommitted lets a reader see changes nobody has committed yet.",e:[],tb:[["wallet 7: 100","c"]]},
+ {t:"T1 writes 20, but does not commit",b:"T1 sets the balance to 20. The change sits in the table, not yet committed.",w:"Under any other level, this value is invisible to everyone but T1.",e:[[1,180,"write 20","w"]],tb:[["wallet 7: 20 (uncommitted)","w"]]},
+ {t:"T2 reads 20: a dirty read",b:"T2 runs at read uncommitted. Its read rule: take the newest version of the row, committed or not. That is T1's 20. T2 flags the wallet as low and blocks the next payment.",w:"T2 acted on a value that was never committed.",e:[[2,340,"read: 20","b"]],tb:[["wallet 7: 20 (uncommitted)","b"]],bad:1},
+ {t:"T1 rolls back",b:"The payment fails and T1 rolls back. The balance is 100 again. The value 20 never existed.",w:"T2's decision is now based on a ghost. Nothing can undo it.",e:[[1,500,"rollback","u"]],tb:[["wallet 7: 100","c"]],bad:1},
+ {t:"Fix: read committed",b:"Replay at read committed. Its read rule: take the newest committed version. T1's 20 is not committed, so T2 sees 100 while T1 is still open.",w:"Read committed stops dirty reads. It is the default in PostgreSQL, Oracle and SQL Server.",e:[[2,660,"read: 100","r"]],tb:[["wallet 7: 100","c"]],lvl:"Read committed"}
+]},
+rc:{name:"table wallet",lvl:"Read committed",st:[
+ {t:"Start",b:"Wallet 7 holds 100. T2 is a report that reads the balance twice: once for a total, once for a detail line.",w:"Read committed shows each statement the latest committed data.",e:[],tb:[["wallet 7: 100","c"]]},
+ {t:"T2 reads 100",b:"The report's first statement reads the balance: 100.",w:"So far so good.",e:[[2,180,"read: 100","r"]],tb:[["wallet 7: 100","c"]]},
+ {t:"T1 writes 20 and commits",b:"A payment runs in between. T1 sets the balance to 20 and commits.",w:"This is a normal, correct payment.",e:[[1,340,"write 20","w"],[1,460,"commit","c"]],tb:[["wallet 7: 20","c"]]},
+ {t:"T2 reads 20: a non-repeatable read",b:"Read committed takes the newest committed version at each statement. The report's second statement finds T1's committed 20. The total says 100, the detail line says 20, in one report.",w:"The same row read twice in one transaction gave two values.",e:[[2,620,"read: 20","b"]],tb:[["wallet 7: 20","b"]],bad:1},
+ {t:"Fix: repeatable read or snapshot",b:"Replay at repeatable read. A row T2 has read once stays frozen for T2, so the second read returns 100 again, even after T1 commits.",w:"MVCC (Multi-Version Concurrency Control) keeps the old version for T2. Nobody waited.",e:[[2,780,"read: 100","r"]],tb:[["wallet 7: 20 (T2 sees 100)","c"]],lvl:"Repeatable read"}
+]},
+rr:{name:"table swaps, pool p2",lvl:"Repeatable read (ANSI)",st:[
+ {t:"Start",b:"Pool p2 has two swaps. T2 is a report that counts them, then lists them.",w:"Repeatable read locks or freezes the rows you read. It does not stop new rows from arriving.",e:[],tb:[["swap 1, p2","c"],["swap 2, p2","c"]]},
+ {t:"T2 counts: 2",b:"T2 runs SELECT COUNT(*) FROM swaps WHERE pool = 'p2' and gets 2.",w:"The two rows it read are now protected.",e:[[2,180,"count: 2","r"]],tb:[["swap 1, p2","c"],["swap 2, p2","c"]]},
+ {t:"T1 inserts a new swap and commits",b:"An indexer writes a new swap for pool p2 and commits. It touched no row T2 had read.",w:"A new row is not a changed row, so the row protection does not cover it.",e:[[1,340,"insert swap 3","w"],[1,460,"commit","c"]],tb:[["swap 1, p2","c"],["swap 2, p2","c"],["swap 3, p2 (new)","c"]]},
+ {t:"T2 lists 3 rows: a phantom",b:"T2 now lists the swaps of p2. Repeatable read freezes only the rows it already read. Swap 3 is new and committed, and nothing froze it, so the list has 3 rows. The count said 2.",w:"That is a phantom: a range query run twice returns a new row.",e:[[2,620,"list: 3 rows","b"]],tb:[["swap 1, p2","c"],["swap 2, p2","c"],["swap 3, p2 (new)","b"]],bad:1},
+ {t:"Fix: snapshot or serializable",b:"Under snapshot isolation T2's picture of the whole table is taken at its first statement. Swap 3 was committed after that, so it is not visible, and T2 lists 2. PostgreSQL's repeatable read already works this way. MySQL uses range locks for the same job.",w:"Same level name, different engines, different behaviour. Always name the engine.",e:[[2,780,"list: 2 rows","r"]],tb:[["swap 1, p2","c"],["swap 2, p2","c"],["swap 3, p2 (T2 cannot see)","c"]],lvl:"Snapshot"}
+]},
+ser:{name:"table on_call, rule: at least one on call",lvl:"Snapshot",st:[
+ {t:"Start",b:"Two engineers, Ana and Ben, are on call. The rule: at least one must stay on call. Each wants to go off. T1 is Ana's request, T2 is Ben's.",w:"Each request checks the rule first, then writes. Each one alone is correct.",e:[],tb:[["Ana: on call","c"],["Ben: on call","c"]]},
+ {t:"Both check the rule",b:"T1 counts engineers on call: 2. T2 counts at the same moment: 2. Both see that one may leave.",w:"Under snapshot isolation each sees its own frozen picture. Neither sees the other's plan.",e:[[1,180,"count: 2","r"],[2,200,"count: 2","r"]],tb:[["Ana: on call","c"],["Ben: on call","c"]]},
+ {t:"Each writes its own row",b:"T1 sets Ana off call. T2 sets Ben off call. They write different rows, so there is no write conflict to detect.",w:"This is why snapshot misses it: no two writes touch the same row.",e:[[1,360,"Ana off","w"],[2,380,"Ben off","w"]],tb:[["Ana: off (T1)","w"],["Ben: off (T2)","w"]]},
+ {t:"Both commit: write skew",b:"Both commit. Snapshot isolation checks nothing more at commit, because no two writes touch the same row. Nobody is on call. Each transaction kept the rule. Together they broke it.",w:"Write skew: two transactions read overlapping data, write different rows, and the pair breaks a rule neither broke alone.",e:[[1,520,"commit","c"],[2,540,"commit","b"]],tb:[["Ana: off","b"],["Ben: off","b"]],bad:1},
+ {t:"Serializable: one is aborted",b:"Replay at serializable. At T2's commit the engine checks: did a transaction commit meanwhile that wrote what T2 read, and read what T2 wrote? T1 did, both ways. No one-at-a-time order allows that, so T1 commits and T2 is aborted with a serialization failure.",w:"The app must retry T2. On retry it counts 1, and Ben's request is refused. That retry loop is the price of serializable.",e:[[1,680,"commit","c"],[2,700,"aborted","u"],[2,820,"retry: count 1","r"]],tb:[["Ana: off","c"],["Ben: on call","c"]],lvl:"Serializable"}
+]}};
+const col={r:"var(--coord)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",b:"var(--fail)"};
+let mode="ru",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;
+  $("tname").textContent=sc.name;
+  let lv=sc.lvl;for(let k=0;k<=i;k++)if(sc.st[k].lvl)lv=sc.st[k].lvl;
+  $("lvl").textContent="Level: "+lv;
+  const g=$("ev");g.innerHTML="";
+  for(let k=0;k<=i;k++)sc.st[k].e.forEach(([ln,x,lab,kd],j)=>{
+    const y=ln===1?67:313,y2=ln===1?140:240,ty=ln===1?y-14:y+28;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    el.innerHTML=`<line x1="${x}" y1="${y}" x2="${x}" y2="${y2}" stroke="${col[kd]}" stroke-width="2.5" stroke-dasharray="${kd==="r"?"5 4":"0"}"/><circle cx="${x}" cy="${y}" r="8" fill="${col[kd]}"/><text x="${x}" y="${ty}" text-anchor="middle" fill="${col[kd]}">${lab}</text>`;
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    (k<i||matchMedia("(prefers-reduced-motion: reduce)").matches)?show():setTimeout(show,250*j+40);
+    if(k===i&&kd==="b")el.classList.add("flash");
+  });
+  const t=$("tbl");t.innerHTML="";
+  const n=s.tb.length,w=250,x0=475-(n*(w+14)-14)/2;
+  s.tb.forEach(([lab,kd],k)=>{
+    const f=kd==="c"?"var(--line)":col[kd],tc=kd==="c"?"var(--fg)":"#fff";
+    const el=document.createElementNS(NS,"g");
+    el.innerHTML=`<rect class="box" x="${x0+k*(w+14)}" y="172" width="${w}" height="40" rx="8" fill="${f}"/><text x="${x0+k*(w+14)+w/2}" y="198" text-anchor="middle" fill="${tc}">${lab}</text>`;
+    if(kd==="b")el.classList.add("flash");
+    t.appendChild(el);
+  });
+  $("band").setAttribute("stroke",s.bad?"var(--fail)":"var(--line)");
+  $("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(n){i=Math.max(0,Math.min(S[mode].st.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-isolation-levels/main.go</code> keeps every row as versions and gives each level its own read rule. It replays each tab's two transactions, then replays them at the fixing level, and prints every value quoted here (<code>go run .</code>). The SQL view shows how you ask PostgreSQL for each level; it is not run here.";
+const CODE={
+ru:{pc:["read rule, read uncommitted: the newest version, committed or not",
+"read rule, read committed: the newest committed version",
+"wallet 7 = 100",
+"T1: write 20                       # a new version, not committed",
+"T2: read wallet 7                  # read uncommitted sees 20",
+"T1: rollback                       # the 20 never existed",
+"fix: T2 at read committed reads 100"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// visible is the read rule of each level: which version this tx may see.", "func (t *Tx) visible(r *Row) *Version {", "\tif t.snapshot < 0 {", "\t\tt.snapshot = t.db.clock // the picture is taken at the first statement", "\t}", "\tfor j := len(r.versions) - 1; j >= 0; j-- {", "\t\tv := r.versions[j]", "\t\tswitch {", "\t\tcase v.writer == t.id && v.committed == 0:", "\t\t\treturn v // a transaction sees its own writes", "\t\tcase t.level == ReadUncommitted:", "\t\t\treturn v // the newest version, committed or not", "\t\tcase t.level <= RepeatableRead && v.committed > 0:", "\t\t\treturn v // the newest committed version, now", "\t\tcase v.committed > 0 && v.committed <= t.snapshot:", "\t\t\treturn v // committed before my snapshot", "\t\t}", "\t}", "\treturn nil // the row did not exist for me", "}"],[""],["// Write adds a new, uncommitted version. Other levels cannot see it yet.", "func (t *Tx) Write(r *Row, value int) {", "\tr.versions = append(r.versions, &Version{value: value, writer: t.id})", "\tt.writes[r] = true", "}"],[""],["// Rollback removes every version this tx wrote. The value never existed.", "func (t *Tx) Rollback() {", "\tfor r := range t.writes {", "\t\tkept := r.versions[:0]", "\t\tfor _, v := range r.versions {", "\t\t\tif v.writer != t.id {", "\t\t\t\tkept = append(kept, v)", "\t\t\t}", "\t\t}", "\t\tr.versions = kept", "\t}", "}"],[""],["func dirtyRead(level Level) (seen, after int) {", "\tdb := &DB{}", "\tw := db.Add(\"wallet 7\", \"wallets\", 100)", "\tt1 := db.Begin(ReadCommitted) // the payment", "\tt2 := db.Begin(level)         // the fraud check", "\tt1.Write(w, 20)               // not committed", "\tseen = t2.Read(w)             // the fraud check reads", "\tt1.Rollback()                 // the payment fails", "\tafter = db.Begin(ReadCommitted).Read(w)", "\treturn seen, after", "}"],[""],["\tfmt.Println(\"== read uncommitted: wallet 7 = 100, T1 writes 20, does not commit\")", "\tseen, after := dirtyRead(ReadUncommitted)", "\tfmt.Printf(\"T2 at read uncommitted reads %d: a dirty read; T1 rolls back, wallet 7 = %d\\n\", seen, after)", "\tseen, _ = dirtyRead(ReadCommitted)", "\tfmt.Printf(\"fix, T2 at read committed reads %d while T1 is open\\n\", seen)"]),
+  map:[["read rule, read uncommitted","case t.level == ReadUncommitted:..return v // the newest version"],["read rule, read committed","case t.level <= RepeatableRead && v.committed > 0:..return v // the newest committed"],["wallet 7 = 100","w := db.Add(\"wallet 7\""],
+   ["T1: write 20","t1.Write(w, 20)","// Write adds a new..t.writes[r] = true"],["T2: read wallet 7","seen = t2.Read(w)","seen, after := dirtyRead(ReadUncommitted)..a dirty read"],
+   ["T1: rollback","t1.Rollback()","// Rollback removes..r.versions = kept"],["fix: T2 at read committed","seen, _ = dirtyRead(ReadCommitted)..while T1 is open"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- T1, the payment",
+"BEGIN;",
+"UPDATE wallet SET balance = 20 WHERE id = 7;   -- no COMMIT yet",
+"ROLLBACK;",
+"-- T2, the fraud check",
+"BEGIN; SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;",
+"SELECT balance FROM wallet WHERE id = 7;",
+"-- PostgreSQL runs READ UNCOMMITTED as READ COMMITTED: no dirty reads",
+"-- fix",
+"BEGIN; SET TRANSACTION ISOLATION LEVEL READ COMMITTED;   -- the default"],
+  map:[["read rule, read uncommitted","LEVEL READ UNCOMMITTED;"],["read rule, read committed","LEVEL READ COMMITTED;   -- the default"],["wallet 7 = 100","SELECT balance"],["T1: write 20","-- T1, the payment..no COMMIT yet"],["T2: read wallet 7","SELECT balance"],
+   ["T1: rollback","ROLLBACK;"],["fix: T2 at read committed","-- fix","LEVEL READ COMMITTED;   -- the default"]]}]},
+rc:{pc:["read rule, read committed: the newest committed version, at each statement",
+"read rule, repeatable read: a row read once stays frozen",
+"wallet 7 = 100",
+"T2: first read",
+"T1: write 20, commit",
+"T2: second read                    # read committed sees 20",
+"fix: T2 at repeatable read reads 100 twice"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// visible is the read rule of each level: which version this tx may see.", "func (t *Tx) visible(r *Row) *Version {", "\tif t.snapshot < 0 {", "\t\tt.snapshot = t.db.clock // the picture is taken at the first statement", "\t}", "\tfor j := len(r.versions) - 1; j >= 0; j-- {", "\t\tv := r.versions[j]", "\t\tswitch {", "\t\tcase v.writer == t.id && v.committed == 0:", "\t\t\treturn v // a transaction sees its own writes", "\t\tcase t.level == ReadUncommitted:", "\t\t\treturn v // the newest version, committed or not", "\t\tcase t.level <= RepeatableRead && v.committed > 0:", "\t\t\treturn v // the newest committed version, now", "\t\tcase v.committed > 0 && v.committed <= t.snapshot:", "\t\t\treturn v // committed before my snapshot", "\t\t}", "\t}", "\treturn nil // the row did not exist for me", "}"],[""],["// Read reads one row. Under ANSI repeatable read a row read once is frozen.", "func (t *Tx) Read(r *Row) int {", "\tif val, ok := t.frozen[r]; ok && t.level == RepeatableRead {", "\t\treturn val", "\t}", "\tv := t.visible(r)", "\tif v == nil {", "\t\treturn 0", "\t}", "\tt.reads[r] = true", "\tif t.level == RepeatableRead {", "\t\tt.frozen[r] = v.value", "\t}", "\treturn v.value", "}"],[""],["func nonRepeatable(level Level) (first, second int) {", "\tdb := &DB{}", "\tw := db.Add(\"wallet 7\", \"wallets\", 100)", "\tt2 := db.Begin(level) // the report", "\tfirst = t2.Read(w)", "\tt1 := db.Begin(ReadCommitted) // a payment in between", "\tt1.Write(w, 20)", "\tt1.Commit()", "\tsecond = t2.Read(w)", "\treturn first, second", "}"],[""],["\tfmt.Println(\"\\n== read committed: T2 reads wallet 7 twice, T1 commits 20 in between\")", "\ta, b := nonRepeatable(ReadCommitted)", "\tfmt.Printf(\"T2 at read committed reads %d, then %d: a non-repeatable read\\n\", a, b)", "\ta, b = nonRepeatable(RepeatableRead)", "\tfmt.Printf(\"fix, T2 at repeatable read reads %d, then %d\\n\", a, b)"]),
+  map:[["read rule, read committed","case t.level <= RepeatableRead && v.committed > 0:..return v // the newest committed"],["read rule, repeatable read","if val, ok := t.frozen[r]..return val","if t.level == RepeatableRead {..t.frozen[r] = v.value"],["wallet 7 = 100","w := db.Add(\"wallet 7\""],
+   ["T2: first read","first = t2.Read(w)"],["T1: write 20, commit","t1 := db.Begin(ReadCommitted) // a payment..t1.Commit()"],["T2: second read","second = t2.Read(w)","a, b := nonRepeatable(ReadCommitted)..non-repeatable read"],
+   ["fix: T2 at repeatable read","a, b = nonRepeatable(RepeatableRead)..fix, T2 at repeatable read"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- T2, the report",
+"BEGIN; SET TRANSACTION ISOLATION LEVEL READ COMMITTED;",
+"SELECT balance FROM wallet WHERE id = 7;   -- total: 100",
+"-- T1 sets balance = 20 and commits here",
+"SELECT balance FROM wallet WHERE id = 7;   -- detail: 20",
+"-- fix",
+"BEGIN; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;   -- both reads see 100"],
+  map:[["read rule, read committed","LEVEL READ COMMITTED;"],["read rule, repeatable read","LEVEL REPEATABLE READ;"],["wallet 7 = 100","-- T2, the report"],["T2: first read","total: 100"],["T1: write 20, commit","-- T1 sets balance"],
+   ["T2: second read","detail: 20"],["fix: T2 at repeatable read","-- fix","LEVEL REPEATABLE READ;"]]}]},
+rr:{pc:["read rule, ANSI repeatable read: rows already read stay the same",
+"  a range query still sees rows committed since",
+"read rule, snapshot: only versions committed before my first statement",
+"pool p2: swap 1, swap 2",
+"T2: count the swaps of p2",
+"T1: insert swap 3, commit",
+"T2: list the swaps of p2           # repeatable read lists 3",
+"fix: T2 at snapshot lists 2"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// visible is the read rule of each level: which version this tx may see.", "func (t *Tx) visible(r *Row) *Version {", "\tif t.snapshot < 0 {", "\t\tt.snapshot = t.db.clock // the picture is taken at the first statement", "\t}", "\tfor j := len(r.versions) - 1; j >= 0; j-- {", "\t\tv := r.versions[j]", "\t\tswitch {", "\t\tcase v.writer == t.id && v.committed == 0:", "\t\t\treturn v // a transaction sees its own writes", "\t\tcase t.level == ReadUncommitted:", "\t\t\treturn v // the newest version, committed or not", "\t\tcase t.level <= RepeatableRead && v.committed > 0:", "\t\t\treturn v // the newest committed version, now", "\t\tcase v.committed > 0 && v.committed <= t.snapshot:", "\t\t\treturn v // committed before my snapshot", "\t\t}", "\t}", "\treturn nil // the row did not exist for me", "}"],[""],["// Read reads one row. Under ANSI repeatable read a row read once is frozen.", "func (t *Tx) Read(r *Row) int {", "\tif val, ok := t.frozen[r]; ok && t.level == RepeatableRead {", "\t\treturn val", "\t}", "\tv := t.visible(r)", "\tif v == nil {", "\t\treturn 0", "\t}", "\tt.reads[r] = true", "\tif t.level == RepeatableRead {", "\t\tt.frozen[r] = v.value", "\t}", "\treturn v.value", "}"],[""],["// List is a range query: every row of the group with a value above 0.", "// A row that arrived after the first read is not frozen, so ANSI repeatable", "// read sees it: a phantom.", "func (t *Tx) List(group string) []string {", "\tvar names []string", "\tfor _, r := range t.db.rows {", "\t\tif r.group == group && t.Read(r) > 0 {", "\t\t\tnames = append(names, r.name)", "\t\t}", "\t}", "\treturn names", "}"],[""],["func phantom(level Level) (count int, list []string) {", "\tdb := &DB{}", "\tdb.Add(\"swap 1\", \"p2\", 1)", "\tdb.Add(\"swap 2\", \"p2\", 1)", "\tt2 := db.Begin(level) // the report", "\tcount = len(t2.List(\"p2\"))", "\tt1 := db.Begin(ReadCommitted) // the indexer", "\tt1.Insert(\"swap 3\", \"p2\", 1)", "\tt1.Commit()", "\treturn count, t2.List(\"p2\")", "}"],[""],["\tfmt.Println(\"\\n== repeatable read: T2 counts the swaps of p2, T1 inserts swap 3\")", "\tn, list := phantom(RepeatableRead)", "\tfmt.Printf(\"T2 at repeatable read counts %d, then lists %d %v: a phantom\\n\", n, len(list), list)", "\tn, list = phantom(Snapshot)", "\tfmt.Printf(\"fix, T2 at snapshot counts %d, then lists %d %v\\n\", n, len(list), list)"]),
+  map:[["read rule, ANSI","if val, ok := t.frozen[r]..return val"],["a range query still sees","// List is a range query..return names"],["read rule, snapshot","if t.snapshot < 0 {..t.snapshot = t.db.clock","case v.committed > 0 && v.committed <= t.snapshot:..return v // committed before"],
+   ["pool p2","db.Add(\"swap 1\"..db.Add(\"swap 2\""],["T2: count","count = len(t2.List(\"p2\"))"],["T1: insert swap 3","t1 := db.Begin(ReadCommitted) // the indexer..t1.Commit()"],
+   ["T2: list the swaps","return count, t2.List(\"p2\")","n, list := phantom(RepeatableRead)..a phantom"],["fix: T2 at snapshot","n, list = phantom(Snapshot)..fix, T2 at snapshot"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- T2, the report",
+"BEGIN; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;",
+"SELECT count(*) FROM swaps WHERE pool = 'p2';   -- 2",
+"-- T1, the indexer, inserts swap 3 and commits here",
+"SELECT * FROM swaps WHERE pool = 'p2';          -- ANSI repeatable read may list 3",
+"-- PostgreSQL: REPEATABLE READ is a snapshot, so it lists 2",
+"-- MySQL InnoDB: next-key (range) locks keep swap 3 out"],
+  map:[["read rule, ANSI","LEVEL REPEATABLE READ;"],["a range query still sees","SELECT * FROM swaps"],["read rule, snapshot","-- PostgreSQL: REPEATABLE READ..range) locks"],["pool p2","-- T2, the report"],["T2: count","SELECT count(*)"],
+   ["T1: insert swap 3","-- T1, the indexer"],["T2: list the swaps","SELECT * FROM swaps"],["fix: T2 at snapshot","-- PostgreSQL: REPEATABLE READ"]]}]},
+ser:{pc:["on_call: Ana, Ben                  # rule: at least one stays",
+"request(me):",
+"  n = count on call",
+"  if n < 2: refuse",
+"  set me off",
+"commit at snapshot: no check, both commit",
+"commit at serializable: abort if a tx that committed meanwhile",
+"  has read-write dependencies both ways with me",
+"on 40001: retry the whole request"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// rwDep: a read a row that b wrote.", "func rwDep(a, b *Tx) bool {", "\tfor r := range a.reads {", "\t\tif b.writes[r] {", "\t\t\treturn true", "\t\t}", "\t}", "\treturn false", "}"],[""],["// Commit makes the writes visible. Serializable first checks for a", "// transaction that committed meanwhile with read-write dependencies both", "// ways: no one-at-a-time order allows that, so this one is aborted.", "func (t *Tx) Commit() error {", "\tif t.level == Serializable {", "\t\tfor _, c := range t.db.done {", "\t\t\tif c.commit > t.snapshot && rwDep(t, c) && rwDep(c, t) {", "\t\t\t\tt.Rollback()", "\t\t\t\treturn errSerialization", "\t\t\t}", "\t\t}", "\t}", "\tt.db.clock++", "\tt.commit = t.db.clock", "\tfor r := range t.writes {", "\t\tfor _, v := range r.versions {", "\t\t\tif v.writer == t.id {", "\t\t\t\tv.committed = t.commit", "\t\t\t}", "\t\t}", "\t}", "\tt.db.done = append(t.db.done, t)", "\treturn nil", "}"],[""],["// goOff is one request: count who is on call, go off only if 2 are.", "func goOff(t *Tx, me *Row) (counted int, wentOff bool) {", "\tcounted = len(t.List(\"on_call\"))", "\tif counted < 2 {", "\t\treturn counted, false", "\t}", "\tt.Write(me, 0)", "\treturn counted, true", "}"],[""],["func writeSkew(level Level) {", "\tdb := &DB{}", "\tana := db.Add(\"Ana\", \"on_call\", 1)", "\tben := db.Add(\"Ben\", \"on_call\", 1)", "\tt1 := db.Begin(level) // Ana's request", "\tt2 := db.Begin(level) // Ben's request", "\tn1, _ := goOff(t1, ana)", "\tn2, _ := goOff(t2, ben)", "\tfmt.Printf(\"  T1 counts %d, T2 counts %d; T1 sets Ana off, T2 sets Ben off\\n\", n1, n2)", "\terr1 := t1.Commit()", "\terr2 := t2.Commit()", "\tfmt.Printf(\"  T1 commit: %v, T2 commit: %v\\n\", err1, err2)", "\tif errors.Is(err2, errSerialization) {", "\t\tt2 = db.Begin(level) // the app retries T2 from the start", "\t\tn, off := goOff(t2, ben)", "\t\tt2.Commit()", "\t\tfmt.Printf(\"  T2 retries: counts %d, goes off %v\\n\", n, off)", "\t}", "\tcheck := db.Begin(ReadCommitted)", "\tfmt.Printf(\"  on call now: %v\\n\", check.List(\"on_call\"))", "}"],[""],["\tfmt.Println(\"\\n== snapshot: Ana and Ben on call, rule: at least one stays\")", "\tfmt.Println(\"at snapshot:\")", "\twriteSkew(Snapshot)", "\tfmt.Println(\"fix, at serializable:\")", "\twriteSkew(Serializable)"]),
+  map:[["on_call: Ana, Ben","ana := db.Add..ben := db.Add"],["request(me):","// goOff is one request..func goOff("],["n = count on call","counted = len(t.List(\"on_call\"))","n1, _ := goOff(t1, ana)..T1 counts %d"],
+   ["if n < 2: refuse","if counted < 2 {..return counted, false"],["set me off","t.Write(me, 0)"],["commit at snapshot","err1 := t1.Commit()..T1 commit: %v","fmt.Printf(\"  on call now"],
+   ["commit at serializable","if t.level == Serializable {..return errSerialization"],["has read-write dependencies","// rwDep: a read..return false","if c.commit > t.snapshot && rwDep(t, c)"],["on 40001: retry","if errors.Is(err2, errSerialization) {..T2 retries"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["BEGIN; SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;   -- PostgreSQL's snapshot",
+"SELECT count(*) FROM on_call WHERE on_call;               -- 2",
+"UPDATE on_call SET on_call = false WHERE name = 'Ana';",
+"COMMIT;                                                   -- both commit: write skew",
+"-- fix",
+"BEGIN; SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+"-- the same statements; the second COMMIT fails with",
+"-- ERROR: could not serialize access (SQLSTATE 40001): retry"],
+  map:[["on_call: Ana, Ben","LEVEL REPEATABLE READ;"],["request(me):","LEVEL REPEATABLE READ;"],["n = count on call","SELECT count(*)"],["if n < 2: refuse","SELECT count(*)"],["set me off","UPDATE on_call"],["commit at snapshot","both commit: write skew"],
+   ["commit at serializable","LEVEL SERIALIZABLE;","-- ERROR"],["has read-write dependencies","-- the same statements"],["on 40001: retry","-- ERROR"]]}]}};
+const PCS={
+ru:[["wallet 7 = 100"],["T1: write 20"],["read rule, read uncommitted","T2: read wallet 7"],["T1: rollback"],["read rule, read committed","fix: T2 at read committed"]],
+rc:[["wallet 7 = 100"],["T2: first read"],["T1: write 20, commit"],["read rule, read committed","T2: second read"],["read rule, repeatable read","fix: T2 at repeatable read"]],
+rr:[["pool p2"],["T2: count"],["T1: insert swap 3"],["read rule, ANSI","a range query still sees","T2: list the swaps"],["read rule, snapshot","fix: T2 at snapshot"]],
+ser:[["on_call: Ana, Ben","request(me):"],["n = count on call","if n < 2: refuse"],["set me off"],["commit at snapshot"],["commit at serializable","has read-write dependencies","on 40001: retry"]]};
+const curPc=()=>PCS[mode][i]||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+{const r0=render;render=function(){r0();drawCode();};}
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

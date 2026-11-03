@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hexagonal architecture</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.part{opacity:.18;transition:opacity .35s}
+.part.on{opacity:1}
+.adp rect{fill:var(--svc);transition:fill .35s}
+.adp.bad rect{fill:var(--fail)}
+.wire{stroke:var(--fg);stroke-width:3}
+.wire.bad{stroke:var(--fail)}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+@media (prefers-reduced-motion:reduce){.part,.msg,.adp rect{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Hexagonal architecture</h1>
+  <p class="lede">A shop prices an order: 3 phones for 600 EUR, and orders over 500 EUR get 10 percent off. The rule lives in the core. The web, the command line, a test and two databases plug in around it. Press <b>Next</b> and swap the plugs.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good" id="tab-good">Ports and adapters</button>
+    <button role="tab" aria-selected="false" data-mode="leak" id="tab-leak">Rule leaks into the controller</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">A hexagon core with ports, and adapters plugged into them</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <!-- wires: driving side -->
+        <line id="w-rest" class="part wire" x1="210" y1="88" x2="290" y2="200"/>
+        <line id="w-cli" class="part wire" x1="210" y1="198" x2="290" y2="200"/>
+        <line id="w-test" class="part wire" x1="210" y1="308" x2="290" y2="200"/>
+        <!-- wires: driven side -->
+        <line id="w-pg" class="part wire" x1="610" y1="200" x2="690" y2="128"/>
+        <line id="w-mem" class="part wire" x1="610" y1="200" x2="690" y2="278"/>
+        <!-- core -->
+        <polygon points="340,200 395,105 505,105 560,200 505,295 395,295" fill="var(--coord)"/>
+        <text x="450" y="160" text-anchor="middle" fill="#fff" font-size="18">Order core</text>
+        <text x="450" y="182" text-anchor="middle" fill="#fff" font-weight="400" font-size="13">no imports from outside</text>
+        <g id="rule-core" class="part"><rect x="385" y="205" width="130" height="40" rx="6" fill="var(--ok)"/>
+          <text x="450" y="223" text-anchor="middle" fill="#fff" font-size="13">rule: over 500 EUR</text>
+          <text x="450" y="239" text-anchor="middle" fill="#fff" font-size="13">10 percent off</text></g>
+        <!-- ports -->
+        <rect x="290" y="178" width="70" height="44" rx="6" fill="var(--panel)" stroke="var(--coord)" stroke-width="3"/>
+        <text x="325" y="197" text-anchor="middle" fill="var(--fg)" font-size="12">Port</text>
+        <text x="325" y="213" text-anchor="middle" fill="var(--fg)" font-size="12">PlaceOrder</text>
+        <rect x="540" y="178" width="70" height="44" rx="6" fill="var(--panel)" stroke="var(--coord)" stroke-width="3"/>
+        <text x="575" y="197" text-anchor="middle" fill="var(--fg)" font-size="12">Port</text>
+        <text x="575" y="213" text-anchor="middle" fill="var(--fg)" font-size="12">OrderStore</text>
+        <!-- driving adapters -->
+        <g id="a-rest" class="part adp"><rect x="40" y="60" width="170" height="56" rx="8"/><text x="125" y="84" text-anchor="middle" fill="#fff">REST adapter</text><text x="125" y="104" text-anchor="middle" fill="#fff" font-weight="400" font-size="13">POST /orders</text></g>
+        <g id="rule-rest" class="part"><rect x="40" y="122" width="170" height="28" rx="6" fill="var(--fail)"/><text x="125" y="141" text-anchor="middle" fill="#fff" font-size="13">discount rule copied here</text></g>
+        <g id="a-cli" class="part adp"><rect x="40" y="170" width="170" height="56" rx="8"/><text x="125" y="194" text-anchor="middle" fill="#fff">CLI adapter</text><text x="125" y="214" text-anchor="middle" fill="#fff" font-weight="400" font-size="13">shop order --qty 3</text></g>
+        <g id="a-test" class="part adp"><rect x="40" y="280" width="170" height="56" rx="8"/><text x="125" y="304" text-anchor="middle" fill="#fff">Test adapter</text><text x="125" y="324" text-anchor="middle" fill="#fff" font-weight="400" font-size="13">unit test, no network</text></g>
+        <!-- driven adapters -->
+        <g id="a-pg" class="part adp"><rect x="690" y="100" width="170" height="56" rx="8"/><text x="775" y="124" text-anchor="middle" fill="#fff">Postgres adapter</text><text x="775" y="144" text-anchor="middle" fill="#fff" font-weight="400" font-size="13">INSERT INTO orders</text></g>
+        <g id="a-mem" class="part adp"><rect x="690" y="250" width="170" height="56" rx="8"/><text x="775" y="274" text-anchor="middle" fill="#fff">In-memory adapter</text><text x="775" y="294" text-anchor="middle" fill="#fff" font-weight="400" font-size="13">a map, for tests</text></g>
+        <!-- dependency arrows: everything points at the core -->
+        <g id="deps" class="part" stroke="var(--wait)" stroke-width="4" fill="none">
+          <line x1="230" y1="30" x2="370" y2="110" marker-end="url(#arr)"/>
+          <line x1="230" y1="370" x2="370" y2="290" marker-end="url(#arr)"/>
+          <line x1="670" y1="30" x2="530" y2="110" marker-end="url(#arr)"/>
+          <line x1="670" y1="370" x2="530" y2="290" marker-end="url(#arr)"/>
+        </g>
+        <text id="msg" class="msg" x="450" y="80" text-anchor="middle"></text>
+        <text id="status" x="450" y="388" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">Every line runs in <code>handbook/code/02-hexagonal/main.go</code> (<code>go run .</code>). The Postgres adapter prints its statement, so no database is needed. The lit lines are this step.</p>
+    <div class="tabs" id="codetabs"><button data-v="pc" aria-pressed="true">Pseudo code</button><button data-v="real" aria-pressed="false" id="realtab">Go</button></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the core and its ports</span>
+    <span style="--c:var(--svc)">an adapter plugged in</span>
+    <span style="--c:var(--ok)">the business rule</span>
+    <span style="--c:var(--wait)">direction of source code dependency</span>
+    <span style="--c:var(--fail)">rule in the wrong place, wrong price</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a Go indexer</h2>
+      <p>The core decodes blocks. It asks a <code>BlockSource</code> port for blocks and a <code>RowSink</code> port to write rows. In production a live chain node plugs in. In tests a sealed fixture file plugs in, and a throwaway StarRocks takes the rows. The core never changes for a test.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: an agent tool server</h2>
+      <p>A local MCP (Model Context Protocol) proxy serves the same tools to Claude Code, Claude Desktop and a command line. Each host is a driving adapter. The cache and the remote graph are driven adapters. The practical choice: name each port in the business words, never <code>SQLRepository</code>.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Layered</th><th>Hexagonal</th></tr>
+      <tr><td>Dependencies</td><td>Down: controller, service, repository, database</td><td>Inward: every adapter depends on the core</td></tr>
+      <tr><td>Swap the database</td><td>Edits ripple up into the service layer</td><td>Plug a new adapter into the same port</td></tr>
+      <tr><td>Test the rules</td><td>Needs a database or a heavy mock</td><td>An in-memory adapter, runs in milliseconds</td></tr>
+      <tr><td>Cost</td><td>Little, familiar</td><td>One interface per port, some indirection</td></tr>
+      <tr><td>Fits</td><td>Small CRUD apps, short-lived tools</td><td>Rich rules and a long life</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The core owns the ports, adapters plug in from outside, and every dependency points inward. Clean and onion architecture are the same rule drawn as rings."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const PARTS=["a-rest","a-cli","a-test","a-pg","a-mem","w-rest","w-cli","w-test","w-pg","w-mem","rule-core","rule-rest","deps"];
+const code={"good": {"label": "Go: main.go", "pc": ["port PlaceOrder: place(qty) gives an order    # the core owns it", "port OrderStore: save(order)                  # the core owns it", "core.place(qty):", "    subtotal = qty * phone price (200 EUR)", "    total = subtotal", "    if subtotal > 500: total = subtotal * 90 / 100", "    store.save(order with total)              # a port, not Postgres", "    return the order", "REST adapter: read qty from POST /orders, call core.place(qty)", "CLI adapter: read qty from the command, call core.place(qty)", "Postgres adapter: save = INSERT INTO orders", "memory adapter: save = put the order in a map", "test: core with memory adapter, want place(3).total == 540", "rule: adapters import the core, the core imports no adapter"], "real": ["type PlaceOrder interface {", "\tPlace(qty int) Order", "}", "", "type OrderStore interface {", "\tSave(o Order)", "}", "", "type Core struct{ store OrderStore }", "", "func (c Core) Place(qty int) Order {", "\tsubtotal := qty * phonePrice // 3 x 200 = 600 EUR", "\ttotal := subtotal", "\tif subtotal > 500 { // the rule: over 500 EUR, 10 percent off", "\t\ttotal = subtotal * 90 / 100", "\t}", "\to := Order{Qty: qty, Total: total}", "\tc.store.Save(o)", "\treturn o", "}", "", "func restAdapter(p PlaceOrder, bodyQty int) Order { return p.Place(bodyQty) }", "", "func cliAdapter(p PlaceOrder, flagQty int) Order { return p.Place(flagQty) }", "", "func (postgresAdapter) Save(o Order) {", "\tfmt.Printf(\"  postgres: INSERT INTO orders (qty, total) VALUES (%d, %d)\\n\", o.Qty, o.Total)", "}", "", "func (m memoryAdapter) Save(o Order) { m.orders[len(m.orders)+1] = o }", "", "// in main: the same core, under a test", "mem := memoryAdapter{orders: map[int]Order{}}", "swapped := Core{store: mem}", "got := swapped.Place(3)"], "map": {"1": [1, 2], "2": [5, 6], "3": [11], "4": [12], "5": [13], "6": [14, 15], "7": [17, 18], "8": [19], "9": [22], "10": [24], "11": [26, 27], "12": [30], "13": [33, 34, 35], "14": [9]}}, "leak": {"label": "Go: main.go", "pc": ["REST adapter on POST /orders:", "    total = qty * phone price (200 EUR)", "    if total > 500: total = total * 90 / 100  # the rule, in the wrong place", "    store.save(order with total)", "CLI adapter: read qty from the command, call core.place(qty)", "core.place(qty):", "    total = qty * phone price                 # the rule line is missing here", "    store.save(order with total)", "test: want core.place(3).total == 540, got 600", "fix, core.place(qty):", "    if subtotal > 500: total = subtotal * 90 / 100", "fix, REST adapter: read qty, call core.place(qty), nothing else"], "real": ["func leakyREST(store OrderStore, bodyQty int) Order {", "\ttotal := bodyQty * phonePrice", "\tif total > 500 { // the rule, in the wrong place", "\t\ttotal = total * 90 / 100", "\t}", "\to := Order{Qty: bodyQty, Total: total}", "\tstore.Save(o)", "\treturn o", "}", "", "func cliAdapter(p PlaceOrder, flagQty int) Order { return p.Place(flagQty) }", "", "func (c leakyCore) Place(qty int) Order {", "\to := Order{Qty: qty, Total: qty * phonePrice} // no rule line here any more", "\tc.store.Save(o)", "\treturn o", "}", "", "// in main: the test on the leaky core", "testGot := leaky.Place(3)", "", "// the fix: back to the core that holds the rule", "func (c Core) Place(qty int) Order {", "\tsubtotal := qty * phonePrice // 3 x 200 = 600 EUR", "\ttotal := subtotal", "\tif subtotal > 500 { // the rule: over 500 EUR, 10 percent off", "\t\ttotal = subtotal * 90 / 100", "\t}", "\to := Order{Qty: qty, Total: total}", "\tc.store.Save(o)", "\treturn o", "}", "", "func restAdapter(p PlaceOrder, bodyQty int) Order { return p.Place(bodyQty) }"], "map": {"1": [1], "2": [2], "3": [3, 4], "4": [7], "5": [11], "6": [13], "7": [14], "8": [15], "9": [20], "10": [23], "11": [26, 27], "12": [34]}}};
+const steps={
+good:[
+ {t:"The core, alone",pc:[1, 2, 3],b:"The order core sits in the middle. It holds the discount rule. It declares two sockets, called ports: PlaceOrder for requests coming in, and OrderStore for saving. How do you tell who owns a port? Look at which package declares the interface: here, the core.",w:"The core names its ports in its own words. It does not know that the web, a terminal or a database exist.",on:["rule-core"],status:"core code: written once"},
+ {t:"The web plugs in",pc:[9, 3],b:"A customer sends POST /orders for 3 phones. The REST adapter reads qty = 3 from the body and calls core.place(3). It makes no price decision. The core works out 3 x 200 = 600 EUR.",w:"An adapter is a translator at the rim. Is qty a number? That check is here. What does it cost? That is the core.",on:["rule-core","a-rest","w-rest"],msg:"3 phones, 600 EUR",status:"core code changed: 0 lines"},
+ {t:"The core decides, Postgres saves",pc:[4, 5, 6, 7, 8, 11],b:"The core checks subtotal > 500. 600 is over 500, so total = 600 x 90 / 100 = 540 EUR. It calls store.save on the OrderStore port. The Postgres adapter behind that port writes the row with total 540.",w:"The core called an interface it owns. The Postgres adapter is the one that depends on it, not the other way round.",on:["rule-core","a-rest","w-rest","a-pg","w-pg"],msg:"total 540 EUR",status:"core code changed: 0 lines"},
+ {t:"A second door: the command line",pc:[10, 3, 6],b:"A shop worker types shop order with quantity 3. The CLI adapter calls the same core.place(3). The same check runs: 600 > 500, so 540 EUR.",w:"Every way in shares one rule, because the rule has one home. Nothing is copied.",on:["rule-core","a-rest","w-rest","a-cli","w-cli","a-pg","w-pg"],msg:"total 540 EUR",status:"core code changed: 0 lines"},
+ {t:"Swap the database",pc:[12, 7],b:"Unplug Postgres. Pass the in-memory adapter when the core is built. It has a Save method, so it fits the OrderStore port, and the Go compiler checks that. store.save now puts the order in a map.",w:"The core did not change by one line. That is what a port buys: the outside can move while the rules stay still.",on:["rule-core","a-rest","w-rest","a-cli","w-cli","a-mem","w-mem"],msg:"saved to a map",status:"core code changed: 0 lines"},
+ {t:"Run the same core under a test",pc:[13, 12, 6],b:"A unit test builds the core with the in-memory adapter and calls place(3). It compares the total with 540. They match, so it passes. There is no network and no database.",w:"The test runs in milliseconds and proves the real rule, because it is the real core.",on:["rule-core","a-test","w-test","a-mem","w-mem"],msg:"assert total == 540",status:"test time: milliseconds"},
+ {t:"The dependency rule",pc:[14],b:"Look at the yellow arrows. Each one is an import in the source code. Every adapter imports the core, to get the port. The core imports no adapter. A dependency check in the build can refuse any import that points outward.",w:"This one rule is hexagonal, clean and onion architecture. Three names, one idea.",on:["rule-core","a-rest","w-rest","a-cli","w-cli","a-test","w-test","a-pg","w-pg","a-mem","w-mem","deps"],status:"source code dependencies: all inward"}
+],
+leak:[
+ {t:"The rule moves into the controller",pc:[1, 2, 3, 4],b:"Under deadline, someone writes the check inside the REST adapter. On a web order it computes 3 x 200 = 600, checks total > 500, and sends 540 EUR straight to the store. The core is skipped.",w:"It works today, so nobody notices. The rule now lives outside the core.",on:["rule-rest","a-rest","w-rest","a-pg","w-pg"],msg:"web: 540 EUR",status:"rules in the core: 0"},
+ {t:"The command line skips it",pc:[5, 6, 7, 8],b:"The shop worker orders the same 3 phones from the terminal. The CLI adapter calls core.place(3). The core has no check, so total = 3 x 200 = 600 EUR. The lit line is where the rule should be.",w:"Two doors, two prices. The customer pays 60 EUR too much, and the bug is in neither door alone.",on:["rule-rest","a-rest","w-rest","a-cli","w-cli","a-pg","w-pg"],bad:["a-cli","w-cli"],msg:"CLI: 600 EUR, wrong",status:"rules in the core: 0"},
+ {t:"The test cannot see the rule",pc:[9, 7],b:"The unit test calls core.place(3) and wants 540. It gets 600, because the core has no rule. To test the discount, it would need a running web server.",w:"Logic in a controller is logic you can only test through HTTP. Tests get slow, so people stop writing them.",on:["rule-rest","a-test","w-test","a-mem","w-mem"],bad:["a-test","w-test"],msg:"assert 540, got 600",status:"test needs: a web server"},
+ {t:"Fix: move the rule back into the core",pc:[10, 11, 12],b:"The check moves into core.place. The REST adapter goes back to reading qty and calling the port. Web, terminal and test all pass through one check: 600 > 500, so 540 EUR.",w:"One rule, one place, every door. A controller that decides anything is the first step to a leak.",on:["rule-core","a-rest","w-rest","a-cli","w-cli","a-test","w-test","a-mem","w-mem"],msg:"every door: 540 EUR",status:"rules in the core: 1, copies: 0"}
+]};
+let mode="good",i=0,timer=null;
+const $=id=>document.getElementById(id);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const id of PARTS){const el=$(id);el.classList.toggle("on",s.on.includes(id));el.classList.toggle("bad",(s.bad||[]).includes(id));}
+  const m=$("msg");m.classList.remove("on");m.textContent=s.msg||"";
+  m.setAttribute("fill",s.bad?"var(--fail)":"var(--wait)");
+  reduce?m.classList.add("on"):setTimeout(()=>m.classList.add("on"),150);
+  $("status").textContent=s.status||"";
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

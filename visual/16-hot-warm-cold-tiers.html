@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hot, warm, cold tiers</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Hot, warm and cold tiers</h1>
+  <p class="lede">The transfers table in StarRocks is partitioned by day. New days sit on fast SSD. A nightly tiering job moves older days to cheaper disks, then to object storage. Press <b>Next</b> and watch partitions cool, and what happens to a table that has no rule.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="tier" id="tab-tier">Tiering by partition age</button>
+    <button role="tab" aria-selected="false" data-mode="norule" id="tab-norule">A table with no rule (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title">
+      <title id="stage-title">Day partitions placed on hot SSD, warm hard disks and cold object storage</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-hot-warm-cold-tiers/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">day partition</span>
+    <span style="--c:var(--wait)">being moved</span>
+    <span style="--c:var(--coord)">read by a query</span>
+    <span style="--c:var(--undo)">should have moved</span>
+    <span style="--c:var(--fail)">full, or read where it hurts</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a warehouse</h2>
+      <p>StarRocks sets a storage medium per partition. A tiering job moves day partitions from SSD to hard disk by age, and old years go to object storage behind an external catalog.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: elsewhere</h2>
+      <p>S3 storage classes move objects from standard to infrequent access to archive. Kafka tiered storage keeps recent segments on brokers and old ones in object storage.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Hot</th><th>Warm</th><th>Cold</th></tr>
+      <tr><td>Medium</td><td>SSD</td><td>Hard disk</td><td>Object storage</td></tr>
+      <tr><td>Holds</td><td>The last days</td><td>Recent months</td><td>Years of history</td></tr>
+      <tr><td>Read by</td><td>Most queries</td><td>Some reports</td><td>Audits and replays</td></tr>
+      <tr><td>Cost per byte</td><td>Highest</td><td>Middle</td><td>Lowest</td></tr>
+      <tr><td>Speed</td><td>Fastest</td><td>Slower</td><td>Slowest</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Partition by time so age is a partition property, then move whole partitions from fast to cheap storage as they cool."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"tier": {"label": "Go and SQL", "pc": ["# every new day partition is written to SSD (the hot tier)", "INSERT INTO transfers ...   -> partition p20261102 on SSD", "nightly: for each partition p of a table with a rule:", "  age = today - p.day                          # in days", "  if 7 <= age < 180 and p is hot: ALTER ... storage_medium = HDD", "  if age >= 180: export p to Parquet on S3, DROP PARTITION p", "query WHERE day >= 27 Oct -> pruned to 4 hot partitions", "query WHERE day in 2024 -> 1 cold partition, external catalog", "query with no day filter -> all 8 partitions, every tier"], "real": ["// Rule is a table's tier rule. A table with no rule is never moved.", "type Rule struct{ HotDays, WarmDays int }", "", "// TierFor decides a partition's tier from its age in days.", "func TierFor(day, today time.Time, r Rule) string {", "\tage := int(today.Sub(day).Hours() / 24)", "\tswitch {", "\tcase age < r.HotDays:", "\t\treturn \"hot\"", "\tcase age < r.WarmDays:", "\t\treturn \"warm\"", "\tdefault:", "\t\treturn \"cold\"", "\t}", "}", "", "// RunTiering moves every partition whose tier changed, for tables with a rule.", "func RunTiering(table string, parts []Partition, rules map[string]Rule, today time.Time) (moved int) {", "\tr, ok := rules[table]", "\tif !ok {", "\t\treturn 0 // no rule: the job skips this table", "\t}", "\tfor k, p := range parts {", "\t\twant := TierFor(p.Day, today, r)", "\t\tif want == p.Tier {", "\t\t\tcontinue", "\t\t}", "\t\tswitch want {", "\t\tcase \"warm\":", "\t\t\tfmt.Printf(\"  ALTER TABLE %s MODIFY PARTITION %s SET (\\\"storage_medium\\\" = \\\"HDD\\\");\\n\", table, p.Name)", "\t\tcase \"cold\":", "\t\t\tfmt.Printf(\"  INSERT INTO FILES(\\\"path\\\" = \\\"s3://cold/%s/%s/\\\", \\\"format\\\" = \\\"parquet\\\") SELECT * FROM %s PARTITION (%s);\\n\", table, p.Name, table, p.Name)", "\t\t\tfmt.Printf(\"  ALTER TABLE %s DROP PARTITION %s; -- now read through the external catalog\\n\", table, p.Name)", "\t\t}", "\t\tparts[k].Tier = want", "\t\tmoved++", "\t}", "\treturn moved", "}", "", "// Read lists the partitions a day filter keeps. No filter keeps all of them.", "func Read(parts []Partition, from, to time.Time, filtered bool) (tiers map[string]int) {", "\ttiers = map[string]int{}", "\tfor _, p := range parts {", "\t\tif filtered && (p.Day.Before(from) || p.Day.After(to)) {", "\t\t\tcontinue // pruned by the day filter", "\t\t}", "\t\ttiers[p.Tier]++", "\t}", "\treturn tiers", "}", "", "\tvar parts []Partition", "\tfor k := range names {", "\t\tparts = append(parts, Partition{names[k], days[k], \"hot\"}) // every day lands on SSD", "\t}", "\trules := map[string]Rule{\"transfers\": {hotDays, warmDays}}", "\tfmt.Println(\"nightly tiering job, transfers:\")", "\tmoved := RunTiering(\"transfers\", parts, rules, today)", "\tcount := map[string]int{}", "\tfor _, p := range parts {", "\t\tcount[p.Tier]++", "\t}", "\tfmt.Printf(\"moved %d partitions: hot %d, warm %d, cold %d\\n\", moved, count[\"hot\"], count[\"warm\"], count[\"cold\"])", "\tfmt.Println(\"this week reads:\", Read(parts, day(2026, 10, 27), today, true))", "\tfmt.Println(\"audit of 2024 reads:\", Read(parts, day(2024, 1, 1), day(2024, 12, 31), true))", "\tfmt.Println(\"no day filter reads:\", Read(parts, today, today, false))"], "map": {"1": [55], "2": [55], "3": [18, 19, 23], "4": [6, 24], "5": [8, 9, 10, 11, 29, 30], "6": [12, 13, 31, 32, 33], "7": [45, 46, 65], "8": [45, 46, 66], "9": [44, 48, 67]}}, "norule": {"label": "Go and SQL", "pc": ["CREATE TABLE swaps_v2 ... PARTITION BY day     # no tier rule added", "nightly job: rule = rules[table]", "  no rule -> skip the table, move nothing", "SSD used = swaps_v2 days + 2 hot days of other tables", "if SSD used >= 10 of 10: new day partitions cannot be written", "fix: add the rule when the table is created, run the job", "check: count hot partitions, alert when it is above the rule"], "real": ["// RunTiering moves every partition whose tier changed, for tables with a rule.", "func RunTiering(table string, parts []Partition, rules map[string]Rule, today time.Time) (moved int) {", "\tr, ok := rules[table]", "\tif !ok {", "\t\treturn 0 // no rule: the job skips this table", "\t}", "", "\t// swaps_v2 was created without a rule: the job skips it", "\tvar v2 []Partition", "\tfor k := range names {", "\t\tv2 = append(v2, Partition{names[k], days[k], \"hot\"})", "\t}", "\tmoved = RunTiering(\"swaps_v2\", v2, rules, today)", "\totherHot := 2 // hot days of the tables that do have a rule", "\tfmt.Printf(\"swaps_v2, no rule: moved %d, on SSD %d, SSD used %d of %d\", moved, len(v2), len(v2)+otherHot, ssdSlots)", "\tif len(v2)+otherHot >= ssdSlots {", "\t\tfmt.Print(\": full, new day partitions cannot be written\")", "\t}", "\tfmt.Println()", "\trules[\"swaps_v2\"] = Rule{hotDays, warmDays} // the fix: a rule at create time", "\tfmt.Println(\"swaps_v2 with a rule:\")", "\tRunTiering(\"swaps_v2\", v2, rules, today)", "\thot := 0", "\tfor _, p := range v2 {", "\t\tif p.Tier == \"hot\" {", "\t\t\thot++", "\t\t}", "\t}", "\tfmt.Printf(\"swaps_v2 on SSD %d\\n\", hot)"], "map": {"1": [9, 10, 11], "2": [3], "3": [4, 5, 6, 13], "4": [14, 15], "5": [16, 17], "6": [20, 22], "7": [23, 24, 25, 26, 27, 28, 29]}}};
+
+const D=["2 Nov","1 Nov","31 Oct","30 Oct","Sep","Aug","2025","2024"];
+const at=(zs,st={})=>D.map((d,k)=>[d,zs[k],st[k]||"idle"]);
+const ALLH=at(["h","h","h","h","h","h","h","h"]);
+const T1=at(["h","h","h","h","w","w","w","w"]);
+const T2=at(["h","h","h","h","w","w","c","c"]);
+const steps={
+"tier":[
+ {pc:[1, 2],t:"Every day lands on fast disks",b:"Today is 2 November 2026. The transfers table in StarRocks is partitioned by day. Every new partition, such as p20261102, is written to SSD (Solid State Drive): the hot tier. All 8 partitions start there.",w:"Most questions ask about the last few days. Those days must be on the fastest disks.",p:ALLH,job:"idle"},
+ {pc:[3, 4, 5],t:"The tiering job moves older days",b:"The nightly job reads the rule for transfers: hot under 7 days, warm under 180. It works out each age. Sep is 48 days old and Aug 79, so each gets ALTER TABLE transfers MODIFY PARTITION p202609 SET storage_medium = HDD: the warm tier.",w:"Whole partitions move in one step. No row is moved on its own.",p:at(["h","h","h","h","w","w","w","w"],{4:"move",5:"move",6:"move",7:"move"}),job:"running"},
+ {pc:[3, 4, 6],t:"Old years go cold",b:"2025 is 519 days old and 2024 is 884, both 180 or more. The job exports each one to Parquet on object storage, then drops the partition: the cold tier. StarRocks still reads them through an external catalog. Now hot 4, warm 2, cold 2.",w:"Cold storage costs a small part of SSD. History stays queryable.",p:at(["h","h","h","h","w","w","c","c"],{6:"move",7:"move"}),job:"running"},
+ {pc:[7],t:"This week's question reads hot",b:"A user asks about transfers since 27 October. The day filter keeps 30 Oct to 2 Nov and prunes the rest: 4 hot partitions read, 0 warm, 0 cold.",w:"Fast disks serve the busy questions. Nothing cold is touched.",p:at(["h","h","h","h","w","w","c","c"],{0:"read",1:"read",2:"read",3:"read"}),q:"transfers this week",job:"idle"},
+ {pc:[8],t:"Last year's audit reads cold",b:"An auditor asks about 2024. The filter keeps 1 partition, the cold 2024 Parquet files. It is slower, and that is fine for a rare question.",w:"Pay for speed only where the questions are.",p:at(["h","h","h","h","w","w","c","c"],{7:"read"}),q:"audit of 2024",job:"idle"},
+ {pc:[9],t:"The failure: no time filter",b:"A query behind an API has no day filter, so nothing is pruned. It reads all 8 partitions: 4 hot, 2 warm and 2 cold, the slow cold path included.",w:"Tiers only help if queries filter on time. Read the scan in EXPLAIN before shipping.",p:at(["h","h","h","h","w","w","c","c"],{0:"bad",1:"bad",2:"bad",3:"bad",4:"bad",5:"bad",6:"bad",7:"bad"}),q:"SUM(amount), no day filter",job:"idle",fail:true}
+],
+"norule":[
+ {pc:[1, 2, 3],t:"A new table, no tier rule",b:"A new table, swaps_v2, is partitioned by day like the others. Nobody adds a rule for it. The nightly job looks up rules[swaps_v2], finds none and skips it. Every day it writes stays on SSD.",w:"Nothing fails today. Every day simply stays where it was written.",p:at(["h","h","h","h","h","h","h","h"]),job:"skips swaps_v2",ssd:4},
+ {pc:[3, 4],t:"History piles up on SSD",b:"Months pass. The job still finds no rule and moves 0 partitions. All 8 days of swaps_v2 are on SSD, Sep to 2024 included.",w:"The hot tier now holds data nobody reads often.",p:at(["h","h","h","h","h","h","h","h"],{4:"stale",5:"stale",6:"stale",7:"stale"}),job:"skips swaps_v2",ssd:8},
+ {pc:[4, 5],t:"The failure that matters",b:"The SSD holds 10 partitions. swaps_v2 uses 8 and the other tables keep 2 hot days: 10 of 10. New day partitions for every table, not only swaps_v2, cannot be written.",w:"One table without a rule stopped the whole warehouse's fresh writes.",p:at(["h","h","h","h","h","h","h","h"],{4:"bad",5:"bad",6:"bad",7:"bad"}),job:"skips swaps_v2",ssd:10,fail:true},
+ {pc:[6, 7],t:"The fix",b:"swaps_v2 gets the same rule, hot under 7 days and warm under 180. The next run moves Sep and Aug to HDD and sends 2025 and 2024 to cold. 4 partitions stay on SSD. An alert fires when a table holds more hot days than its rule allows.",w:"Partition by time so age is a partition property, then move whole partitions from fast to cheap storage as they cool.",p:T2,job:"running",ssd:4}
+]};
+const Z={h:[20,"Hot: SSD","recent days"],w:[310,"Warm: hard disk","recent months"],c:[600,"Cold: object storage","Parquet, years"]};
+const FILL={idle:"var(--svc)",move:"var(--wait)",read:"var(--coord)",bad:"var(--fail)",stale:"var(--undo)"};
+function draw(s){
+  let o="";
+  const jc=s.job==="running"?"var(--wait)":s.job==="idle"?"var(--line)":"var(--undo)";
+  o+=chip(300,8,300,40,jc,"Tiering job: "+s.job);
+  for(const k in Z){const [x,n,d]=Z[k];o+=B(x,64,280,206,"var(--panel)",10,'stroke="var(--line)" stroke-width="2"')+T(x+14,88,n,{a:"start"})+T(x+266,88,d,{a:"end",c:"var(--muted)",w:400,s:12});}
+  const cnt={h:0,w:0,c:0};
+  s.p.forEach(([d,z,st])=>{const n=cnt[z]++;const x=Z[z][0]+14+(n%2)*132,y=102+Math.floor(n/2)*40;const c=FILL[st];
+    o+=B(x,y,122,32,c,6)+T(x+61,y+21,d,{c:"#fff",s:13});});
+  if(s.q)o+=M(B(150,288,600,36,s.fail?"var(--fail)":"var(--coord)")+T(450,312,s.q,{c:"#fff",s:15}));
+  if(s.ssd!==undefined)o+=T(20,305,"SSD used",{a:"start"})+B(130,292,560,18,"var(--line)",9)+B(130,292,Math.round(560*s.ssd/10),18,s.ssd>=10?"var(--fail)":"var(--wait)",9)+(s.ssd>=10?T(705,306,"full",{a:"start",c:"var(--fail)"}):"");
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

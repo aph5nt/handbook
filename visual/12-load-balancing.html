@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Load balancing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Load balancing: L4, L7 and the picking rules</h1>
+  <p class="lede">Three copies of an MCP (Model Context Protocol) proxy sit behind a balancer. Most queries take milliseconds, a few graph walks take seconds. The bars show each copy's queue. Watch how the picking rule decides who waits. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="rules">The picking rules</button>
+    <button role="tab" aria-selected="false" data-mode="l4">L4 and one long connection: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Agents, a balancer and three proxy copies with queue bars</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-ag" class="box" x="20" y="160" width="150" height="62" rx="8"/><text id="b-ag-t" x="95" y="186">Agents</text><text id="b-ag-l" x="95" y="209" class="sm"></text>
+        <rect id="b-lb" class="box" x="240" y="160" width="170" height="62" rx="8"/><text id="b-lb-t" x="325" y="186">Balancer</text><text id="b-lb-l" x="325" y="209" class="sm"></text>
+        <rect id="b-c1" class="box" x="520" y="40" width="170" height="62" rx="8"/><text id="b-c1-t" x="605" y="66">Copy 1</text><text id="b-c1-l" x="605" y="89" class="sm"></text>
+        <rect id="b-c2" class="box" x="520" y="160" width="170" height="62" rx="8"/><text id="b-c2-t" x="605" y="186">Copy 2</text><text id="b-c2-l" x="605" y="209" class="sm"></text>
+        <rect id="b-c3" class="box" x="520" y="280" width="170" height="62" rx="8"/><text id="b-c3-t" x="605" y="306">Copy 3</text><text id="b-c3-l" x="605" y="329" class="sm"></text>
+        <g fill="var(--line)"><rect x="710" y="63" width="170" height="16" rx="8"/><rect x="710" y="183" width="170" height="16" rx="8"/><rect x="710" y="303" width="170" height="16" rx="8"/></g>
+        <text x="795" y="40" class="sm" fill="var(--muted)">queue</text>
+        <text id="cap" x="450" y="372" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-load-balancing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">agents and the balancer</span>
+    <span style="--c:var(--ok)">copy with room</span>
+    <span style="--c:var(--wait)">copy with a long queue</span>
+    <span style="--c:var(--fail)">overloaded copy</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Traefik or NGINX as an L7 (application layer) ingress routing by path. An L4 (transport layer) load balancer in front of a TCP (Transmission Control Protocol) service such as a database proxy. gRPC (Google remote procedure call) clients that balance per request on the client side because one HTTP/2 connection carries every call.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Round robin when every request costs the same. Least connections or power of two choices when cost varies, as with graph walks. Weighted when copies differ in size. Hash of a key when a copy keeps a cache for that key, and never for a key that can be hot. L7 for long-lived HTTP/2 connections.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>L4 (transport layer)</th><th>L7 (application layer)</th></tr>
+      <tr><td>Sees</td><td>Addresses and ports</td><td>The whole HTTP request: path, header, cookie</td></tr>
+      <tr><td>Balances</td><td>Each connection, once</td><td>Each request</td></tr>
+      <tr><td>Can do</td><td>Fast forwarding, little else</td><td>Route by path, retry, end TLS (Transport Layer Security)</td></tr>
+      <tr><td>Cost</td><td>Very cheap</td><td>Parses every request</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"L4 balances connections and is fast, L7 reads each request and can route and retry, and when request cost varies I use least connections or power of two choices instead of round robin."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const A=[170,191,238,191,"",C],L1=[410,180,518,74],L2=[410,191,518,191],L3=[410,202,518,308];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const base={f:{"b-ag":C,"b-lb":C,"b-c1":G,"b-c2":G,"b-c3":G},x:{"b-ag-l":"","b-lb-t":"Balancer","b-lb-l":"","b-c1-l":"","b-c2-l":"","b-c3-l":"","cap":""}};
+const D={rules:base,l4:base};
+const steps={
+rules:[
+ {t:"Round robin: equal work",b:"The rule keeps a counter and sends call n to copy (n mod 3): calls 1, 2, 3, 4 go to copy 1, 2, 3, 1. It never looks at the copies. Every query is short, so every queue stays at 2.",w:"Round robin is perfect when every request costs the same. It needs no information about the copies.",x:{"b-lb-l":"round robin"},q:[2,2,2],m:[A,a(L1,"",C),a(L2,"",C),a(L3,"",C)]},
+ {t:"Round robin: unequal work",b:"Now some queries are graph walks that take seconds. Copy 1 has 8 open requests, copy 2 has 2, copy 3 has 1. The counter says it is copy 1's turn, so the next query goes to copy 1 anyway.",w:"Round robin knows nothing about load. One copy builds a queue while the others idle.",f:{"b-c1":Y},x:{"b-lb-l":"round robin","b-c1-l":"3 long walks"},q:[8,2,1],m:[A,a(L1,"its turn",R,0,450,118)]},
+ {t:"Least connections",b:"The rule changes to least connections. The balancer reads the open counts, 8, 2 and 1, takes the smallest, and sends the query to copy 3. Copy 3 now has 2 open.",w:"Least connections follows real load. It needs the balancer to track open requests per copy.",f:{"b-c1":Y},x:{"b-lb-l":"least connections","b-c1-l":"3 long walks"},q:[8,2,2],m:[A,a(L3,"fewest open",G,0,440,270)]},
+ {t:"Weighted",b:"Copy 2 moves to a machine twice as big and gets weight 2. Smooth weighted round robin adds each weight to a running score per copy, picks the highest score, then takes the total weight, 4, off the winner. Over 4 calls: copy 1 gets 1, copy 2 gets 2, copy 3 gets 1.",w:"Weights fit copies of different sizes. They are set by hand or from measured capacity.",x:{"b-lb-l":"weighted","b-c2-l":"weight 2"},q:[3,4,2],m:[A,a(L1,"1",C),a(L2,"2",C),a(L3,"1",C)]},
+ {t:"Power of two choices",b:"For each query the balancer draws two copies at random, here copy 1 with 7 open and copy 3 with 2 open. It compares only those two counts and sends the query to copy 3.",w:"Two random picks are almost as good as checking every copy, and much cheaper when there are hundreds of copies and many balancers.",f:{"b-c1":Y},x:{"b-lb-l":"power of two choices","b-c1-l":"busy"},q:[7,3,2],m:[A,a(L1,"compare",Y,1,450,118),a(L3,"less busy: send",G,0,440,270)]},
+ {t:"Hash of a key, and the hot key",b:"The rule hashes the address in each query with FNV-1a and takes it modulo 3. hash(0x4a) mod 3 gives copy 3 every time, so copy 3's cache holds 0x4a warm. Then 0x4a turns out to be an exchange wallet everyone asks about, and all its queries pile onto copy 3.",w:"Hashing keeps caches warm, but one hot key lands on one copy no matter how many copies there are.",f:{"b-c3":R},x:{"b-lb-l":"hash of address","b-c3-l":"hot key 0x4a"},q:[2,2,10],m:[A,a(L3,"0x4a, 0x4a, 0x4a",R,0,440,270)]}
+],
+l4:[
+ {t:"L4 balances a connection",b:"An L4 (transport layer) balancer sees only addresses and ports. When the agent opens a connection, it runs least connections once: all copies have 0, so copy 1 wins. That choice holds for the life of the connection.",w:"L4 is fast and cheap. It cannot read the request, so it balances connections, not requests.",x:{"b-lb-t":"L4 balancer","b-lb-l":"connection to copy 1"},q:[1,0,0],m:[a([170,191,238,191],"connect",C),a(L1,"",C)]},
+ {t:"One connection carries every call",b:"The agent client speaks gRPC (Google remote procedure call) over HTTP/2 and sends every call down its one connection. After 1,000 calls, copy 1 has served 1,000 and copies 2 and 3 have served 0. The balancer never saw a single call.",w:"The balancer made one choice, at connect time. Every call since then follows it.",f:{"b-c1":R},x:{"b-lb-t":"L4 balancer","b-lb-l":"connection to copy 1","b-ag-l":"one HTTP/2 connection","b-c1-l":"all the calls"},q:[10,0,0],m:[a([170,191,238,191],"every call",R),a(L1,"",R)]},
+ {t:"The failure that matters: new copies get nothing",b:"The autoscaler sees copy 1 at full load and adds a copy. The balancer only picks at connect time, and no new connection is opened, so the new copy gets 0 calls.",w:"More copies do not help when the balancer cannot see requests. This is the most common surprise with HTTP/2 and gRPC behind an L4 balancer.",f:{"b-c1":R},x:{"b-lb-t":"L4 balancer","b-lb-l":"connection to copy 1","b-ag-l":"one HTTP/2 connection","b-c1-l":"all the calls","b-c2-l":"idle","b-c3-l":"new, idle"},q:[10,0,0],m:[a([170,191,238,191],"every call",R),a(L1,"",R)]},
+ {t:"The fix: an L7 balancer",b:"An L7 (application layer) balancer ends the HTTP/2 connection and runs least connections for every call, not every connection. Nine calls land 3, 3 and 3.",w:"L7 balances each request. It costs more work per request, and it is the right tool for long-lived connections.",x:{"b-lb-t":"L7 balancer","b-lb-l":"per request"},q:[3,3,3],m:[A,a(L1,"",C),a(L2,"",C),a(L3,"",C)]},
+ {t:"L7 can also route",b:"Because it reads the request, the L7 balancer can send /graph calls to copies 1 and 2 and /health calls to copy 3. It can also retry a failed call on another copy.",w:"Routing by path, header or cookie, retries and TLS (Transport Layer Security) termination all need L7.",x:{"b-lb-t":"L7 balancer","b-lb-l":"routes by path","b-c1-l":"/graph","b-c2-l":"/graph","b-c3-l":"/health"},q:[4,4,1],m:[A,a(L1,"/graph",C,0,450,118),a(L2,"/graph",C,0,465,184),a(L3,"/health",C,0,440,270)]}
+]};
+function draw(s,g){let h="";(s.q||[0,0,0]).forEach((q,k)=>{const y=[63,183,303][k];h+=`<rect class="dot" x="710" y="${y}" width="${q*17}" height="16" rx="8" fill="${q>=9?R:q>=6?Y:G}"/><text x="795" y="${y+36}" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">${q} waiting</text>`;});g.innerHTML=h;}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"rules": {"label": "Go", "pc": ["roundRobin: c = copies[next mod len(copies)]; next += 1", "leastConnections:", "  best = first copy", "  for each other copy: if c.open < best.open: best = c", "weighted:", "  each copy: score += weight; total += weight", "  c = the highest score", "  c.score -= total", "powerOfTwo(a, b): two random copies", "  c = a if a.open <= b.open else b", "byHash(key): copies[hash(key) mod len(copies)]"], "real": ["func (r *RoundRobin) Pick(cs []*Copy) *Copy {", "\tc := cs[r.next%len(cs)]", "\tr.next++", "\treturn c", "}", "", "func LeastConnections(cs []*Copy) *Copy {", "\tbest := cs[0]", "\tfor _, c := range cs[1:] {", "\t\tif c.Open < best.Open {", "\t\t\tbest = c", "\t\t}", "\t}", "\treturn best", "}", "", "func Weighted(cs []*Copy) *Copy {", "\ttotal := 0", "\tvar best *Copy", "\tfor _, c := range cs {", "\t\tc.cur += c.Weight", "\t\ttotal += c.Weight", "\t\tif best == nil || c.cur > best.cur {", "\t\t\tbest = c", "\t\t}", "\t}", "\tbest.cur -= total", "\treturn best", "}", "", "func PowerOfTwo(a, b *Copy) *Copy {", "\tif a.Open <= b.Open {", "\t\treturn a", "\t}", "\treturn b", "}", "", "func ByHash(cs []*Copy, key string) *Copy {", "\th := fnv.New32a()", "\th.Write([]byte(key))", "\treturn cs[h.Sum32()%uint32(len(cs))]", "}"], "map": {"1": [1, 2, 3, 4], "2": [7], "3": [8], "4": [9, 10, 11], "5": [17], "6": [21, 22], "7": [23, 24], "8": [27], "9": [31], "10": [32, 33, 34, 35], "11": [38, 39, 40, 41]}}, "l4": {"label": "Go", "pc": ["leastConnections:", "  best = first copy", "  for each other copy: if c.open < best.open: best = c", "l4Connect(calls):       # L4 sees only addresses and ports", "  conn = leastConnections()  # decided once, at connect time", "  every call rides conn: conn.open += calls", "l7Calls(calls):         # L7 reads each request", "  for each call:", "    leastConnections().open += 1  # decided again per call", "route(path):            # only L7 can read the path", "  if path == /health: copy 3", "  else: copies 1 and 2"], "real": ["func LeastConnections(cs []*Copy) *Copy {", "\tbest := cs[0]", "\tfor _, c := range cs[1:] {", "\t\tif c.Open < best.Open {", "\t\t\tbest = c", "\t\t}", "\t}", "\treturn best", "}", "", "func L4Connect(cs []*Copy, calls int) *Copy {", "\tconn := LeastConnections(cs)", "\tconn.Open += calls", "\treturn conn", "}", "", "func L7Calls(cs []*Copy, calls int) {", "\tfor i := 0; i < calls; i++ {", "\t\tLeastConnections(cs).Open++", "\t}", "}", "", "func Route(cs []*Copy, path string) []*Copy {", "\tif path == \"/health\" {", "\t\treturn cs[2:] // copy 3", "\t}", "\treturn cs[:2] // /graph goes to copies 1 and 2", "}"], "map": {"1": [1], "2": [2], "3": [3, 4, 5], "4": [11], "5": [12], "6": [13], "7": [17], "8": [18], "9": [19], "10": [23], "11": [24, 25], "12": [27]}}},PCS={"rules": [[1], [1], [2, 3, 4], [5, 6, 7, 8], [9, 10], [11]], "l4": [[4, 5], [6], [5, 6], [7, 8, 9], [10, 11, 12]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

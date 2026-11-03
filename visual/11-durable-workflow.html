@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Durable workflow replay</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Durable workflow: a refund that survives a crash</h1>
+  <p class="lede">Ana's trip was cancelled after she paid. Uber must refund her card, wait up to three days for the bank, then email her. Watch a worker crash in the middle and another one replay the history and carry on. Then watch a code change break the replay. Press <b>Next</b>.</p>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="crash">Crash and replay</button>
+    <button role="tab" aria-selected="false" data-mode="nondet">Changed code breaks replay</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <g data-scene="crash nondet">
+          <rect id="w1" class="box" x="20" y="40" width="200" height="52" rx="8"/><text id="w1-t" x="120" y="71">Worker 1</text>
+          <rect id="w2" class="box" x="20" y="300" width="200" height="52" rx="8"/><text id="w2-t" x="120" y="331">Worker 2</text>
+          <rect x="300" y="20" width="300" height="360" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+          <text x="450" y="46" fill="var(--muted)">Temporal server: event history</text>
+          <rect id="e1" class="box" x="320" y="65" width="260" height="44" rx="6"/><text id="e1-t" x="450" y="93" class="sm"></text>
+          <rect id="e2" class="box" x="320" y="120" width="260" height="44" rx="6"/><text id="e2-t" x="450" y="148" class="sm"></text>
+          <rect id="e3" class="box" x="320" y="175" width="260" height="44" rx="6"/><text id="e3-t" x="450" y="203" class="sm"></text>
+          <rect id="e4" class="box" x="320" y="230" width="260" height="44" rx="6"/><text id="e4-t" x="450" y="258" class="sm"></text>
+          <rect id="e5" class="box" x="320" y="285" width="260" height="44" rx="6"/><text id="e5-t" x="450" y="313" class="sm"></text>
+          <rect x="660" y="40" width="220" height="180" rx="8" fill="var(--line)"/>
+          <text x="770" y="64" fill="var(--fg)">The code</text>
+          <text id="c1" x="770" y="96" class="sm" fill="var(--fg)">1. refund card</text>
+          <text id="c2" x="770" y="124" class="sm" fill="var(--fg)">2. sleep 3 days</text>
+          <text id="c3" x="770" y="152" class="sm" fill="var(--fg)">3. check bank</text>
+          <text id="c4" x="770" y="180" class="sm" fill="var(--fg)">4. email Ana</text>
+          <rect id="cdb" class="box" x="660" y="228" width="220" height="36" rx="6"/><text id="cdb-t" x="770" y="251" class="sm"></text>
+          <rect id="bk" class="box" x="660" y="280" width="220" height="52" rx="8"/><text id="bk-t" x="770" y="311">Bank and email</text>
+        </g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">running for real</span>
+    <span style="--c:var(--ok)">recorded in the history</span>
+    <span style="--c:var(--wait)">waiting, or replayed from history</span>
+    <span style="--c:var(--fail)">crashed, or replay mismatch</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Payouts, refunds, onboarding, order fulfilment: anything that lives minutes to months and has timers. Temporal has SDKs for Go, Java, TypeScript and Python. A coding agent that waits for a review can be a workflow, so a restart resumes it.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>A queue is enough when each step is short and independent. Pick a workflow engine when a process must survive restarts, wait on timers, and never run a step twice. Then keep the workflow code deterministic and version every change.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Queues, cron and status columns</th><th>Durable workflow</th></tr>
+      <tr><td>Where the state lives</td><td>Spread over tables and topics</td><td>One event history per workflow</td></tr>
+      <tr><td>A crash mid-way</td><td>A step is lost or done twice</td><td>Another worker replays and carries on</td></tr>
+      <tr><td>Wait three days</td><td>A cron job polls a status column</td><td>A durable timer on the server</td></tr>
+      <tr><td>Main trap</td><td>Hidden coupling between jobs</td><td>Code that is not deterministic on replay</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A durable workflow is code whose state is its recorded history, so after a crash another worker replays it and carries on, as long as the code stays deterministic."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const ev={e1:N,e2:N,e3:N,e4:N,e5:N},evx={"e1-t":"","e2-t":"","e3-t":"","e4-t":"","e5-t":""};
+const D={crash:{f:Object.assign({w1:N,w2:N,cdb:N,bk:N},ev),x:Object.assign({"cdb-t":"",c2:"2. sleep 3 days",c3:"3. check bank",c4:"4. email Ana","w1-t":"Worker 1","w2-t":"Worker 2"},evx)},
+ nondet:{f:Object.assign({w1:N,w2:N,cdb:N,bk:N},ev,{e1:G,e2:G}),x:Object.assign({"cdb-t":"",c2:"2. sleep 3 days",c3:"3. check bank",c4:"4. email Ana","w1-t":"Worker 1: crashed","w2-t":"Worker 2"},evx,{"e1-t":"refund card: done, ref R-881","e2-t":"timer started: 3 days"})}};
+const h2={e1:G,e2:G},h2x={"e1-t":"refund card: done, ref R-881","e2-t":"timer started: 3 days"};
+const steps={
+crash:[
+{t:"The refund is plain code",b:"A developer writes four lines: refund the card, sleep three days, check with the bank, email Ana. No status columns and no cron job.",w:"The process reads like what the business wants. The engine's rules on the next steps are what make it survive a crash.",f:{cdb:C},x:{"cdb-t":"written once, version 1"},pc:[1,2,3,4,5]},
+ {t:"Worker 1 refunds the card",b:"Worker 1 runs 'refund card'. The engine's check 'is there a history event at this position?' is no, so it runs for real. The bank returns R-881, and the engine records refund card = R-881.",w:"From now on, the server knows the refund happened and what it returned.",f:{w1:C,bk:C,e1:G},x:{"e1-t":"refund card: done, ref R-881"},m:[[220,66,318,87,"",C],[580,87,658,300,"refund",C,false,610,170]],pc:[2,7,10]},
+ {t:"A durable timer starts",b:"The code says sleep three days. The engine records a timer on the server, sees it has not fired, and gives up the worker. No thread waits.",w:"A worker can restart a hundred times in three days. The timer does not care.",f:Object.assign({w1:C},h2),x:h2x,m:[[220,80,318,142,"",C]],pc:[3,11]},
+ {t:"Worker 1 crashes",b:"On day two, the machine running worker 1 is replaced during an upgrade. Its memory is gone. The server's history still holds 2 events: the refund and the timer.",w:"Nothing important was in that memory. The state is the history on the server.",f:Object.assign({w1:R},h2),x:Object.assign({"w1-t":"Worker 1: crashed"},h2x),pc:[12]},
+ {t:"The timer fires, worker 2 gets the history",b:"Three days pass. The server marks the timer fired and hands the workflow and its 2 events to worker 2.",w:"Any worker can pick up any workflow. Workers are interchangeable.",f:Object.assign({w1:R,w2:C,e3:G},h2),x:Object.assign({"w1-t":"Worker 1: crashed","e3-t":"timer fired"},h2x),m:[[318,197,222,316,"history",G,false,250,240]],pc:[13]},
+ {t:"Replay: finished steps are not run again",b:"Worker 2 runs the code from line 1. At 'refund card' the next history event exists and its name matches, so the engine returns R-881 without calling the bank. The sleep matches too. The bank's refund count stays at 1.",w:"This is replay. The code catches up to where the crash left it, and Ana is not refunded twice.",f:Object.assign({w1:R,w2:Y,e3:G},h2),x:Object.assign({"w1-t":"Worker 1: crashed","w2-t":"Worker 2: replaying","e3-t":"timer fired"},h2x),pc:[7,8,9]},
+ {t:"New steps run for real",b:"'check bank' and 'email Ana' have no history yet, so the check finds no event and each one runs for real and is recorded. Worker 2 made 2 real calls, and the history now holds 4 events.",w:"The refund finished correctly across a crash and three days, with no step lost and none done twice.",f:Object.assign({w1:R,w2:C,e3:G,e4:G,e5:G,bk:C},h2),x:Object.assign({"w1-t":"Worker 1: crashed","e3-t":"timer fired","e4-t":"check bank: confirmed","e5-t":"email Ana: sent"},h2x),m:[[580,300,658,306,"calls",C,false,620,290]],pc:[4,5,10]}
+],
+nondet:[
+{t:"A workflow is waiting on its timer",b:"Ana's refund has done step 1 and started the three-day timer. The history holds 2 events: refund card, sleep 3 days.",w:"Thousands of other refunds are waiting at the same point.",f:{},pc:[3,12]},
+ {t:"A developer adds a fraud check",b:"A new version of the code puts a fraud check between the refund and the sleep. It is deployed to all workers.",w:"For new refunds this is fine. Ana's refund started under the old code, and its history has no fraud check.",f:{cdb:P},x:{"cdb-t":"new code deployed",c2:"2. fraud check (new)",c3:"3. sleep 3 days",c4:"4. check bank, email"},pc:[1,2]},
+ {t:"The failure that matters: replay does not match",b:"The timer fires and worker 2 replays Ana's run with the new code. The refund matches. Next, the code asks for 'fraud check', but the history's next event is 'sleep 3 days'. The names differ, so the engine stops with a non-determinism error.",w:"The engine cannot tell what to do, and guessing could repeat a step with real side effects. So the workflow stops.",f:{cdb:R,e2:R,w2:R},x:{"cdb-t":"replay mismatch",c2:"2. fraud check (new)",c3:"3. sleep 3 days",c4:"4. check bank, email","w2-t":"Worker 2: mismatch"},pc:[7,8]},
+ {t:"Fix: a version check",b:"The developer wraps the change: 'if version(fraud-check) is new'. In Ana's old run, the next history event is not a version marker, so the answer is old and the fraud check is skipped: 4 events, no error. A new run records the marker and does the check: 6 events.",w:"Old histories still replay exactly. Every change to workflow code needs this.",f:{cdb:G,w2:C},x:{"cdb-t":"versioned change",c2:"2. if new: fraud check",c3:"3. sleep 3 days","w2-t":"Worker 2: replaying"},pc:[14]},
+ {t:"The same trap with time and random",b:"Code that reads the machine clock or a random number gets a different value on replay, so the next decision can differ from the recorded one. The engine's own clock and random functions return the recorded value.",w:"Workflow code must make the same decisions every time it runs. Side effects belong in activities.",f:{cdb:G,w2:G,e3:G},x:{"cdb-t":"engine clock and random","e3-t":"timer fired, replay matched","w2-t":"Worker 2: carrying on"},pc:[15]}
+]};
+const code={main:{"label": "Go", "dir": "11-durable-workflow", "pc": ["workflow refund(ana):", "  ref = activity(\"refund card\")", "  sleep(3 days)                  # a timer on the server, not a waiting thread", "  activity(\"check bank\")", "  activity(\"email Ana\")", "activity(name), the engine's rule:", "  e = history[next]; next += 1", "  if e exists and e.name != name: stop with a non-determinism error", "  if e exists: return e.result   # replay: no real call", "  r = run it for real; history.append(name, r); return r", "sleep: if no \"timer fired\" in history: record it and give up the worker", "crash: memory is lost, the history stays on the server", "any worker: run the code from line 1 with the history", "safe change: if version(\"fraud-check\") == new: activity(\"fraud check\")", "BUG: time.Now() or rand in workflow code: new value on replay; use the engine's"], "real": ["type Run struct {", "\tHistory []Event // lives on the server, survives any worker", "\tnext    int", "\tReal    int // real activity calls by this worker", "\tFired   bool", "}", "", "func (r *Run) Activity(name string, do func() string) string {", "\tif r.next < len(r.History) {", "\t\te := r.History[r.next]", "\t\tr.next++", "\t\tif e.Name != name {", "\t\t\tpanic(fmt.Errorf(\"non-determinism: code says %q, history says %q\", name, e.Name))", "\t\t}", "\t\treturn e.Result", "\t}", "\tres := do()", "\tr.Real++", "\tr.History = append(r.History, Event{name, res})", "\tr.next++", "\treturn res", "}", "", "func (r *Run) Sleep(name string) {", "\tr.Activity(name, func() string { return \"timer started\" })", "\tif !r.Fired {", "\t\tpanic(errStop)", "\t}", "}", "", "func (r *Run) Version(change string) int {", "\tif r.next < len(r.History) && r.History[r.next].Name != \"version \"+change {", "\t\treturn 1", "\t}", "\tr.Activity(\"version \"+change, func() string { return \"2\" })", "\treturn 2", "}", "", "// Execute is any worker running the code from line 1 with the history.", "func Execute(r *Run, wf func(*Run)) (err error) {", "\tr.next, r.Real = 0, 0", "\tdefer func() {", "\t\tif p := recover(); p != nil {", "\t\t\terr = p.(error)", "\t\t}", "\t}()", "\twf(r)", "\treturn nil", "}", "", "// Now is the safe clock: the first run records it, a replay reads it back.", "func (r *Run) Now() string {", "\treturn r.Activity(\"now\", func() string { return \"10:00\" })", "}", "", "func Refund(r *Run) {", "\t// BUG to avoid here: time.Now() or rand gives a new value on replay.", "\tr.Activity(\"refund card\", func() string { bank.Refunds++; return \"R-881\" })", "\tr.Sleep(\"sleep 3 days\")", "\tr.Activity(\"check bank\", func() string { return \"confirmed\" })", "\tr.Activity(\"email Ana\", func() string { return \"sent\" })", "}", ""], "map": {"12": [2, 40], "6": [8], "7": [9, 10, 11], "8": [12, 13], "9": [15], "10": [17, 18, 19, 20, 21], "3": [24, 59], "11": [24, 25, 26, 27], "14": [31, 32, 33, 35, 36], "13": [40, 41, 47], "15": [52, 53], "1": [56], "2": [58], "4": [60], "5": [61]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

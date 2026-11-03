@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actor Mailbox</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>One actor, one mailbox, one message at a time</h1>
+  <p class="lede">An IoT (Internet of Things) backend on Akka.NET has one actor per device. Device 42 sends two readings at the same moment, on two threads, and a config change arrives on a third. All three land in device 42's mailbox. Press <b>Next</b> and watch why no lock is needed. The second tab shows shared state smuggled back in.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="one">One at a time</button>
+    <button role="tab" aria-selected="false" data-mode="shared">Shared state smuggled back</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 370" aria-labelledby="stage-title">
+      <title id="stage-title">Three threads feeding the mailbox of device actor 42</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-th1" class="box" x="20" y="25" width="150" height="50" rx="8" fill="var(--coord)"/><text id="t-th1" x="95" y="55" fill="#fff" font-size="14">thread 1</text>
+        <rect id="c-th2" class="box" x="20" y="108" width="150" height="50" rx="8" fill="var(--coord)"/><text id="t-th2" x="95" y="138" fill="#fff" font-size="14">thread 2</text>
+        <rect id="c-th3" class="box" x="20" y="191" width="150" height="50" rx="8" fill="var(--coord)"/><text id="t-th3" x="95" y="221" fill="#fff" font-size="14">thread 3</text>
+        <text x="215" y="92" text-anchor="start" fill="var(--muted)" font-size="14">mailbox of device 42, oldest first</text>
+        <rect id="c-m1" class="box" x="215" y="105" width="90" height="56" rx="6" fill="var(--line)"/><text id="t-m1" x="260" y="138" fill="var(--fg)" font-size="13"></text>
+        <rect id="c-m2" class="box" x="315" y="105" width="90" height="56" rx="6" fill="var(--line)"/><text id="t-m2" x="360" y="138" fill="var(--fg)" font-size="13"></text>
+        <rect id="c-m3" class="box" x="415" y="105" width="90" height="56" rx="6" fill="var(--line)"/><text id="t-m3" x="460" y="138" fill="var(--fg)" font-size="13"></text>
+        <rect id="c-m4" class="box" x="515" y="105" width="90" height="56" rx="6" fill="var(--line)"/><text id="t-m4" x="560" y="138" fill="var(--fg)" font-size="13"></text>
+        <rect id="c-act" class="box" x="650" y="88" width="230" height="90" rx="10" fill="var(--svc)"/><text id="t-act" x="765" y="122" fill="#fff">device 42 actor</text><text id="s-act" x="765" y="152" fill="#fff" font-size="13">no readings yet</text>
+        <rect id="c-rules" class="box" x="650" y="230" width="230" height="48" rx="8" fill="var(--line)"/><text id="t-rules" x="765" y="259" fill="var(--fg)" font-size="14">rules actor mailbox: 0</text>
+        <rect id="c-other" class="box" x="20" y="300" width="200" height="50" rx="8" fill="var(--line)"/><text id="t-other" x="120" y="330" fill="var(--fg)" font-size="14">any other code</text>
+        <rect id="c-a43" class="box" x="300" y="300" width="230" height="50" rx="8" fill="var(--line)"/><text id="t-a43" x="415" y="330" fill="var(--fg)" font-size="14">device 43 actor: idle</text>
+        <g id="g-db" class="msg"><rect id="c-db" class="box" x="300" y="215" width="230" height="46" rx="6" fill="var(--undo)"/><text id="t-db" x="415" y="243" fill="#fff" font-size="13">row: building A total = 40</text></g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">a thread that sends</span>
+    <span style="--c:var(--wait)">message waiting in the mailbox</span>
+    <span style="--c:var(--svc)">actor handling a message</span>
+    <span style="--c:var(--ok)">done</span>
+    <span style="--c:var(--fail)">race, state broken</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Akka and Akka.NET actors, Erlang processes, Orleans grains. One actor per device, session, cart, connection or workflow instance. Not one big actor for all devices: that is a single-threaded bottleneck with extra steps.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Messages are records that nobody can change after sending. State lives in one actor only. A total across many devices belongs to its own actor, which the devices tell, never to a row they all update.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Actor with a mailbox</th><th>Shared object with a lock</th></tr>
+      <tr><td>Who touches the state</td><td>Only the actor</td><td>Every thread that holds the object</td></tr>
+      <tr><td>Two updates at once</td><td>Queued, handled one after the other</td><td>Wait on the lock, or race without one</td></tr>
+      <tr><td>Parallelism</td><td>Across actors</td><td>Across threads, limited by the lock</td></tr>
+      <tr><td>Overload shows as</td><td>A growing mailbox</td><td>Threads waiting on the lock</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"An actor is state plus a mailbox plus behaviour, it handles one message at a time, and nothing else touches its state, so there is nothing to lock."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-actor-mailbox/main.go";
+const code={one:{
+pc:`
+send(actor, msg): actor.mailbox.put(msg)        # any thread, no lock
+actor loop, forever:
+  m = mailbox.take()                            # the oldest message first
+  handle(m) runs to the end before the next take
+on Reading(c): last = c; count += 1
+on SetInterval(s): interval = s
+                   tell(rules, ReadingStored(last))  # a send, not a call
+other code holds only a ref: it can send, never touch state
+device 43 has its own loop on its own goroutine
+# nothing else: no lock, no shared field, no direct call`,
+go:`
+type Actor struct{ mailbox chan Msg } // the only exported handle //@8
+func (a *Actor) Tell(m Msg) { a.mailbox <- m } //@1
+func spawn(handle func(m Msg)) *Actor {
+	a := &Actor{mailbox: make(chan Msg, 16)}
+	go func() { //@2
+		for m := range a.mailbox { // one message at a time //@2,3
+			handle(m) //@4
+		}
+	}()
+	return a
+}
+last, count, interval := 0.0, 0, 60 // device 42's state //@8,10
+device42 := spawn(func(m Msg) {
+	switch v := m.(type) {
+case Reading: //@5
+	last, count = v.C, count+1 //@5
+case SetInterval: //@6
+	interval = v.Seconds //@6
+	rules.Tell(ReadingStored{last}) //@7
+	}
+})
+// last, count, interval live in the closure of one goroutine. //@8
+// Other code gets *Actor: it can call Tell, nothing else. //@8
+device43 := spawn(func(m Msg) { // its own goroutine //@9
+	fmt.Println("device 43: handled its own reading on its own goroutine") //@9
+device43.Tell(Reading{19.0}) //@9`,
+cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET: state is a private field, only Receive touches it.
+public class DeviceActor : ReceiveActor { //@2
+    double _last; int _count, _interval = 60; //@8
+    public DeviceActor(IActorRef rules) {
+        Receive<Reading>(r => { _last = r.C; _count++; }); //@5
+        Receive<SetInterval>(s => { _interval = s.Seconds; //@6
+            rules.Tell(new ReadingStored(_last)); }); //@7
+    }
+}
+device42.Tell(new Reading(21.5)); // IActorRef: send only //@1,8
+var device43 = Sys.ActorOf(Props.Create(() => new DeviceActor(rules))); //@9`},
+shared:{
+pc:`
+send(device42, Batch(list))      # the sender still holds list
+on Batch(b): for r in b.readings: sum += r
+# meanwhile the sender: list[2] = 99    -> the race is back
+device42 and device43 both run:
+  v = row.total; row.total = v + 1     # both read 40, both write 41
+# fix 1: send a value nobody else holds
+send(device42, Batch(copy(list)))
+# fix 2: one actor owns the total
+building actor: on Add(n): total += n  # one at a time
+device42, device43: tell(building, Add(1))`,
+go:`
+summer.Tell(Batch{list}) // same backing array as the sender //@1
+summer := spawn(func(m Msg) {
+	b := m.(Batch) //@2
+	for i, r := range b.Readings { //@2
+		s += r //@2
+list[2] = 99.0 // thread 1 writes while the actor reads //@3
+go func() { // device 42, and again for device 43 //@4
+	v := row // both read 40 //@5
+	row = v + 1 // both write 41: one update lost //@5
+}()
+// fix 1: a copy is a value //@6
+summer.Tell(Batch{append([]float64(nil), list...)}) //@7
+// fix 2: the total lives in one actor //@8
+building := spawn(func(m Msg) {
+	switch v := m.(type) {
+	case Add: //@9
+		total += v.N //@9
+	}
+})
+building.Tell(Add{1}) // device 42 //@10
+building.Tell(Add{1}) // device 43 //@10`,
+cs:`
+// Akka.NET / Orleans shape, not compiled here
+// The trap: a List<double> in a message is shared with the sender.
+summer.Tell(new MutableBatch(list)); // the sender keeps list //@1
+Receive<MutableBatch>(b => _sum = b.Readings.Sum()); //@2
+list[2] = 99; // the sender writes while the actor sums //@3
+// Two actors writing one SQL row is shared state too.
+var v = db.QuerySingle<int>("SELECT total FROM building WHERE id = 'A'"); //@4,5
+db.Execute("UPDATE building SET total = @n WHERE id = 'A'", new { n = v + 1 }); //@5
+// C# records are immutable values: the fix 1 shape.
+public sealed record Batch(ImmutableList<double> Readings); //@6,7
+// Fix 2: a building actor owns the total.
+public class BuildingActor : ReceiveActor { //@8
+    int _total = 40;
+    public BuildingActor() => Receive<Add>(a => _total += a.N); //@9
+}
+building.Tell(new Add(1)); //@10`}};
+const IN1=[170,50,215,112],IN2=[170,133,215,133],IN3=[170,216,215,155];
+const OUT=[615,133,650,133];
+const tabInit={shared:{on:["g-db"]}};
+const steps={
+one:[
+ {pc:[1],t:"Three senders at the same moment",b:"Thread 1 has a reading of 21.5 C for device 42. Thread 2 has 21.7 C. Thread 3 has a config change to 30 s. All three call send at the same instant. Send takes no lock on device 42.",w:"With a shared object, this is where you would need a lock.",f:{"c-th1":"coord"}},
+ {pc:[1],t:"All three land in the mailbox",b:"Each send puts its message in device 42's mailbox, a queue, and returns. The queue decides the order: whoever arrived first is first. Here that is 21.5 C, then 21.7 C, then the config.",w:"The mailbox turns three parallel senders into one ordered line.",a:[[...IN1,"21.5 C"],[...IN2,"21.7 C"],[...IN3,"config"]],f:{"c-m1":"wait","c-m2":"wait","c-m3":"wait"},x:{"t-m1":"21.5 C","t-m2":"21.7 C","t-m3":"interval 30 s"}},
+ {pc:[2,3,4,5],t:"The actor takes the first message",b:"The loop takes the oldest message, 21.5 C. The rule is one message at a time: the next take happens only when this handler returns. The handler sets last to 21.5 C and count from 0 to 1. The other two keep waiting.",w:"One handler runs for device 42 at any moment. Its state cannot be changed half way.",a:[[...OUT,""]],f:{"c-m1":"line","c-act":"svc"},x:{"t-m1":"","s-act":"last 21.5 C, count 1"}},
+ {pc:[3,5],t:"Then the next",b:"The handler returned, so the loop takes 21.7 C. Last becomes 21.7 C and count goes from 1 to 2. No lock was taken at any point, because only this one loop reads or writes the state.",w:"Messages are immutable values, so the actor can trust what it reads.",a:[[...OUT,""]],f:{"c-m2":"line"},x:{"t-m2":"","s-act":"last 21.7 C, count 2"}},
+ {pc:[6,7],t:"Change state, tell another actor",b:"The loop takes the config change. The handler sets interval from 60 s to 30 s. Then it tells the rules actor ReadingStored 21.7 C. That is a send into another mailbox, so device 42 does not wait for the rules actor.",w:"An actor may change its own state, send to actors it knows, and create actors. Nothing else.",a:[[...OUT,""],[765,178,765,230,"tell ReadingStored","fg",false,[775,208,"start"]]],f:{"c-m3":"line","c-rules":"wait"},x:{"t-m3":"","s-act":"21.7 C, interval 30 s","t-rules":"rules actor mailbox: 1"}},
+ {pc:[8],t:"Other code cannot touch the state",b:"Some other code wants to set device 42's interval directly. It holds only a reference, an ActorRef, not the object. The reference has one operation: send. So the only way to change the interval is a message in the line.",w:"The state has exactly one owner. That is why there is nothing to lock.",a:[[120,300,650,175,"cannot touch the state","fail",true,[330,250,"middle"]]],f:{"c-other":"fail"}},
+ {pc:[9],t:"Different actors run in parallel",b:"Device 43 has its own mailbox and its own loop. The one-at-a-time rule holds per actor, not across actors. So while device 42 works on one thread, device 43 handles its own message on another.",w:"Parallelism comes from many actors, never from one actor running twice.",f:{"c-other":"line","c-a43":"svc"},x:{"t-a43":"device 43 actor: running"}}
+],
+shared:[
+ {pc:[1],t:"A message that is not a value",b:"Thread 1 sends device 42 a batch of three readings, 21.5, 21.7 and 22.0 C, as a mutable list. The message holds a reference, not a copy. Thread 1 keeps a reference to the same list.",w:"The message looks like a value, but two places can still change it.",a:[[...IN1,"Batch(list)"]],f:{"c-m1":"wait"},x:{"t-m1":"Batch(list)"}},
+ {pc:[2],t:"The actor walks the list",b:"Device 42 takes the batch and starts summing. After the first item the sum is 21.5 C. The right total is 65.2 C.",w:"Inside the actor, it believes it is the only one using this list.",a:[[...OUT,""]],f:{"c-m1":"line"},x:{"t-m1":"","s-act":"summing the list"}},
+ {pc:[3],t:"The failure: the sender changes it meanwhile",b:"At the same moment thread 1 sets the third reading to 99 C in its list. It is the same list, so the actor reads 99. The sum comes out 142.2 C instead of 65.2 C. Had thread 1 added an item instead, a C# loop would throw.",w:"A mutable object inside a message brings the race back, with no warning.",a:[[170,40,640,110,"writes 99 into the same list","fail"]],f:{"c-th1":"fail","c-act":"fail"},x:{"s-act":"list changed mid-loop"}},
+ {pc:[4,5],t:"The second trap: one row, many actors",b:"Device 42 and device 43 both add their readings to one database row, the building A total. Both read 40, both add, both write. One update is lost.",w:"Two actors updating one row is shared state too, just in a database.",a:[[650,178,530,225,"read 40, write 41","fail"],[415,300,415,261,"read 40, write 41","fail",false,[425,285,"start"]]],f:{"c-a43":"svc","c-db":"fail"},x:{"t-a43":"device 43 actor: running","t-db":"total = 41, should be 42"}},
+ {pc:[6,7],t:"Fix 1: messages are records",b:"The batch is sent as a copy, an immutable record. Thread 1 changes its own list to 99 C again. The actor reads only its copy, so the sum is 65.2 C.",w:"Messages are values nobody can change after sending.",f:{"c-th1":"coord","c-act":"svc"},x:{"t-m1":"","s-act":"sum is correct"}},
+ {pc:[8,9,10],t:"Fix 2: the total has one owner",b:"A building actor owns the building A total, 40. Devices 42 and 43 tell it Add 1. Its loop takes one message at a time: 40 becomes 41, then 42. No update is lost.",w:"State lives in one actor only. The races cannot return.",f:{"c-db":"ok"},x:{"t-db":"building actor: total = 42"},a:[[650,170,530,232,"tell +1","ok"],[415,300,415,261,"tell +1","ok",false,[425,285,"start"]]]}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

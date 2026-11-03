@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The context window</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>The context window is the whole memory</h1>
+  <p class="lede">An agent answers "who funded this wallet". Everything the model knows for this call sits in one box: the rules, the examples, the talk so far, the tool results and the question. Press <b>Next</b> and watch the box fill until a rule in the middle gets lost.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="fill">Filling the window</button>
+    <button role="tab" aria-selected="false" data-mode="slot">Untrusted text and the outside</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">One call&#x27;s context window filling up, and the answer it produces</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-context-window/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">system prompt: rules</span>
+    <span style="--c:var(--undo)">few-shot examples</span>
+    <span style="--c:var(--svc)">conversation and user prompt</span>
+    <span style="--c:var(--wait)">tool results, bulk</span>
+    <span style="--c:var(--fail)">lost, or untrusted in the wrong slot</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A Claude Code agent harness. The system prompt and the loaded skills carry the rules. Long sessions get compacted, and a rule said only once in a turn can be dropped. An MCP (Model Context Protocol) proxy caps rows so tool results do not flood the window.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Rules go first, in the system prompt or a skill. Three good examples beat a page of rules. Tool output is trimmed to the columns the task needs. Pasted documents go in the user or tool slot, marked as data, never in the system slot.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Long, full window</th><th>Trimmed window</th></tr>
+      <tr><td>Cost per call</td><td>Every token is paid for</td><td>Less input to pay for</td></tr>
+      <tr><td>First token</td><td>Slower: more to read first</td><td>Faster</td></tr>
+      <tr><td>Rule in the middle</td><td>Easy to miss</td><td>Rules sit at the top, near the task</td></tr>
+      <tr><td>Room for the answer</td><td>Squeezed</td><td>Plenty</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The context window is the model's whole memory, so I put the rules first, trim the bulk, and never paste untrusted text into the system slot."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={fill:{
+ pc:["LIMIT = 27,200 tokens; WARN_AT = 85%",
+"window = [system, examples, history, tools, user]",
+"used = sum(tokens(p) for p in window)",
+"if used > WARN_AT * LIMIT:",
+"  warn(\"window nearly full\")          # rules in the middle get missed",
+"for rule in MUST_HOLD:",
+"  if rule not in system prompt:",
+"    warn(\"rule outside the system prompt\")",
+"for p in window:",
+"  if p.slot == system and p.source == untrusted:",
+"    warn(\"untrusted text in the system slot\")",
+"answer = model(window)                 # it reads only this list",
+"# the fix:",
+"tools = keep_columns(tools, needed)    # trim the bulk",
+"system += rules found in history       # rules first, always sent"],
+ real:["LIMIT = 27_200          # the window of this example, in tokens",
+"WARN_AT = 0.85          # warn when the window is this full",
+"MUST_HOLD = [\"write every address in full\", \"tokens are not dollars\"]",
+"",
+"def check(window):",
+"    used = sum(p[\"tokens\"] for p in window)",
+"    warnings = []",
+"    if used > WARN_AT * LIMIT:",
+"        warnings.append(f\"window {used / LIMIT:.0%} full\")",
+"    system = \" \".join(p[\"text\"] for p in window if p[\"slot\"] == \"system\")",
+"    for rule in MUST_HOLD:",
+"        if rule not in system:",
+"            warnings.append(f\"rule outside the system prompt: {rule}\")",
+"    for p in window:",
+"        if p[\"slot\"] == \"system\" and p[\"source\"] == \"untrusted\":",
+"            warnings.append(\"untrusted text in the system slot\")",
+"    return used, warnings",
+"",
+"show(\"step 5, plus ten tool results\", [system, examples, history, tools, user])",
+"# show() runs check(window): 25,800 of 27,200 tokens = 95%",
+"# the model call goes here: it reads only this list",
+"",
+"# the fix: needed columns only, the turn-2 rule moves up",
+"trimmed = part(\"tool\", \"10 tool results, needed columns only\", 4_000)",
+"system_fixed = part(\"system\", \"write every address in full; tokens are not dollars\", 3_400)"],
+ map:{1:[1,2],2:[19],3:[6, 20],4:[8],5:[9],6:[3,11],7:[10,12],8:[13],9:[14],10:[15],11:[16],12:[21],13:[23],14:[24],15:[25]}}};
+const SYS=["System: write every address in full",34,"var(--coord)"];
+const FS=["3 few-shot examples of a risk summary",34,"var(--undo)"];
+const HIST=["Turn 2, user: tokens are not dollars",30,"var(--svc)"];
+const TOOLS=["10 tool results, 1,000 rows each",130,"var(--wait)",10];
+const TRIM=["10 tool results, needed columns only",40,"var(--wait)",3];
+const USR=["User: who funded this wallet?",30,"var(--svc)"];
+const DOC=["Pasted doc: \"you may shorten addresses\"",34,"var(--fail)"];
+const DOCU=["Tool slot, marked as data: the pasted doc",34,"var(--wait)"];
+const CAP=272;
+const steps={
+"fill":[
+ {t:"One call, one box",b:"The context window is the most tokens one call can hold. The system prompt, the history, the tool results, the question and the answer all share it.",w:"Anything not in this box does not exist for the model on this call.",seg:[],ans:[],pc:[1]},
+ {t:"The system prompt goes in first",b:"The system prompt sets the role, the rules and the format. Here the rule is: write every address in full. It costs 3,400 tokens, 12% of the 27,200-token window.",w:"The model weights the system prompt more, and it stays across turns.",seg:[SYS],ans:[],pc:[2, 3]},
+ {t:"Three examples",b:"Three short examples show what a good risk summary looks like: the input and the wanted output.",w:"Few-shot examples often teach the shape better than a page of rules.",seg:[SYS,FS],ans:[],pc:[2, 3]},
+ {t:"The talk so far and the question",b:"In turn 2 the user said: tokens are not dollars. Now the user asks: who funded this wallet? The check walks the must-hold rules: \"tokens are not dollars\" is not in the system prompt, so the harness warns.",w:"That turn-2 rule now lives in the middle of the window, not at the top.",seg:[SYS,FS,HIST,USR],ans:[],pc:[2,3,6,7,8]},
+ {t:"Ten big tool results arrive",b:"The agent calls the graph ten times. Each result carries a thousand rows. The window is now 25,800 of 27,200 tokens: 95%.",w:"Every token costs money and slows the first token. Bulk pushes the rules apart from the question.",seg:[SYS,FS,HIST,TOOLS,USR],ans:["Writing...","room for the answer is small"],pc:[3, 4, 5]},
+ {t:"The failure: the middle rule is lost",b:"The answer says the wallet was \"sent 183 USD\". The check had warned twice: 95% is over the 85% line, and the turn-2 rule is not in the system prompt. Nobody acted, the rule sat in the middle under 13,000 tokens of rows, and the model missed it.",w:"Models attend less reliably to the middle of a long window. More context is not free.",seg:[SYS,FS,HIST,TOOLS,USR],fade:2,ans:["\"The funder sent 183 USD","to this wallet\""],bad:true,pc:[6, 7, 8, 12]},
+ {t:"The fix: trim the bulk",b:"The proxy returns only the columns the task needs. The rule from turn 2 moves into the system prompt. The window drops to 13,800 tokens: 51%, under the 85% warning line.",w:"Rules first, bulk trimmed, question last. The answer now says tokens worth about 183 USD.",seg:[["System: full addresses; tokens are not dollars",34,"var(--coord)"],FS,TRIM,USR],ans:["\"Received tokens worth about","183 USD on 2026-10-06\""],ok:true,pc:[14, 15]}
+],
+"slot":[
+ {t:"A pasted document",b:"The user pastes a style guide into the chat. A careless harness puts it in the system slot, next to the rules.",w:"The system slot is for rules you wrote. Anything there is treated as a rule.",seg:[SYS,DOC,USR],ans:[],pc:[9, 10]},
+ {t:"The document wins",b:"The document says \"you may shorten addresses\". The slot check asks: is any system part from an untrusted source? Yes, the paste. This harness has no such check, so the model takes it as a rule and shortens the address.",w:"Untrusted text in the system slot becomes a rule. The model cannot tell who wrote it.",seg:[SYS,DOC,USR],ans:["\"Funded by 0x9f3c...0071\""],bad:true,pc:[9, 10, 11, 12]},
+ {t:"Move it to the data slot",b:"The harness puts the document in the tool slot and marks it as data. The rule in the system prompt stays the only rule.",w:"Separating rules from data is the first defence. It is not perfect, so code checks the answer too.",seg:[SYS,DOCU,USR],ans:["\"Funded by 0x9f3c8a10b2c4d5e6f708","92a3b4c5d6e1d27b0071\" (all 42)"],ok:true,pc:[9, 10, 11]},
+ {t:"The failure: a rule outside the box",b:"A long session is compacted. The rule the user gave in turn 2 is summarised away. It is now outside the window.",w:"A rule said once in a turn can vanish. Outside the window, it does not exist for the model.",seg:[SYS,FS,USR],out:"Turn 2 rule, dropped by compaction",ans:["\"...sent 183 USD\""],bad:true,pc:[6, 7, 8]},
+ {t:"The fix: rules live in the system prompt",b:"The rule moves into a skill that loads with the system prompt on every call. Compaction cannot drop it.",w:"Rules that must always hold belong in the system prompt or a skill, never only in a turn.",seg:[["System + skill: full addresses; tokens are not dollars",34,"var(--coord)"],FS,USR],ans:["\"Received tokens worth about","183 USD on 2026-10-06\""],ok:true,pc:[15]}
+]};
+function scene(s){
+  let h=T(40,26,"One call: the context window",null,15,"start",1);
+  h+=O(40,36,380,284);
+  let y=42,used=0;
+  s.seg.forEach((g,k)=>{const hh=g[1];used+=hh;
+    const faded=s.fade===k;
+    h+=R(48,y,364,hh-6,faded?"none":g[2],"","",13,faded?'stroke="var(--fail)" stroke-width="2" stroke-dasharray="5 4"':"");
+    if(g[3]){for(let r=1;r<g[3];r++){const ly=y+r*(hh-6)/g[3];h+=`<line x1="56" x2="404" y1="${ly}" y2="${ly}" stroke="#fff" stroke-opacity=".3"/>`;}}
+    if(g[3])h+=`<rect x="110" y="${y+(hh-6)/2-12}" width="240" height="22" rx="6" fill="${g[2]}"/>`;
+    h+=T(230,y+(hh-6)/2+5,g[0],faded?"var(--fail)":"#fff",13,"middle",1);
+    y+=hh;});
+  if(s.seg.length){h+=R(48,Math.max(y,300),364,14,"none","","",11,'stroke="var(--line)" stroke-dasharray="3 3"');}
+  const pct=Math.round(used/CAP*100);
+  h+=T(470,56,"Window used",null,14,"start",1);
+  h+=O(470,66,400,26);
+  h+=`<rect class="box" x="470" y="66" width="${4*pct}" height="26" rx="8" fill="${pct>85?"var(--fail)":"var(--ok)"}"/>`;
+  h+=T(870,56,`${(used*100).toLocaleString("en-US")} of 27,200 tokens: ${pct}%`,"var(--fg)",14,"end",1);
+  h+=T(470,130,"Answer the model writes",null,14,"start",1);
+  const c=s.bad?"var(--fail)":s.ok?"var(--ok)":"var(--line)";
+  h+=O(470,140,400,90,c);
+  (s.ans||[]).forEach((l,k)=>h+=T(486,172+k*24,l,s.bad?"var(--fail)":"var(--fg)",15,"start",s.bad||s.ok));
+  if(s.out){h+=O(470,256,400,56,"var(--fail)","",13,true);h+=T(486,280,"Outside the window: "+s.out,"var(--fail)",13,"start",1);h+=T(486,300,"does not exist for the model","var(--muted)",13);}
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Optimistic concurrency</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+/*code-panel*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{display:flex;gap:8px;flex-wrap:wrap}
+#codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+#codetabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*end-code-panel*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Optimistic concurrency: the aggregate version</h1>
+  <p class="lede">Two requests charge the same wallet at the same moment. Each loads it, checks the rule and saves. Without a version number, one of them silently wins. Press <b>Next</b>.</p>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" id="scene">
+      <title id="stage-title">Optimistic concurrency</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+<rect id="bx-a" class="box" x="40" y="15" width="220" height="62" rx="8" fill="var(--coord)"/>
+        <text x="150" y="40" fill="#fff" font-size="15">Request A: charge 15</text>
+        <text id="a-txt" x="150" y="62" fill="#fff" font-weight="400">nothing loaded</text>
+        <rect id="bx-s" class="box" x="340" y="15" width="220" height="62" rx="8" fill="var(--svc)"/>
+        <text x="450" y="40" fill="#fff" font-size="15">Stored wallet</text>
+        <text id="s-txt" x="450" y="62" fill="#fff" font-weight="400">balance 20, version 7</text>
+        <rect id="bx-b" class="box" x="640" y="15" width="220" height="62" rx="8" fill="var(--coord)"/>
+        <text x="750" y="40" fill="#fff" font-size="15">Request B: charge 10</text>
+        <text id="b-txt" x="750" y="62" fill="#fff" font-weight="400">nothing loaded</text>
+        <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"><line x1="150" y1="77" x2="150" y2="340"/><line x1="450" y1="77" x2="450" y2="340"/><line x1="750" y1="77" x2="750" y2="340"/></g>
+        <g id="m1" class="msg"><line x1="450" y1="115" x2="150" y2="115" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text x="300.0" y="108" fill="var(--fg)">load: 20, v7</text></g>
+        <g id="m2" class="msg"><line x1="450" y1="140" x2="750" y2="140" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text x="600.0" y="133" fill="var(--fg)">load: 20, v7</text></g>
+        <g id="m3" class="msg"><line x1="150" y1="190" x2="450" y2="190" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/><text x="300.0" y="183" fill="var(--ok)">save 5 WHERE version = 7</text></g>
+        <g id="m3r" class="msg"><line x1="450" y1="215" x2="150" y2="215" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/><text x="300.0" y="232" fill="var(--ok)">1 row: now v8</text></g>
+        <g id="m4" class="msg"><line x1="750" y1="250" x2="450" y2="250" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text x="600.0" y="243" fill="var(--fg)">save 10 WHERE version = 7</text></g>
+        <g id="m4r" class="msg"><line x1="450" y1="275" x2="750" y2="275" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/><text x="600.0" y="292" fill="var(--fail)">0 rows: conflict</text></g>
+        <g id="m5" class="msg"><line x1="450" y1="320" x2="750" y2="320" stroke="var(--wait)" stroke-width="2.5" marker-end="url(#arr)"/><text x="600.0" y="313" fill="var(--wait)">reload: 5, v8, then charge(10) refused</text></g>
+        <g id="bad" class="msg"><line x1="750" y1="250" x2="450" y2="250" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/><text x="600.0" y="243" fill="var(--fail)">save balance = 10 (no version)</text></g>
+        <g id="bad-r" class="msg"><text x="600" y="292" fill="var(--fail)">accepted: overwrites A</text></g>
+        <g id="g-bar" class="msg"><rect x="20" y="352" width="860" height="40" rx="6" fill="var(--fail)"/><text x="450" y="377" fill="#fff">Charged 15 + 10 = 25 USD, but the balance says 10. A's update is lost</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--code-panel-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/01-optimistic-concurrency/main.go</code> (<code>go run .</code>).</p>
+    <div id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <!--end-code-panel-->
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a request working on its copy</span>
+    <span style="--c:var(--svc)">the stored aggregate</span>
+    <span style="--c:var(--ok)">saved</span>
+    <span style="--c:var(--fail)">conflict, or a lost update</span>
+    <span style="--c:var(--wait)">reloaded and re-checked</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Postgres or MySQL: a <code>version</code> column and <code>UPDATE ... WHERE id = ? AND version = ?</code>. Kubernetes: every object carries a <code>resourceVersion</code>, and a stale update gets 409 Conflict. HTTP: an ETag with <code>If-Match</code>. Event stores: append with an expected stream version.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Give every aggregate a version and check it on every save. On a conflict, reload and run the command again, a few times at most. Choose a pessimistic lock (<code>SELECT ... FOR UPDATE</code>) only when conflicts are frequent and retries would be wasteful.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Optimistic (version)</th><th>Pessimistic (lock)</th><th>Neither</th></tr>
+      <tr><td>While working</td><td>No lock held</td><td>Row locked from load to save</td><td>No lock held</td></tr>
+      <tr><td>Two at once</td><td>Second save fails, reloads, retries</td><td>Second waits its turn</td><td>Last write wins, an update is lost</td></tr>
+      <tr><td>Fits</td><td>Rare conflicts, short commands</td><td>Hot rows, many conflicts</td><td>Never, for an aggregate with a rule</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Each aggregate carries a version. The save says where version equals what I loaded. Zero rows means someone else won, so I reload and run the command again, and the invariant sees the fresh state."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps=[
+{t:"One wallet, two requests at once",b:"Line 1: the stored wallet has 20 USD and version 7. Two requests arrive at the same moment: A charges 15, B charges 10. Together they need 25, more than the wallet holds.",w:"One transaction per aggregate does not stop two transactions on the same aggregate. The version number does.",vis:[]},
+ {t:"Both load the same wallet",b:"Line 2: A loads 20 USD, version 7. B loads the same. Each works on its own copy, and no lock is held. That is what optimistic means: assume no clash, detect it at save time.",w:"No lock is held while they think. That is what optimistic means: assume no clash, detect it at save time.",vis:["m1","m2"],txt:{"a-txt":"has 20, v7","b-txt":"has 20, v7"}},
+ {t:"A saves first, with its version",b:"A charges 15 on its copy: line 4 passes, line 5 leaves 5 USD. Line 7 saves where the version is still 7. One row matches. Line 9 makes the version 8.",w:"The WHERE on the version is the whole trick. The save only succeeds if nobody else saved since A loaded.",vis:["m1","m2","m3","m3r"],txt:{"a-txt":"saved 5, v8","b-txt":"has 20, v7","s-txt":"balance 5, version 8"},fill:{"bx-a":"var(--ok)"}},
+ {t:"B saves second, and is told no",b:"B charged 10 on its old copy: 20 minus 10 is 10. Line 7 saves where the version is still 7. The version is now 8, so line 8 finds zero rows and reports a conflict. Nothing was overwritten.",w:"Nothing was overwritten. The database refused B's write because B decided on an old picture.",vis:["m1","m2","m3","m3r","m4","m4r"],txt:{"a-txt":"saved 5, v8","b-txt":"conflict","s-txt":"balance 5, version 8"},fill:{"bx-a":"var(--ok)","bx-b":"var(--fail)"}},
+ {t:"B reloads and tries again",b:"Line 11 reloads: 5 USD, version 8. Line 12 runs charge(10) again on the fresh copy. Line 4 refuses, because 10 is more than 5. B returns a clear error. Retry means re-run the command, never re-send the old result.",w:"Retry means reload and re-run the command, never re-send the old result. The invariant then sees the truth.",vis:["m3","m3r","m4","m4r","m5"],txt:{"a-txt":"saved 5, v8","b-txt":"refused: not enough","s-txt":"balance 5, version 8"},fill:{"bx-a":"var(--ok)","bx-b":"var(--wait)"}},
+ {t:"The failure that matters: no version check",b:"Replay it with line 13: no version check. A saves 5. B saves its own answer, 10, over the top. The customer was charged 25 USD in total, but the wallet says 10. This is a lost update, and the invariant passed both times.",w:"The customer was charged 25 USD in total, but the wallet says 10. This is a lost update. The invariant ran in both requests and both passed, each on its own stale copy.",vis:["m1","m2","m3","bad","bad-r","g-bar"],txt:{"a-txt":"saved 5","b-txt":"saved 10","s-txt":"balance 10, no version"},fill:{"bx-s":"var(--fail)","bx-b":"var(--fail)"}}
+];
+let i=0,timer=null,gen=0;
+const $=id=>document.getElementById(id);
+const base={};
+function set(id,kind,v){const e=$(id),k=id+"|"+kind;if(!(k in base))base[k]=kind==="t"?e.textContent:e.getAttribute(kind);
+  if(kind==="t")e.textContent=v;else if(v===null)e.removeAttribute(kind);else e.setAttribute(kind,v);}
+function render(){
+  const s=steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps.length}`;
+  for(const k in base){const [id,kind]=k.split("|");set(id,kind,base[k]);}
+  for(const [id,v] of Object.entries(s.txt||{}))set(id,"t",v);
+  for(const [id,v] of Object.entries(s.fill||{}))set(id,"fill",v);
+  for(const [id,v] of Object.entries(s.stroke||{}))set(id,"stroke",v);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("#scene .msg").forEach(e=>e.classList.remove("on"));
+  const g=++gen;
+  s.vis.forEach((id,k)=>{const show=()=>{if(g===gen)$(id).classList.add("on")};reduce?show():setTimeout(show,120*k+30)});
+  $("prev").disabled=i===0;$("next").disabled=i===steps.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps.length-1)return stop();go(i+1)},2600)};
+go(0);
+</script>
+<script id="code-panel">
+const CODE={"main": {"pc": ["row = {balance, version}                   # version 7", "load(row): copy = balance, version         # no lock held", "charge(copy, n):                           # on its own copy", "  if n > copy.balance: refuse               # the invariant", "  copy.balance -= n", "save(row, copy):", "  UPDATE ... WHERE version = copy.version", "  if zero rows matched: conflict", "  version = version + 1", "chargeWithRetry(n):", "  on conflict: fresh = load(row)            # never re-send the old result", "  charge(fresh, n), then save", "# failure: save with no WHERE on the version: last write wins"], "real": ["// Row is the stored wallet.", "type Row struct{ Balance, Version int }", "", "// Copy is what one request holds in memory.", "type Copy struct{ Balance, Version int }", "", "var errConflict = errors.New(\"conflict: zero rows matched\")", "", "// Load remembers the version. No lock.", "func Load(r *Row) Copy { return Copy{r.Balance, r.Version} }", "", "// Charge runs the invariant on the request's own copy.", "func (c *Copy) Charge(n int) error {", "\tif n > c.Balance {", "\t\treturn errors.New(\"refused: not enough\")", "\t}", "\tc.Balance -= n", "\treturn nil", "}", "", "// Save is: UPDATE wallet SET balance=?, version=version+1 WHERE version=?", "func Save(r *Row, c Copy) error {", "\tif r.Version != c.Version {", "\t\treturn errConflict // nothing overwritten", "\t}", "\tr.Balance = c.Balance", "\tr.Version++", "\treturn nil", "}", "", "// SaveBlind is the failure: no version check, the last write wins.", "func SaveBlind(r *Row, c Copy) { r.Balance = c.Balance }", "", "// ChargeWithRetry reloads and runs the command again on the fresh state.", "func ChargeWithRetry(r *Row, c Copy, n int) error {", "\tif err := Save(r, c); !errors.Is(err, errConflict) {", "\t\treturn err", "\t}", "\tfresh := Load(r) // never re-send the old result", "\tif err := fresh.Charge(n); err != nil {", "\t\treturn err", "\t}", "\treturn Save(r, fresh)", "}"], "map": {"1": [2], "2": [10], "3": [13], "4": [14, 15], "5": [17], "6": [22], "7": [21], "8": [23, 24], "9": [27], "10": [35], "11": [39], "12": [40, 43], "13": [32]}, "label": "Go"}};
+const PCS={"main": [[1], [2], [3, 4, 5, 6, 7, 9], [6, 7, 8], [10, 11, 12, 4], [13]]};
+let view="pc";
+function codeMode(){return (typeof mode!=="undefined"&&CODE[mode])?mode:Object.keys(CODE)[0];}
+function escC(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function drawCode(){
+  const m=codeMode(),c=CODE[m],step=(PCS[m]||[])[i]||[];
+  const real=view==="real"&&c.real;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(step);
+  if(real){hl=new Set();step.forEach(n=>(c.map[n]||[]).forEach(x=>hl.add(x)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("realtab").disabled=!c.real;
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=escC(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`;}).join("");
+}
+const renderNoCode=render;
+render=function(){renderNoCode();drawCode();};
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode();});
+drawCode();
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

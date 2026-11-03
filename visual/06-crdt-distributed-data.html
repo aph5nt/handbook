@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed Data CRDTs</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Distributed data: counters that merge without a lock</h1>
+  <p class="lede">The dashboard header shows how many devices are online. Each of three nodes knows only its own devices. A CRDT (Conflict-free Replicated Data Type) counter keeps one slot per node, and gossip merges the slots. Press <b>Next</b> to watch three nodes agree with no coordinator, then the second tab: a rule a CRDT cannot keep.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="g">G-Counter: online devices</button>
+    <button role="tab" aria-selected="false" data-mode="rule">A rule across nodes</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 330" aria-labelledby="stage-title">
+      <title id="stage-title">Three nodes, each with its own copy of a replicated counter or set</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-a" class="box" x="20" y="20" width="270" height="170" rx="10" fill="var(--svc)"/><text id="t-a" x="155" y="48" fill="#fff">Node 1</text>
+        <text id="s-a" x="155" y="88" fill="#fff" font-size="13"></text><text id="v-a" x="155" y="118" fill="#fff" font-size="13"></text><text id="w-a" x="155" y="160" fill="#fff" font-size="17"></text>
+        <rect id="c-b" class="box" x="315" y="20" width="270" height="170" rx="10" fill="var(--svc)"/><text id="t-b" x="450" y="48" fill="#fff">Node 2</text>
+        <text id="s-b" x="450" y="88" fill="#fff" font-size="13"></text><text id="v-b" x="450" y="118" fill="#fff" font-size="13"></text><text id="w-b" x="450" y="160" fill="#fff" font-size="17"></text>
+        <rect id="c-c" class="box" x="610" y="20" width="270" height="170" rx="10" fill="var(--svc)"/><text id="t-c" x="745" y="48" fill="#fff">Node 3</text>
+        <text id="s-c" x="745" y="88" fill="#fff" font-size="13"></text><text id="v-c" x="745" y="118" fill="#fff" font-size="13"></text><text id="w-c" x="745" y="160" fill="#fff" font-size="17"></text>
+        <rect id="c-res" class="box" x="150" y="270" width="600" height="44" rx="22" fill="var(--line)"/><text id="t-res" x="450" y="297" fill="var(--fg)" font-size="14">each node writes only its own slot</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--svc)">node copy</span>
+    <span style="--c:var(--undo)">copy behind the others</span>
+    <span style="--c:var(--ok)">all copies agree</span>
+    <span style="--c:var(--fail)">rule broken</span>
+    <span style="--c:var(--coord)">single owner</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Akka Distributed Data: online counts, feature flags, a set of banned devices, replicated by gossip. Riak, Redis Enterprise active-active and collaborative editors use CRDTs too. Writes and reads can ask for the local node, a majority, or all.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>CRDTs for values that may disagree for a moment and must never conflict: counters, sets, flags. Rules that must never break, such as "one booking per technician", go to a single owner: a sharded actor or a database row.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>CRDT</th><th>Single owner (actor or database)</th></tr>
+      <tr><td>Write</td><td>On any node, at once, no lock</td><td>Goes to the one owner</td></tr>
+      <tr><td>During a partition</td><td>Both sides keep writing</td><td>One side cannot reach the owner</td></tr>
+      <tr><td>Agreement</td><td>Eventually, after gossip merges</td><td>At once</td></tr>
+      <tr><td>Keeps a rule across nodes</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A CRDT can be changed on any node and always merges to the same value, which fits counters, sets and flags, never a rule that must hold across nodes."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-crdt-distributed-data/main.go";
+const code={_:{pc:`
+G-Counter: one slot per node; a node writes only its own slot
+increment(n): slots[me] += n              # at once, no waiting
+every round: send my copy to a peer
+merge(other): for each slot: slots[i] = max(slots[i], other[i])
+read: total = the sum of all slots
+OR-Set: every add gets a unique tag
+add(value): set[new tag] = value          # any node, any time
+merge(other): set = union(set, other)     # never conflicts, never says no
+# a rule across nodes:
+book(job): if my copy of the set is empty: accept   # checks one copy only
+after the partition: merge keeps both bookings
+# the fix: one owner for the rule
+technician actor on Book(job):
+  if jobs is empty: accept, else refuse   # the only copy
+keep CRDTs for values that may briefly differ and never conflict
+old or repeated copy: max changes nothing          # merge is idempotent`,go:`
+type GCounter [3]int //@1
+n1.do(func(n *Node) { n.counter[0] += 10 }) // a local write, no waiting //@2
+gossip(n1.copyCounter(), n2) //@3
+gossip(n2.copyCounter(), n3) //@3
+gossip(n3.copyCounter(), n1) //@3
+gossip(old, n2) //@16
+func (c GCounter) Merge(o GCounter) GCounter { //@4
+	for i := range c {
+		if o[i] > c[i] { //@4
+			c[i] = o[i] // the larger number wins, slot by slot //@4
+		}
+	}
+	return c
+}
+func (c GCounter) Total() int { return c[0] + c[1] + c[2] } //@5
+type ORSet map[string]string //@6
+n.set[tag] = job //@7
+func (s ORSet) Merge(o ORSet) ORSet { //@8
+	out := ORSet{}
+	for k, v := range s { //@8
+		out[k] = v //@8
+	}
+	for k, v := range o { //@8
+		out[k] = v //@8
+	}
+	return out
+}
+if len(n.set) > 0 { // the rule, checked against this node's copy only //@10
+	return
+}
+merged := s1.Merge(s2) //@11
+owner := make(chan func()) //@13
+owner <- func() { //@13
+	if len(jobs) > 0 { //@14
+		r <- "refused" //@14
+		return
+	}
+	jobs[job] = job //@14
+	r <- "accepted" //@14
+}
+fmt.Println("  keep as CRDTs: the devices-online counter, ban lists, feature flags") //@15`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Akka.NET Distributed Data: a replicator on every node.
+var replicator = DistributedData.Get(system).Replicator;
+var key = new GCounterKey("devices-online"); //@1
+replicator.Tell(Dsl.Update(key, GCounter.Empty, //@2
+    WriteLocal.Instance, c => c.Increment(node, 10))); // no waiting //@2
+akka.cluster.distributed-data.gossip-interval = 2s # HOCON //@3
+var merged = mine.Merge(theirs); // what the replicator does: max per slot //@4,16
+var got = await replicator.Ask<GetSuccess>(Dsl.Get(key)); //@5
+var total = got.Get(key).Value; //@5
+var setKey = new ORSetKey<string>("anna-bookings"); //@6
+replicator.Tell(Dsl.Update(setKey, ORSet<string>.Empty, WriteLocal.Instance, //@7
+    s => s.Add(node, "device 42 at 10:00"))); //@7
+if (local.Get(setKey).Elements.Count == 0) Accept(job); // one copy only //@10
+var both = sideA.Merge(sideB); // a union: both bookings stay //@8,11
+// the fix: a sharded actor owns the rule, no CRDT
+Receive<Book>(b => Sender.Tell(_jobs.Count == 0 ? Accept(b) : new Refused())); //@13,14
+var flags = new LWWDictionaryKey<string, bool>("feature-flags"); // fits a CRDT //@15`}};
+const V=(a,b,c)=>`slots: ${a} | ${b} | ${c}`;
+const tabInit={
+ g:{x:{"s-a":"node 1 slot only","s-b":"node 2 slot only","s-c":"node 3 slot only","v-a":V("4,000","0","0"),"v-b":V("0","3,500","0"),"v-c":V("0","0","2,500"),"w-a":"total 4,000","w-b":"total 3,500","w-c":"total 2,500"}},
+ rule:{x:{"s-a":"OR-Set: Anna's bookings","s-b":"OR-Set: Anna's bookings","s-c":"OR-Set: Anna's bookings","v-a":"{ }","v-b":"{ }","v-c":"{ }","w-a":"","w-b":"","w-c":"","t-res":"rule: Anna has at most one booking at 10:00"}}
+};
+const AB=[290,105,315,105],BC=[585,105,610,105];
+const steps={
+g:[
+ {pc:[1],t:"Each node counts its own devices",b:"Node 1 has 4,000 devices online, node 2 has 3,500, node 3 has 2,500. Each counter has three slots, one per node, and each node writes only its own.",w:"No two nodes ever write the same slot, so writes can never conflict.",f:{"c-a":"undo","c-b":"undo","c-c":"undo"}},
+ {pc:[3,4],t:"Node 1 gossips to node 2",b:"Node 1 sends its copy to node 2. Node 2 merges slot by slot and keeps the larger number. Slot 1: 4,000 beats 0. Slot 2: 3,500 beats 0. Its total is 7,500.",w:"Merge takes the maximum of each slot. That is the whole trick of a G-Counter, a grow-only counter.",a:[[...AB,"","fg"],[155,190,450,190,"gossip copy","fg",false,[300,215,"middle"]]],x:{"v-b":V("4,000","3,500","0"),"w-b":"total 7,500"}},
+ {pc:[3,4,5],t:"Node 2 gossips to node 3",b:"Node 2 sends its merged copy to node 3. Node 3 keeps its own 2,500 and takes 4,000 and 3,500. The sum of its slots is 10,000.",w:"Knowledge spreads node to node. No coordinator, no lock.",a:[[450,190,745,190,"gossip copy","fg",false,[600,215,"middle"]]],f:{"c-c":"ok"},x:{"v-c":V("4,000","3,500","2,500"),"w-c":"total 10,000"}},
+ {pc:[3,4,5],t:"Node 3 gossips to node 1",b:"Node 3's copy reaches node 1, so node 1 reads 10,000. In the same round node 2 gets node 3's copy and takes slot 3, 2,500. It reads 10,000 too.",w:"The copies converge. Every node shows the same total.",a:[[745,195,155,195,"gossip copy","fg",false,[450,220,"middle"]]],f:{"c-a":"ok","c-b":"ok"},x:{"v-a":V("4,000","3,500","2,500"),"w-a":"total 10,000","v-b":V("4,000","3,500","2,500"),"w-b":"total 10,000"}},
+ {pc:[2,5],t:"A local write",b:"Ten more devices come online on node 1. Node 1 adds 10 to its own slot at once: 4,010. For a moment it reads 10,010 and the others read 10,000.",w:"A write never waits for other nodes. Brief disagreement is the price.",f:{"c-a":"svc","c-b":"undo","c-c":"undo"},x:{"v-a":V("4,010","3,500","2,500"),"w-a":"total 10,010"}},
+ {pc:[4,16],t:"Old or repeated gossip is harmless",b:"Node 2 receives an old copy of node 1, from before the change, twice. The merge asks: is 4,000 larger than the 4,000 node 2 holds? No, so nothing changes. Node 2 stays at 10,000.",w:"Merge works in any order and any number of times. Lost, late and duplicate gossip are all safe.",a:[[155,190,450,190,"old copy: no change","muted",true,[300,215,"middle"]]]},
+ {pc:[3,4,5],t:"All agree again",b:"The new copy reaches node 2, and 4,010 beats 4,000. Sent twice, the second merge changes nothing. Node 3 gets it next. Every node reads 10,010.",w:"Writes anywhere, no coordinator, and one value in the end.",a:[[155,190,450,190,"new copy","fg",false,[300,215,"middle"]],[450,195,745,195,"new copy","fg",false,[600,220,"middle"]]],f:{"c-a":"ok","c-b":"ok","c-c":"ok","c-res":"ok"},x:{"v-b":V("4,010","3,500","2,500"),"w-b":"total 10,010","v-c":V("4,010","3,500","2,500"),"w-c":"total 10,010","t-res":"every node: 10,010 online"}}
+],
+rule:[
+ {pc:[6,7],t:"A booking rule",b:"Technician Anna can do one job at 10:00. Someone stores her bookings in an OR-Set (observed-remove set), a CRDT replicated to all three nodes.",w:"The rule needs every node to agree before a booking is accepted. Watch whether a CRDT can do that.",f:{"c-res":"line"}},
+ {pc:[7,8],t:"A partition",b:"Node 1 is cut off from nodes 2 and 3. Both sides keep accepting writes, as a CRDT allows.",w:"Availability during a partition is exactly what CRDTs are for.",band:[240,"partition: node 1 | nodes 2 and 3"]},
+ {pc:[10,7],t:"Two bookings, one on each side",b:"On node 1, Anna is booked for device 42 at 10:00. On node 2, she is booked for device 17 at 10:00. Each node checks: is my copy of the set empty? Both are, so both accept.",w:"Each node checked the rule against its own copy. Neither could see the other.",f:{"c-a":"undo","c-b":"undo"},x:{"v-a":"{ device 42 at 10:00 }","v-b":"{ device 17 at 10:00 }"}},
+ {pc:[8,11],t:"The failure that matters: the merge keeps both",b:"The network heals and gossip merges the sets. A set merge is a union, so both bookings stay. Anna is booked twice at 10:00.",w:"The merge never conflicts, so it never says no. A rule across nodes is broken.",a:[[155,190,450,190,"merge: union","fail",false,[300,215,"middle"]],[450,195,745,195,"merge: union","fail",false,[600,220,"middle"]]],f:{"c-a":"fail","c-b":"fail","c-c":"fail","c-res":"fail"},x:{"v-a":"{ 42 at 10:00, 17 at 10:00 }","v-b":"{ 42 at 10:00, 17 at 10:00 }","v-c":"{ 42 at 10:00, 17 at 10:00 }","t-res":"rule broken: two bookings at 10:00"}},
+ {pc:[13,14],t:"The fix: one owner for the rule",b:"Anna's bookings belong to one sharded actor, technician Anna. Every booking goes to it, one message at a time. For device 42 its jobs are empty, so it accepts. For device 17 they are not, so it refuses.",w:"A single owner checks the rule against the only copy. During a partition, the side that cannot reach it waits or fails. That is the honest trade.",f:{"c-a":"svc","c-b":"svc","c-c":"svc","c-res":"coord"},x:{"s-a":"asks the owner","s-b":"asks the owner","s-c":"asks the owner","v-a":"","v-b":"","v-c":"","t-res":"technician actor Anna: 42 accepted, 17 refused"},a:[[155,190,300,270,"book 42","ok"],[450,190,450,270,"book 17: refused","fail"]]},
+ {pc:[15],t:"Keep the CRDT for what fits",b:"The online counter, a set of banned devices, feature flags: values that may disagree for a moment and never conflict stay CRDTs.",w:"Pick by the rule: if a value may be briefly different on two nodes, a CRDT fits. If a rule must never break, use one owner.",f:{"c-res":"ok"},x:{"t-res":"CRDT for counters, sets, flags. One owner for rules."}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

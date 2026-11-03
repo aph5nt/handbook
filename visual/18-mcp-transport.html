@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP transport and messages</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, controls, narration card, then cards. Same tokens as the reference lesson. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+.halo{paint-order:stroke;stroke:var(--panel);stroke-width:4px;stroke-linejoin:round}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>MCP transport and the four message shapes</h1>
+  <p class="lede">The Chain Insights proxy runs on the user's laptop. Claude Desktop starts it and talks to it over stdio. The proxy talks to a remote service over Streamable HTTP. Press <b>Next</b> and watch the same JSON-RPC 2.0 messages move on both legs, and the one log line that breaks a stdio connection.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="stdio" id="tab-stdio">stdio: host and local proxy</button>
+    <button role="tab" aria-selected="false" data-mode="http" id="tab-http">Streamable HTTP: proxy and remote service</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Messages between host, proxy and remote service</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="actors" font-family="Atkinson Hyperlegible,system-ui" font-weight="700"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays both tabs: <code>handbook/code/18-mcp-transport/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">the server side</span>
+    <span style="--c:var(--ok)">answered, working</span>
+    <span style="--c:var(--wait)">waiting for an answer</span>
+    <span style="--c:var(--undo)">notification or log, no reply</span>
+    <span style="--c:var(--fail)">broken</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet stdio</h2>
+      <p>A server on the user's own machine. Claude Code, Codex and Claude Desktop spawn it from a config entry. No port, no login: the host owns the process. Logs go to standard error.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet Streamable HTTP</h2>
+      <p>A shared remote service. One POST endpoint, answered with plain JSON or an SSE stream. It sits behind normal HTTP infrastructure and auth. Keep the old HTTP with SSE endpoint only while an old client still needs it.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>stdio</th><th>Streamable HTTP</th><th>HTTP with SSE (legacy)</th></tr>
+      <tr><td>Where</td><td>Local</td><td>Remote</td><td>Remote</td></tr>
+      <tr><td>Server starts</td><td>Host spawns a child process</td><td>Always running</td><td>Always running</td></tr>
+      <tr><td>Endpoints</td><td>stdin and stdout</td><td>One: POST /mcp</td><td>Two: GET /sse and POST /messages</td></tr>
+      <tr><td>Auth</td><td>Process ownership</td><td>OAuth 2.1, bearer token</td><td>Bearer token</td></tr>
+      <tr><td>Typical break</td><td>A print on stdout</td><td>A stateful session on the wrong replica</td><td>A client that never upgraded</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"MCP is JSON-RPC 2.0 over stdio locally or Streamable HTTP remotely. Same four message shapes on both. On stdio, stdout is the wire, so logs go to stderr."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const LESSON={
+"stdio":{actors:[{"id": "host", "l": "Claude Desktop", "c": "coord"}, {"id": "srv", "l": "Chain Insights proxy", "c": "svc"}, {"id": "err", "l": "stderr (log file)", "c": "undo"}],code:{label:"Go",map:{"1": [31, 32, 34], "2": [38], "3": [13], "4": [16], "5": [22], "6": [20], "7": [2, 3], "8": [9, 10], "9": [24], "10": [26], "11": [42], "12": [46, 47], "13": [50]},
+ pc:[
+ "host: start the server as a child process, keep its stdin and stdout",
+ "host: write one JSON message + newline to the child's stdin",
+ "server: for each line on stdin:",
+ "  msg = parse JSON(line)",
+ "  log(...) to stderr             # the fix: stdout is the wire",
+ "  (bug) print(...) to stdout     # breaks the host's parser",
+ "  if msg has no id: return       # a notification gets no reply",
+ "  if params do not fit the method: reply {id, error: -32602}",
+ "  else: reply {id, result}",
+ "  write the reply as one line on stdout",
+ "host: for each line on stdout:",
+ "  if the line is not JSON: close the connection",
+ "  match the reply to its request by id"
+ ],
+ real:[
+ "func handle(m Msg) *Msg {",
+ "\tif m.ID == nil { // a notification: nobody replies",
+ "\t\treturn nil",
+ "\t}",
+ "// ...",
+ "\t\tvar p struct {",
+ "\t\t\tName string `json:\"name\"`",
+ "\t\t}",
+ "\t\tif json.Unmarshal(m.Params, &p) != nil || p.Name == \"\" {",
+ "\t\t\treturn &Msg{JSONRPC: \"2.0\", ID: m.ID, Error: &RPCError{-32602, \"invalid params\"}}",
+ "// ...",
+ "func serveStdio(in io.Reader, out, logw io.Writer, debugOnStdout bool) {",
+ "\tsc := bufio.NewScanner(in)",
+ "\tfor sc.Scan() {",
+ "\t\tvar m Msg",
+ "\t\tif err := json.Unmarshal(sc.Bytes(), &m); err != nil {",
+ "\t\t\tcontinue",
+ "\t\t}",
+ "\t\tif debugOnStdout {",
+ "\t\t\tfmt.Fprintln(out, \"DEBUG loading graph\") // the bug: a log line on the wire",
+ "\t\t} else {",
+ "\t\t\tfmt.Fprintln(logw, \"DEBUG loading graph\") // the fix: stderr",
+ "\t\t}",
+ "\t\tif r := handle(m); r != nil {",
+ "\t\t\tb, _ := json.Marshal(r)",
+ "\t\t\tfmt.Fprintln(out, string(b))",
+ "\t\t}",
+ "\t}",
+ "}",
+ "// ...",
+ "\tinR, inW := io.Pipe()   // the child's stdin",
+ "\toutR, outW := io.Pipe() // the child's stdout",
+ "\tvar stderr strings.Builder",
+ "\tgo func() { serveStdio(inR, outW, &stderr, debugOnStdout); outW.Close() }()",
+ "\tgo func() {",
+ "\t\tfor _, l := range lines {",
+ "\t\t\tfmt.Println(\"  host -> stdin :\", l)",
+ "\t\t\tfmt.Fprintln(inW, l)",
+ "\t\t}",
+ "\t\tinW.Close()",
+ "\t}()",
+ "\tsc := bufio.NewScanner(outR)",
+ "\tfor sc.Scan() {",
+ "\t\tvar m Msg",
+ "\t\tif err := json.Unmarshal(sc.Bytes(), &m); err != nil {",
+ "\t\t\tfmt.Printf(\"  host <- stdout: %q -> parse error, connection closed\\n\", sc.Text())",
+ "\t\t\tinR.Close()",
+ "\t\t\treturn",
+ "\t\t}",
+ "\t\tfmt.Println(\"  host <- stdout:\", sc.Text())"
+ ]},
+steps:[
+ {"t": "The host spawns the server", "b": "Claude Desktop reads its configuration and starts the proxy as a child process. It holds the child's standard input and standard output. There is no port and no login.", "w": "The host owns the process. When Claude Desktop quits, the proxy quits with it.", "m": [["note", "srv", 120, "child process started", "svc"], ["host", "srv", 170, "stdin: one JSON line per message"], ["srv", "host", 210, "stdout: one JSON line per message"]], "pc": [1], "st": {"host": ["connected", "ok"], "srv": ["running", "ok"]}},
+ {"t": "A request", "b": "The host sends a request: an id, a method and params. Here the method is initialize, the handshake. It travels as one line of JSON on the proxy's standard input.", "w": "A request always carries an id. The id is how the answer finds its question.", "m": [["host", "srv", 130, "{\"id\":1,\"method\":\"initialize\"}"]], "pc": [2, 3, 4], "st": {"host": ["waiting for id 1", "wait"], "srv": ["reading", "wait"]}},
+ {"t": "A response", "b": "The proxy answers on standard output. The answer carries the same id, 1, and a result: the version and capabilities it agreed to.", "w": "Same id, so the host knows which request this answers. Many requests can be in flight at once.", "m": [["host", "srv", 130, "{\"id\":1,\"method\":\"initialize\"}"], ["srv", "host", 180, "{\"id\":1,\"result\":{...}}", "ok"]], "pc": [9, 10, 11, 13], "st": {"host": ["id 1 answered", "ok"], "srv": ["running", "ok"]}},
+ {"t": "A notification", "b": "The host sends notifications/initialized. It has no id. Nobody replies to it.", "w": "A notification is a fact, not a question. No id means no answer is expected or allowed.", "m": [["host", "srv", 130, "{\"method\":\"notifications/initialized\"}", "undo"], ["note", "srv", 180, "no id, so no reply", "undo"]], "pc": [7], "st": {"host": ["ready", "ok"], "srv": ["ready", "ok"]}},
+ {"t": "An error", "b": "The host calls a tool with a wrong parameter type. The protocol itself broke, so the proxy answers with an error, code -32602 (invalid params), and the same id.", "w": "An error is the fourth shape. It replaces result. It is for broken protocol, not for a refused query.", "m": [["host", "srv", 130, "{\"id\":2,\"method\":\"tools/call\",...}"], ["srv", "host", 180, "{\"id\":2,\"error\":{\"code\":-32602}}", "fail"]], "pc": [8, 10], "st": {"host": ["id 2 failed", "fail"], "srv": ["ready", "ok"]}},
+ {"t": "The failure that matters: a log line on stdout", "b": "A developer adds a debug print. The proxy writes DEBUG loading graph to standard output. The host reads it as a message, cannot parse it as JSON, and drops the connection.", "w": "On stdio, standard output is the wire. One stray print breaks every tool for that user.", "m": [["srv", "host", 130, "stdout: DEBUG loading graph", "fail"], ["note", "host", 180, "parse error: not JSON", "fail"], ["band", 250, "connection closed: every tool is gone for this user", "fail"]], "pc": [6, 12], "st": {"host": ["connection broken", "fail"], "srv": ["killed", "fail"]}, "hl": {"host": "fail", "srv": "fail"}},
+ {"t": "The fix: logs go to stderr", "b": "Logs go to standard error, which the host writes to a log file. Or they go through the protocol's logging notification. Standard output carries only JSON-RPC messages.", "w": "Keep the wire clean. stdout is for messages, stderr is for people.", "m": [["srv", "err", 130, "DEBUG loading graph", "undo"], ["host", "srv", 190, "{\"id\":3,\"method\":\"tools/list\"}"], ["srv", "host", 230, "{\"id\":3,\"result\":{\"tools\":[...]}}", "ok"]], "pc": [5, 10, 13], "st": {"host": ["connected", "ok"], "srv": ["running", "ok"], "err": ["log kept", "undo"]}},
+]},
+"http":{actors:[{"id": "cli", "l": "Proxy (as client)", "c": "svc"}, {"id": "lb", "l": "Load balancer", "c": "undo"}, {"id": "svc", "l": "Remote MCP service", "c": "coord"}],code:{label:"Go",map:{"1": [6, 8], "2": [9, 10], "3": [13], "4": [14], "5": [16], "6": [19], "7": [22, 23], "8": [26], "9": [25, 28], "10": [25, 31]},
+ pc:[
+ "on POST /mcp with one JSON-RPC message in the body:",
+ "  if the message has no id: answer 202 Accepted, no body",
+ "  if the answer needs several messages:",
+ "    Content-Type: text/event-stream",
+ "    send each progress update as a \"data:\" event",
+ "    send the result as the last \"data:\" event",
+ "  else: Content-Type: application/json, one {id, result}",
+ "on GET /sse (the old two-endpoint form):",
+ "  if legacy is kept: answer with event endpoint /messages",
+ "  else: 404, the old client cannot connect"
+ ],
+ real:[
+ "}",
+ "",
+ "// httpHandler is the Streamable HTTP side: one endpoint, POST /mcp.",
+ "func httpHandler(legacy bool) http.Handler {",
+ "\tmux := http.NewServeMux()",
+ "\tmux.HandleFunc(\"/mcp\", func(w http.ResponseWriter, r *http.Request) {",
+ "\t\tvar m Msg",
+ "\t\tjson.NewDecoder(r.Body).Decode(&m)",
+ "\t\tif m.ID == nil { // notification: 202, no body",
+ "\t\t\tw.WriteHeader(http.StatusAccepted)",
+ "\t\t\treturn",
+ "\t\t}",
+ "\t\tif m.Method == \"tools/call\" && strings.Contains(string(m.Params), \"slow\") {",
+ "\t\t\tw.Header().Set(\"Content-Type\", \"text/event-stream\") // several messages",
+ "\t\t\tfor _, p := range []string{\"40%\", \"80%\"} {",
+ "\t\t\t\tfmt.Fprintf(w, \"data: {\\\"method\\\":\\\"notifications/progress\\\",\\\"params\\\":{\\\"progress\\\":%q}}\\n\\n\", p)",
+ "\t\t\t}",
+ "\t\t\tb, _ := json.Marshal(handle(m))",
+ "\t\t\tfmt.Fprintf(w, \"data: %s\\n\\n\", b)",
+ "\t\t\treturn",
+ "\t\t}",
+ "\t\tw.Header().Set(\"Content-Type\", \"application/json\") // one answer",
+ "\t\tjson.NewEncoder(w).Encode(handle(m))",
+ "\t})",
+ "\tif legacy { // the old two-endpoint form, kept for old clients",
+ "\t\tmux.HandleFunc(\"/sse\", func(w http.ResponseWriter, r *http.Request) {",
+ "\t\t\tw.Header().Set(\"Content-Type\", \"text/event-stream\")",
+ "\t\t\tfmt.Fprint(w, \"event: endpoint\\ndata: /messages\\n\\n\")",
+ "\t\t})",
+ "\t}",
+ "\treturn mux",
+ "}"
+ ]},
+steps:[
+ {"t": "Always running, one endpoint", "b": "The remote service runs all the time behind a load balancer. It has one endpoint, /mcp. The proxy is now the client.", "w": "Same messages as on stdio. Only the carrier changes: HTTP instead of a pipe.", "m": [["note", "svc", 130, "one endpoint: POST /mcp"]], "pc": [1], "st": {"cli": ["ready", "ok"], "lb": ["routing", "ok"], "svc": ["running", "ok"]}},
+ {"t": "A request is a POST", "b": "The proxy POSTs a tools/call request to /mcp. The load balancer forwards it like any HTTP request.", "w": "Normal HTTP infrastructure works: TLS, auth headers, load balancing, logs.", "m": [["cli", "lb", 130, "POST /mcp {id:7, tools/call}"], ["lb", "svc", 170, "POST /mcp {id:7}"]], "pc": [1, 7], "st": {"cli": ["waiting for id 7", "wait"], "svc": ["working", "wait"]}},
+ {"t": "A short answer is plain JSON", "b": "The query is quick. The service answers with Content-Type application/json and one response carrying id 7.", "w": "One request, one response, done. Most calls look like this.", "m": [["cli", "lb", 130, "POST /mcp {id:7, tools/call}"], ["lb", "svc", 170, "POST /mcp {id:7}"], ["svc", "cli", 220, "200 application/json {id:7, result}", "ok"]], "pc": [7], "st": {"cli": ["id 7 answered", "ok"], "svc": ["running", "ok"]}},
+ {"t": "A long answer opens a stream", "b": "A slow query. The service answers the POST with Content-Type text/event-stream. It sends progress, then the result, on that SSE (Server-Sent Events) stream.", "w": "The server may open a stream when it has several messages to send for one request.", "m": [["cli", "svc", 120, "POST /mcp {id:8, tools/call}"], ["svc", "cli", 165, "SSE: progress 40%", "undo"], ["svc", "cli", 205, "SSE: progress 80%", "undo"], ["svc", "cli", 250, "SSE: {id:8, result}", "ok"]], "pc": [3, 4, 5, 6], "st": {"cli": ["id 8 answered", "ok"], "svc": ["stream closed", "ok"]}},
+ {"t": "A notification gets 202", "b": "The user stops a query. The proxy POSTs notifications/cancelled. It has no id, so the service answers 202 Accepted with no body.", "w": "Over HTTP a notification still gets an HTTP status, but never a JSON-RPC response.", "m": [["cli", "svc", 130, "POST notifications/cancelled", "undo"], ["svc", "cli", 180, "202 Accepted, no body"]], "pc": [2], "st": {"cli": ["cancelled", "undo"], "svc": ["query stopped", "undo"]}},
+ {"t": "The failure: an old client", "b": "An old client only speaks HTTP with SSE, the older two-endpoint form. It opens GET /sse first. The new service has no such endpoint and returns 404.", "w": "Transports changed in 2025. A client that never upgraded cannot connect at all.", "m": [["cli", "svc", 130, "GET /sse (old two-endpoint form)", "fail"], ["svc", "cli", 180, "404 Not Found", "fail"]], "pc": [8, 10], "st": {"cli": ["cannot connect", "fail"], "svc": ["running", "ok"]}, "hl": {"cli": "fail"}, "lbl": {"cli": "Old client"}},
+ {"t": "The fix, and the rule", "b": "Keep the legacy /sse endpoint beside /mcp until the old client upgrades. Both carry the same four shapes.", "w": "Request, response, error, notification. Same on stdio, Streamable HTTP and the old form.", "m": [["cli", "svc", 120, "GET /sse (legacy kept)", "ok"], ["svc", "cli", 160, "event: endpoint /messages", "ok"], ["band", 240, "same four shapes on every transport: request, response, error, notification", "ok"]], "pc": [8, 9], "st": {"cli": ["connected", "ok"], "svc": ["two doors", "ok"]}, "lbl": {"cli": "Old client"}},
+]},
+};
+let mode="stdio";
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const col=k=>k?`var(--${k})`:"var(--fg)";
+function el(tag,attrs,text){const e=document.createElementNS(NS,tag);for(const a in attrs)e.setAttribute(a,attrs[a]);if(text!==undefined)e.textContent=text;return e;}
+let i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=LESSON[mode].code,s=LESSON[mode].steps[i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function layout(){const a=LESSON[mode].actors,n=a.length,gap=900/n,w=Math.min(176,gap-20),X={};a.forEach((x,k)=>X[x.id]=gap*(k+.5));return{a,w,X};}
+function render(){
+  const T=LESSON[mode],s=T.steps[i],{a,w,X}=layout();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${T.steps.length}`;
+  const ag=$("actors");ag.replaceChildren();
+  a.forEach(x=>{const cx=X[x.id],fill=col((s.hl&&s.hl[x.id])||x.c||"coord");
+    ag.appendChild(el("line",{x1:cx,y1:72,x2:cx,y2:340,stroke:"var(--line)","stroke-width":2,"stroke-dasharray":"4 6"}));
+    ag.appendChild(el("rect",{class:"box",x:cx-w/2,y:20,width:w,height:52,rx:8,fill}));
+    const lb=(s.lbl&&s.lbl[x.id])||x.l;ag.appendChild(el("text",{x:cx,y:52,"text-anchor":"middle","font-size":lb.length>18?13:15,fill:"#fff"},lb));
+    const st=s.st&&s.st[x.id];if(st){const c=st[1]||"line",light=c==="line";
+      ag.appendChild(el("rect",{class:"box",x:cx-w/2+8,y:350,width:w-16,height:28,rx:14,fill:col(c)}));
+      ag.appendChild(el("text",{x:cx,y:369,"text-anchor":"middle","font-size":st[0].length>18?11:13,fill:light?"var(--fg)":"#fff"},st[0]));}
+  });
+  const g=$("msgs");g.replaceChildren();
+  (s.m||[]).forEach((m,k)=>{
+    const e=el("g",{class:"msg"});
+    if(m[0]==="band"){const c=col(m[3]||"fail");
+      e.appendChild(el("rect",{x:12,y:m[1]-17,width:876,height:26,fill:"var(--panel)",stroke:c,"stroke-dasharray":"6 4"}));
+      e.appendChild(el("text",{x:450,y:m[1]+1,"text-anchor":"middle",fill:c},m[2]));}
+    else if(m[0]==="note"){const c=col(m[4]),cx=X[m[1]],nw=Math.max(110,m[3].length*7+20),x0=Math.max(4,Math.min(896-nw,cx-nw/2));
+      e.appendChild(el("rect",{x:x0,y:m[2]-16,width:nw,height:24,rx:6,fill:"var(--panel)",stroke:c,"stroke-width":2}));
+      e.appendChild(el("text",{x:x0+nw/2,y:m[2]+1,"text-anchor":"middle",fill:c},m[3]));}
+    else{const [f,t,y,txt,kind,dash]=m,x1=X[f],x2=X[t],dir=x2>x1?1:-1,c=col(kind);
+      const ln={x1:x1+dir*4,y1:y,x2:x2-dir*4,y2:y,stroke:c,"marker-end":"url(#arr)"};if(dash)ln["stroke-dasharray"]="7 5";
+      e.appendChild(el("line",ln));
+      const tx=el("text",{class:"halo",x:(x1+x2)/2,y:y-6,"text-anchor":"middle",fill:c},txt);e.appendChild(tx);g.appendChild(e);
+      const room=Math.abs(x2-x1)-36,tw=tx.getBBox().width;if(tw>room)tx.setAttribute("font-size",Math.max(10.5,13*room/tw).toFixed(1));}
+    if(!e.parentNode)g.appendChild(e);
+    const show=()=>e.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,140*k+30);
+  });
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===T.steps.length-1;
+}
+function go(n){i=Math.max(0,Math.min(LESSON[mode].steps.length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=LESSON[mode].steps.length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

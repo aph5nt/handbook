@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orchestration vs choreography</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Saga orchestration versus choreography</h1>
+  <p class="lede">The same phone order runs two ways. An orchestrator calls payment, stock and shipping in turn. Or there is no conductor and each service reacts to the last event. Press <b>Next</b>, and watch both handle a shipping failure.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="orch" id="tab-orch">Orchestration: one conductor</button>
+    <button role="tab" aria-selected="false" data-mode="chor" id="tab-chor">Choreography: everyone listens</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 390" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">An order saga run by an orchestrator, or by services reacting to events on a bus</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-saga-orchestration-choreography/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">orchestrator, or event bus</span>
+    <span style="--c:var(--svc)">service</span>
+    <span style="--c:var(--ok)">step done</span>
+    <span style="--c:var(--fail)">step failed</span>
+    <span style="--c:var(--undo)">undone by compensation</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet orchestration</h2>
+      <p>Temporal, AWS Step Functions and Camunda. The plan is code or a diagram you can read. A subscription top-up with charge, grant and receipt fits here, because the refund path must be obvious.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet choreography</h2>
+      <p>Services on Kafka reacting to each other's events. Good for loosely coupled teams and short flows of two or three steps. Each service still uses an outbox so its event is never lost.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Orchestration</th><th>Choreography</th></tr>
+      <tr><td>Who holds the plan</td><td>One orchestrator service</td><td>Nobody. It emerges from the events</td></tr>
+      <tr><td>Where is order 501?</td><td>One row in the orchestrator's table</td><td>Read the logs of every service</td></tr>
+      <tr><td>Coupling</td><td>Orchestrator knows every service</td><td>Services know only events</td></tr>
+      <tr><td>Failure handling</td><td>Orchestrator sends compensations backwards</td><td>Each service listens for failure events</td></tr>
+      <tr><td>Fits</td><td>Long flows, branches, clear refunds</td><td>Two or three steps, independent teams</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Orchestration puts the plan in one place I can read and debug. Choreography removes the centre but hides the flow, so I choreograph short flows and orchestrate long ones."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const OA={o2p:[370,108,170,238,262,165,"end"],p2o:[200,238,400,108,300,205,"start"],o2s:[440,108,440,238,430,170,"end"],s2o:[460,238,460,108,470,170,"start"],o2h:[530,108,730,238,650,160,"start"],h2o:[700,238,500,108,565,205,"end"]};
+const CXS={o:115,p:335,s:555,h:775};
+function scene(s){
+  let b="";const msgs=[];
+  if(mode==="orch"){
+    b+=BOX(310,24,280,84,"var(--coord)","Order saga orchestrator",s.state);
+    [["p","Payment",40],["s","Stock",330],["h","Shipping",620]].forEach(([k,n,x])=>{b+=BOX(x,240,240,70,"var(--svc)",n);const c=s.st[k];b+=CHIP(x+120,322,180,c[0],c[1]==="n"?"var(--line)":KC[c[1]])});
+    (s.m||[]).forEach(([k,l,kd])=>{const a=OA[k];msgs.push(ARROW(a[0],a[1],a[2],a[3],l,KC[kd||"n"],{lx:a[4],ly:a[5],a:a[6]}))});
+  }else{
+    [["o","Order"],["p","Payment"],["s","Stock"],["h","Shipping"]].forEach(([k,n])=>{const x=CXS[k];b+=BOX(x-95,30,190,64,"var(--svc)",n);const c=s.st[k];b+=CHIP(x,290,180,c[0],c[1]==="n"?"var(--line)":KC[c[1]])});
+    b+=R(20,180,860,56,"var(--panel)",{st:"var(--coord)"})+T(450,256,"event bus (Kafka)",{s:13,c:"var(--muted)"});
+    (s.old||[]).forEach(([k,txt,kd])=>b+=CHIP(CXS[k],195,180,txt,"var(--line)"));
+    (s.pub||[]).forEach(([k,txt,kd])=>{const x=CXS[k];msgs.push(ARROW(x-20,96,x-20,192,"",KC[kd||"n"])+CHIP(x,195,180,txt,KC[kd||"c"]))});
+    (s.sub||[]).forEach(([k,kd])=>{const x=CXS[k];msgs.push(ARROW(x+30,178,x+30,98,"",KC[kd||"n"]))});
+  }
+  if(s.track)msgs.push(CHIP(450,332,460,s.track,"var(--ok)"));
+  if(s.ban)msgs.push(BANNER(374,s.ban));
+  return{base:b,msgs};
+}
+const I=["idle","n"];
+const steps={
+orch:[
+ {t:"Order 501 is placed",b:"Line 1 saves a row in the orchestrator's own table: order 501, step 1, running. The plan is a list of three steps, each a command and its undo.",w:"One service holds the plan and the current step. That is the point of orchestration.",state:"order 501: step 1 of 3",st:{p:I,s:I,h:I},pc:[1]},
+ {t:"Command 1: charge",b:"Line 3 sets row.step to 1. Line 4 calls payment. Payment commits and replies done. Line 5 checks: is the reply no? No, so the loop moves to step 2.",w:"Each step is a command and a reply. The row is updated before each call, so a restart knows where it was.",state:"order 501: step 2 of 3",st:{p:["charged","ok"],s:I,h:I},m:[["o2p","charge"],["p2o","done","ok"]],pc:[2,3,4,5]},
+ {t:"Command 2: reserve stock",b:"Line 3 sets row.step to 2. Line 4 calls stock. It commits and replies done. Line 5 checks again: no refusal, so the loop moves to step 3.",w:"Two steps are committed and visible. A later refusal must undo both.",state:"order 501: step 3 of 3",st:{p:["charged","ok"],s:["reserved","ok"],h:I},m:[["o2s","reserve"],["s2o","done","ok"]],pc:[2,3,4,5]},
+ {t:"Command 3 fails",b:"Line 4 calls shipping. Shipping checks the address, finds it outside the delivery area, and replies no. Line 5 is now true, so line 6 writes: failed at step 3.",w:"The row says which step failed, so it also says which steps are done: every step before 3.",state:"order 501: failed at step 3",st:{p:["charged","ok"],s:["reserved","ok"],h:["refused","fail"]},m:[["o2h","book courier"],["h2o","no","fail"]],pc:[4,5,6]},
+ {t:"Compensate backwards",b:"Line 7 walks backwards from the step before the failed one: step 2's undo releases the stock, then step 1's undo refunds the card. Line 8 writes: cancelled.",w:"Backwards, because a later step may depend on an earlier one. The refund path is written in one place that anyone can read.",state:"order 501: cancelled",st:{p:["refunded","undo"],s:["released","undo"],h:["refused","fail"]},m:[["o2s","release","undo"],["s2o","done","ok"],["o2p","refund","undo"],["p2o","done","ok"]],pc:[7,8]},
+ {t:"Where is order 501?",b:"Support asks. Line 10 reads one row. The program prints: step 3, cancelled at step 3. Line 9, the done state, was never reached.",w:"The cost: the orchestrator knows every service, and it is one more service to run. The gain is a flow you can see and debug.",state:"order 501: cancelled, refunded",st:{p:["refunded","undo"],s:["released","undo"],h:["refused","fail"]},pc:[10]}
+],
+chor:[
+ {t:"Order publishes OrderPlaced",b:"Line 1 saves order 501 and publishes OrderPlaced on the bus, through the order service's outbox. It calls nobody and does not know who listens.",w:"No conductor. The only link between services is an event name.",st:{o:["order saved","ok"],p:I,s:I,h:I},pub:[["o","OrderPlaced"]],pc:[1]},
+ {t:"Payment reacts",b:"The bus finds who listens for OrderPlaced: payment, line 2. Payment charges the card and publishes PaymentTaken.",w:"Payment does not know who comes next. It just announces what it did.",st:{o:["order saved","ok"],p:["charged","ok"],s:I,h:I},old:[["o","OrderPlaced"]],sub:[["p"]],pub:[["p","PaymentTaken"]],pc:[2]},
+ {t:"Stock reacts",b:"Stock listens for PaymentTaken, line 3. It reserves the phone and publishes StockReserved.",w:"The flow is now spread over three services. The order of steps exists only in who listens to what.",st:{o:["order saved","ok"],p:["charged","ok"],s:["reserved","ok"],h:I},old:[["o","OrderPlaced"],["p","PaymentTaken"]],sub:[["s"]],pub:[["s","StockReserved"]],pc:[3]},
+ {t:"Shipping reacts and fails",b:"Shipping listens for StockReserved, line 4. Line 5 checks the address: it is outside the delivery area. So line 6 publishes ShippingFailed.",w:"A failure is just another event. Shipping does not know who must undo what.",st:{o:["order saved","ok"],p:["charged","ok"],s:["reserved","ok"],h:["refused","fail"]},old:[["o","OrderPlaced"],["p","PaymentTaken"],["s","StockReserved"]],sub:[["h"]],pub:[["h","ShippingFailed","fail"]],pc:[4,5,6]},
+ {t:"Each service undoes its own step",b:"Three listeners fire on ShippingFailed: line 7 releases the phone, line 8 refunds the card, line 9 marks order 501 cancelled.",w:"Every service must know which failure events concern it. Add a step and several services may need to change.",st:{o:["cancelled","undo"],p:["refunded","undo"],s:["released","undo"],h:["refused","fail"]},old:[["o","OrderPlaced"],["p","PaymentTaken"],["s","StockReserved"],["h","ShippingFailed"]],sub:[["o","undo"],["p","undo"],["s","undo"]],pc:[7,8,9]},
+ {t:"The failure: nobody can see the flow",b:"Support asks where order 501 is. No row holds the answer: line 10 is the gap. Each service knows only its own part, so someone must read four services' logs and the bus.",w:"With more steps, events can even trigger each other in a loop. Choreography hides the flow.",st:{o:["which step?","fail"],p:["read my log","fail"],s:["read my log","fail"],h:["read my log","fail"]},old:[["o","OrderPlaced"],["p","PaymentTaken"],["s","StockReserved"],["h","ShippingFailed"]],ban:"Where is order 501? Four services hold one piece of the answer each.",pc:[10]},
+ {t:"The fix: a tracker reads every event",b:"Line 11 adds a listener on every event. It stores the last event per order id. The program prints: last event ShippingFailed. That answers 'where' with no change to the services.",w:"The tracker shows the flow but does not drive it. Once the flow grows branches, move to an orchestrator.",st:{o:["cancelled","undo"],p:["refunded","undo"],s:["released","undo"],h:["refused","fail"]},old:[["o","OrderPlaced"],["p","PaymentTaken"],["s","StockReserved"],["h","ShippingFailed"]],track:"tracker: order 501, last event ShippingFailed",pc:[11]}
+]};
+const code={"orch": {"label": "Go", "pc": ["on order placed: row = (id, step 1, running)   # in its own table", "for each step in the plan, in order:", "  row.step = i; save the row", "  reply = call step.command", "  if reply is no:", "    row.state = failed at step i", "    for each done step, backwards: call its undo", "    row.state = cancelled; stop", "row.state = done", "on \"where is order 501?\": read the row"], "real": ["// Step is one line of the orchestrator's plan.", "type Step struct {", "\tName string", "\tDo   func() bool", "\tUndo func()", "}", "", "// Row is the orchestrator's own record of one order.", "type Row struct {", "\tStep  int", "\tState string", "}", "", "// Run walks the plan, and walks it backwards on a refusal.", "func (o *Orchestrator) Run(id int) {", "\trow := &Row{Step: 1, State: \"running\"}", "\to.Table[id] = row", "\tfor i, st := range o.Plan {", "\t\trow.Step = i + 1", "\t\tif !st.Do() {", "\t\t\trow.State = fmt.Sprintf(\"failed at step %d\", row.Step)", "\t\t\tfor j := i - 1; j >= 0; j-- {", "\t\t\t\to.Plan[j].Undo()", "\t\t\t}", "\t\t\trow.State = fmt.Sprintf(\"cancelled at step %d\", row.Step)", "\t\t\treturn", "\t\t}", "\t}", "\trow.State = \"done\"", "}"], "map": {"1": [16, 17], "2": [18], "3": [19], "4": [20], "5": [20], "6": [21], "7": [22, 23], "8": [25, 26], "9": [29], "10": [8]}}, "chor": {"label": "Go", "pc": ["order, on checkout: save order; publish OrderPlaced    # through its outbox", "payment, on OrderPlaced: charge; publish PaymentTaken", "stock, on PaymentTaken: reserve; publish StockReserved", "shipping, on StockReserved:", "  if the address is ok: book; publish Shipped", "  else: publish ShippingFailed", "stock, on ShippingFailed: release", "payment, on ShippingFailed: refund", "order, on ShippingFailed: mark cancelled", "missing: nothing records the whole flow", "fix: tracker, on every event: row[order id] = last event"], "real": ["// Publish calls the listeners. Nothing here knows the order of the steps.", "func (b *Bus) Publish(id int, event string) {", "\tfor _, f := range b.all {", "\t\tf(id, event)", "\t}", "\tfor _, f := range b.subs[event] {", "\t\tf(id)", "\t}", "}", "", "// Wire is the whole flow, spread over each service's own listeners.", "func Wire(b *Bus, s *Shop, addressOK bool) {", "\tb.On(\"OrderPlaced\", func(id int) { s.Payment = \"charged\"; b.Publish(id, \"PaymentTaken\") })", "\tb.On(\"PaymentTaken\", func(id int) { s.Stock = \"reserved\"; b.Publish(id, \"StockReserved\") })", "\tb.On(\"StockReserved\", func(id int) {", "\t\tif addressOK {", "\t\t\ts.Shipping = \"booked\"", "\t\t\tb.Publish(id, \"Shipped\")", "\t\t\treturn", "\t\t}", "\t\ts.Shipping = \"refused\"", "\t\tb.Publish(id, \"ShippingFailed\")", "\t})", "\tb.On(\"ShippingFailed\", func(id int) { s.Stock = \"released\" })", "\tb.On(\"ShippingFailed\", func(id int) { s.Payment = \"refunded\" })", "\tb.On(\"ShippingFailed\", func(id int) { s.Order = \"cancelled\" })", "}", "", "// Track is the fix: a read model that records the last event per order.", "func Track(b *Bus, rows map[int]string) {", "\tb.all = append(b.all, func(id int, event string) { rows[id] = event })", "}"], "map": {"1": [1, 2], "2": [13], "3": [14], "4": [15], "5": [16, 17, 18], "6": [21, 22], "7": [24], "8": [25], "9": [26], "10": [11], "11": [30, 31]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

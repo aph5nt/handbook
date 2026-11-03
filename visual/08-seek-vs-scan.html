@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seek versus scan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Seek versus scan: how many pages to find one row</h1>
+  <p class="lede">A <b>users</b> table holds a million rows, about 10,000 pages on disk, drawn as the long strip. A B-tree index on <code>email</code> sits above it. The login page asks for <code>ana@x.io</code>. Watch the <b>pages read</b> counter.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="scan">Table scan</button>
+    <button role="tab" aria-selected="false" data-mode="seek">Index seek</button>
+    <button role="tab" aria-selected="false" data-mode="fn">lower(email) breaks it</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A B-tree index above a strip of table pages</title>
+      <g id="edges" stroke-width="2"></g>
+      <g id="tree" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700"></g>
+      <g id="cross" class="msg" stroke="var(--fail)" stroke-width="5"><line x1="80" y1="20" x2="820" y2="210"/><line x1="820" y1="20" x2="80" y2="210"/></g>
+      <text x="30" y="258" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)">table pages: 1,000,000 rows, each box about 250 pages</text>
+      <g id="strip"></g>
+      <path id="ptrow" class="msg" stroke="var(--ok)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <rect x="20" y="322" width="860" height="46" rx="8" fill="none" stroke="var(--line)"/>
+      <text id="pages" x="40" y="351" font-family="Atkinson Hyperlegible,system-ui" font-size="17" font-weight="700"></text>
+      <text id="sql" x="860" y="351" text-anchor="end" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-seek-vs-scan/main.go</code> (<code>go run .</code>). The program models the B-tree in memory, with 300 keys per page, and counts page reads.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">page read</span>
+    <span style="--c:var(--ok)">the row we want</span>
+    <span style="--c:var(--wait)">range walked sideways</span>
+    <span style="--c:var(--fail)">index cannot be used</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p><code>WHERE tx_hash = :h</code> on an indexed column is a seek. <code>WHERE block_height BETWEEN 100 AND 200</code> is a range scan: one seek, then a short walk. A report that reads most of the table should scan: a million seeks cost more than one sweep.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep the column bare in the predicate. Move the function to the constant side, store the value already normalised, or build an index on the expression. Watch for an ORM that sends a string to an integer column: the cast lands on the column and the seek is gone.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Index seek</th><th>Range scan</th><th>Table scan</th></tr>
+      <tr><td>Pages read here</td><td>about 4: root, inner, leaf, row</td><td>a seek plus a few leaves</td><td>about 10,000, every page</td></tr>
+      <tr><td>Grows with</td><td>tree depth, which barely grows</td><td>the size of the range</td><td>the size of the table</td></tr>
+      <tr><td>Best for</td><td>one key</td><td>a narrow range</td><td>reading most rows anyway</td></tr>
+      <tr><td>Broken by</td><td colspan="2">a function or cast on the column, a leading wildcard, arithmetic on the column, OR across columns</td><td>nothing, which is why it is the fallback</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A seek walks root to leaf in a few page reads. A function or cast on the column hides it from the index and the seek turns back into a full scan, so I keep the column bare."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const NS="http://www.w3.org/2000/svg";
+const T={r:[450,26,"a .. z"],i0:[180,96,"a .. h"],i1:[450,96,"i .. q"],i2:[720,96,"r .. z"]};
+const lv=["a .. am","an .. bz","c .. h","i .. k","l .. n","o .. q","r .. s","t .. v","w .. z"];
+lv.forEach((t,k)=>T["l"+k]=[60+k*97,170,t]);
+const E=[["r","i0"],["r","i1"],["r","i2"]];for(let k=0;k<9;k++)E.push(["i"+Math.floor(k/3),"l"+k]);
+const NB=40,PX=k=>30+k*21;
+// Draw the tree and the strip once.
+(function(){let e="",t="",s="";
+  E.forEach(([a,b])=>e+=`<line id="e-${b}" class="box" x1="${T[a][0]}" y1="${T[a][1]+30}" x2="${T[b][0]}" y2="${T[b][1]}" stroke="var(--line)"/>`);
+  for(const [id,[x,y,lab]] of Object.entries(T)){const w=id[0]==="l"?84:130;
+    t+=`<rect id="n-${id}" class="box" x="${x-w/2}" y="${y}" width="${w}" height="30" rx="6" fill="var(--line)"/><text id="t-${id}" x="${x}" y="${y+20}" text-anchor="middle" fill="var(--fg)">${lab}</text>`;}
+  for(let k=0;k<NB;k++)s+=`<rect id="p${k}" class="box" x="${PX(k)}" y="270" width="18" height="40" rx="3" fill="var(--line)"/>`;
+  $("edges").innerHTML=e;$("tree").innerHTML=t;$("strip").innerHTML=s;})();
+function $(id){return document.getElementById(id)}
+const Q1="WHERE email = 'ana@x.io'",Q2="WHERE lower(email) = 'ana@x.io'";
+const seekPath={r:"c",i0:"c",l1:"c"};
+const steps={
+scan:[
+ {t:"Start: no index",b:"Imagine the users table with no index on email. The engine knows nothing about where ana@x.io lives.",w:"Without an index, the only plan is to read every page.",q:Q1,n:{},p:[0,0],pg:0,dim:1},
+ {t:"Sweep the first quarter",b:"The engine reads page after page from the start of the strip and checks every row's email.",w:"Each page costs a disk or cache read, found or not.",q:Q1,n:{},p:[0,10],pg:2500,dim:1},
+ {t:"Found it on page 17 of 40, keep going",b:"Each box stands for 250 pages. Ana's row is in box 17, page 4,250. The loop has no stop condition: without a unique index, the engine does not know there is only one ana@x.io.",w:"Finding the row early does not save the scan.",q:Q1,n:{},p:[0,25],f:17,pg:6250,dim:1},
+ {t:"Every page read",b:"The loop ends when the pages end. In the program, 1,000,000 rows at 100 per page cost 10,000 page reads and 1,000,000 comparisons, to return 1 row.",w:"The cost grows with the table. Double the users and the login gets twice as slow.",q:Q1,n:{},p:[0,40],f:17,pg:10000,dim:1},
+ {t:"When a scan is right",b:"Now the question is a report: all users who signed up this year, 60 percent of the table. The planner compares: 600,000 seeks at 4 pages each is 2,400,000 page reads, and one sweep is 10,000.",w:"For a query that reads most of the table, one sweep is cheaper than a million seeks. A full scan is not always wrong.",q:"WHERE signed_up >= '2026-01-01'",n:{},p:[0,40],pg:10000,dim:1,good:1}
+],
+seek:[
+ {t:"Start: an index on email",b:"Now there is a B-tree index on email. Inner pages hold key ranges. Leaves hold keys and a pointer to the row.",w:"Every leaf sits at the same depth. That depth is what you pay.",q:Q1,n:{},p:[0,0],pg:0},
+ {t:"Read the root",b:"The loop compares the key with the ranges in the root. Is ana@x.io in a to h? Yes, so it follows that child.",w:"One page read, and two thirds of the table are ruled out.",q:Q1,n:{r:"c"},p:[0,0],pg:1},
+ {t:"Read the inner page, then the leaf",b:"The inner page has the same check: an to bz holds ana@x.io. That child is a leaf, so the loop ends. Binary search inside the leaf finds the key and the address of its row.",w:"Three page reads so far. At 300 keys per page, the program builds 3 levels for a million keys.",q:Q1,n:seekPath,p:[0,0],pg:3},
+ {t:"Follow the pointer to the row",b:"One more read fetches the table page that holds Ana's row. Done.",w:"4 pages instead of 10,000. In the program, a billion keys need 4 levels: a table a thousand times bigger adds 1 read.",q:Q1,n:{...seekPath,l1:"ok"},p:[0,0],f:17,pg:4,ptr:1},
+ {t:"A range scan: walk sideways",b:"Now ask for every email from ana to anb: 3 rows that straddle two leaves. Seek to ana: 3 pages. The walk checks each key against anb, and the leaf runs out, so it reads 1 more leaf. Then 3 table pages: 7 in all.",w:"A range scan is one seek plus a short walk. Its cost grows with the range, not with the table.",q:"WHERE email BETWEEN 'ana' AND 'anb'",n:{...seekPath,l1:"w",l2:"w"},p:[17,19],pg:7}
+],
+fn:[
+ {t:"Start: same index, new query",b:"The login code now lower-cases the email to be safe: WHERE lower(email) = 'ana@x.io'. The index on email is still there.",w:"It looks harmless. Watch the counter.",q:Q2,n:{},p:[0,0],pg:0},
+ {t:"The index cannot help",b:"The check: is the column bare in the predicate? No, it is inside lower(). The tree is sorted by email, so comparing lower() of the key with a range tells the engine nothing about which child to take.",w:"A function on the column hides it from the index. The predicate is no longer SARGable (Search ARGument able).",q:Q2,n:{r:"f",i0:"f",i1:"f",i2:"f"},p:[0,0],pg:0,x:1},
+ {t:"Back to a full scan",b:"The engine reads every page and runs lower() on every row's email.",w:"10,000 pages again, plus 1,000,000 calls of lower(), in the program. The index is now only a write cost.",q:Q2,n:{r:"f",i0:"f",i1:"f",i2:"f"},p:[0,40],f:17,pg:10000,x:1},
+ {t:"Fix 1: lower-case on the constant side",b:"Store emails already lower-cased, and lower-case the input instead: WHERE email = lower(:input). The column is bare again.",w:"The seek is back: about four pages.",q:"WHERE email = lower(:input)",n:{...seekPath,l1:"ok"},p:[0,0],f:17,pg:4,ptr:1},
+ {t:"Fix 2: index the expression, and other breakers",b:"Or build an index on lower(email) itself. The same trap comes from an implicit cast (address = 123 on a text column), a leading wildcard (LIKE '%x.io'), arithmetic (height + 1 > :h) and OR across two columns.",w:"Keep the column bare, same type as the constant, with no function around it.",q:"CREATE INDEX ON users (lower(email))",n:{...seekPath,l1:"ok"},p:[0,0],f:17,pg:4,ptr:1}
+]};
+const nf={c:"var(--coord)",ok:"var(--ok)",w:"var(--wait)",f:"var(--fail)"};
+let mode="scan",i=0,timer=null;
+const code={
+"scan":{
+ label:"SQL",
+ pc:["seek(key):", "  page = root", "  while page is not a leaf:", "    page = the child whose key range holds key   # one page read per level", "  entry = binary search for key in the leaf", "  read the table page the entry points at        # one more read", "range(lo, hi):", "  seek(lo), then walk the linked leaves to the right while key <= hi", "  read a table page for each key", "scan(predicate):", "  for each table page:                           # every page, found or not", "    for each row: compute the predicate, keep the matches", "access_path(predicate):", "  if the column is bare in the predicate and an index sorts it: seek", "  else: scan                                     # lower(email), a cast, '%x'", "choose: if the query reads most rows, one scan beats a seek per row"],
+ real:["-- no index on email", "SELECT id, name FROM users WHERE email = 'ana@x.io';", "-- Seq Scan on users   rows=1", "--   Filter: email = 'ana@x.io'", "--   Rows Removed by Filter: 999999", "--   Buffers: shared read=10000", "", "-- when a scan is right: 60 percent of the table", "SELECT id FROM users WHERE signed_up >= '2026-01-01';", "-- Seq Scan on users   rows=600000"],
+ map:{"10": [2, 3], "11": [6], "12": [4, 5], "16": [8, 9, 10]}},
+"seek":{
+ label:"SQL",
+ pc:["seek(key):", "  page = root", "  while page is not a leaf:", "    page = the child whose key range holds key   # one page read per level", "  entry = binary search for key in the leaf", "  read the table page the entry points at        # one more read", "range(lo, hi):", "  seek(lo), then walk the linked leaves to the right while key <= hi", "  read a table page for each key", "scan(predicate):", "  for each table page:                           # every page, found or not", "    for each row: compute the predicate, keep the matches", "access_path(predicate):", "  if the column is bare in the predicate and an index sorts it: seek", "  else: scan                                     # lower(email), a cast, '%x'", "choose: if the query reads most rows, one scan beats a seek per row"],
+ real:["CREATE INDEX users_email ON users (email);", "", "SELECT id, name FROM users WHERE email = 'ana@x.io';", "-- Index Scan using users_email   rows=1", "--   Index Cond: email = 'ana@x.io'", "--   Buffers: shared read=4", "", "-- a range scan: one seek, then a short walk", "SELECT id, name FROM users", "WHERE  email BETWEEN 'ana' AND 'anb';", "-- Index Scan using users_email   rows=3", "--   Index Cond: email >= 'ana' AND email <= 'anb'", "--   Buffers: shared read=7"],
+ map:{"1": [3], "2": [4], "3": [5], "4": [5, 6], "5": [5], "6": [6], "7": [9, 10], "8": [11, 12], "9": [13]}},
+"fn":{
+ label:"SQL",
+ pc:["seek(key):", "  page = root", "  while page is not a leaf:", "    page = the child whose key range holds key   # one page read per level", "  entry = binary search for key in the leaf", "  read the table page the entry points at        # one more read", "range(lo, hi):", "  seek(lo), then walk the linked leaves to the right while key <= hi", "  read a table page for each key", "scan(predicate):", "  for each table page:                           # every page, found or not", "    for each row: compute the predicate, keep the matches", "access_path(predicate):", "  if the column is bare in the predicate and an index sorts it: seek", "  else: scan                                     # lower(email), a cast, '%x'", "choose: if the query reads most rows, one scan beats a seek per row"],
+ real:["-- the index is on email, the query is on lower(email)", "SELECT id, name FROM users WHERE lower(email) = 'ana@x.io';", "-- Seq Scan on users   rows=1", "--   Filter: lower(email) = 'ana@x.io'", "--   Buffers: shared read=10000", "", "-- fix 1: store it lower-cased, lower-case the input", "SELECT id, name FROM users WHERE email = lower(:input);", "-- Index Scan using users_email   Buffers: shared read=4", "", "-- fix 2: an index sorted by the expression", "CREATE INDEX users_lower_email ON users (lower(email));"],
+ map:{"1": [8], "6": [9], "10": [3], "11": [5], "12": [4], "13": [2], "14": [8, 9, 12], "15": [2, 3, 4]}}
+};
+const PCS={"scan": [[10], [10, 11, 12], [11, 12], [11], [16]], "seek": [[1], [1, 2], [3, 4, 5], [6], [7, 8, 9]], "fn": [[13], [13, 14, 15], [10, 11, 12, 15], [14, 1, 6], [14]]};
+for(const m in PCS)PCS[m].forEach((p,k)=>{steps[m][k].pc=p});
+const RLS={"seek": [[1, 3], null, null, null, null], "fn": [null, [2, 3, 4], null, [7, 8, 9], [11, 12]]};
+for(const m in RLS)RLS[m].forEach((r,k)=>{if(r)steps[m][k].rl=r});
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;$("sql").textContent=s.q;
+  for(const id of Object.keys(T)){const st=s.n[id];$("n-"+id).setAttribute("fill",st?nf[st]:"var(--line)");$("t-"+id).setAttribute("fill",st?"#fff":"var(--fg)");
+    $("n-"+id).style.opacity=s.dim?.35:1;$("t-"+id).style.opacity=s.dim?.35:1;}
+  E.forEach(([a,b])=>{const on=s.n[a]&&s.n[b]&&s.n[a]!=="f";$("e-"+b).setAttribute("stroke",on?"var(--coord)":"var(--line)");$("e-"+b).style.opacity=s.dim?.35:1;});
+  for(let k=0;k<NB;k++){let f="var(--line)";
+    if(k>=s.p[0]&&k<s.p[1])f=mode==="seek"&&i===4?"var(--wait)":s.good?"var(--ok)":"var(--coord)";
+    if(s.f===k&&!(mode==="seek"&&i===4))f="var(--ok)";$("p"+k).setAttribute("fill",f);}
+  const pr=$("ptrow");
+  if(s.ptr){pr.setAttribute("d",`M${T.l1[0]} 200 C ${T.l1[0]} 240, ${PX(17)+9} 230, ${PX(17)+9} 266`);pr.classList.add("on");}else pr.classList.remove("on");
+  $("cross").classList.toggle("on",!!s.x);
+  const pg=$("pages");pg.textContent=`pages read: about ${s.pg.toLocaleString("en-US")}`;
+  pg.setAttribute("fill",s.pg>=10000&&!s.good?"var(--fail)":s.pg>0&&s.pg<10?"var(--ok)":"var(--fg)");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

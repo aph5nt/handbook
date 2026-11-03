@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disaster recovery drill</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Disaster recovery and chaos: practise losing a region</h1>
+  <p class="lede">A team has a passive second region that has never served traffic. One night the main region fails, and the failover is its first real test. Then watch a team that drops its live region on purpose, in daylight, with an abort switch. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="night">Untested failover at night</button>
+    <button role="tab" aria-selected="false" data-mode="drill">Chaos drill in daylight</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Users, DNS and two regions with apps, databases, secrets and a backup</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-us" class="box" x="360" y="14" width="180" height="50" rx="8"/><text id="b-us-t" x="450" y="45">Users</text>
+        <rect id="b-dns" class="box" x="360" y="88" width="180" height="56" rx="8"/><text id="b-dns-t" x="450" y="110">DNS</text><text id="b-dns-l" x="450" y="131" class="sm"></text>
+        <line x1="450" y1="64" x2="450" y2="86" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+        <rect id="f-r1" x="20" y="160" width="380" height="168" rx="12" fill="none" stroke-width="3"/>
+        <text id="r1-l" x="40" y="186" text-anchor="start" fill="var(--fg)">Region 1</text>
+        <rect id="b-r1a" class="box" x="40" y="200" width="160" height="52" rx="8"/><text id="b-r1a-t" x="120" y="222">App</text><text id="b-r1a-l" x="120" y="242" class="sm"></text>
+        <rect id="b-r1d" class="box" x="220" y="200" width="160" height="52" rx="8"/><text id="b-r1d-t" x="300" y="222">Database</text><text id="b-r1d-l" x="300" y="242" class="sm"></text>
+        <rect id="b-r1s" class="box" x="40" y="264" width="160" height="52" rx="8"/><text id="b-r1s-t" x="120" y="286">Secrets</text><text id="b-r1s-l" x="120" y="306" class="sm"></text>
+        <rect id="f-r2" x="500" y="160" width="380" height="168" rx="12" fill="none" stroke-width="3"/>
+        <text id="r2-l" x="520" y="186" text-anchor="start" fill="var(--fg)">Region 2</text>
+        <rect id="b-r2d" class="box" x="520" y="200" width="160" height="52" rx="8"/><text id="b-r2d-t" x="600" y="222">Database replica</text><text id="b-r2d-l" x="600" y="242" class="sm"></text>
+        <rect id="b-r2a" class="box" x="700" y="200" width="160" height="52" rx="8"/><text id="b-r2a-t" x="780" y="222">App</text><text id="b-r2a-l" x="780" y="242" class="sm"></text>
+        <rect id="b-r2s" class="box" x="520" y="264" width="160" height="52" rx="8"/><text id="b-r2s-t" x="600" y="286">Secrets</text><text id="b-r2s-l" x="600" y="306" class="sm"></text>
+        <rect id="b-bk" class="box" x="700" y="264" width="160" height="52" rx="8"/><text id="b-bk-t" x="780" y="286">Backup</text><text id="b-bk-l" x="780" y="306" class="sm"></text>
+        <g class="sm"><text id="rpo" x="20" y="30" text-anchor="start" fill="var(--fg)"></text><text id="rto" x="20" y="52" text-anchor="start" fill="var(--fg)"></text>
+        <text id="act1" x="880" y="30" text-anchor="end" fill="var(--fail)"></text><text id="act2" x="880" y="52" text-anchor="end" fill="var(--fail)"></text></g>
+        <text id="cap" x="450" y="356" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-disaster-recovery-and-chaos/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">users and DNS</span>
+    <span style="--c:var(--ok)">serving or ready</span>
+    <span style="--c:var(--wait)">passive, behind, or dropped on purpose</span>
+    <span style="--c:var(--fail)">failed, missing, or a target blown</span>
+    <span style="--c:var(--line)">never used or not set up</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Two serving lanes kept identical by rule, so either can serve at any time: the parity rule is the disaster recovery plan. Netflix runs Chaos Monkey to kill instances and Chaos Kong to evacuate a whole region, rehearsed until it is a button. On staging, kill the primary database pod and time the failover.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Get RPO (Recovery Point Objective: how much data, in time, you may lose) and RTO (Recovery Time Objective: how long you may be down) from the business. Backups and replication meet the RPO. Failover meets the RTO. Restore backups on a timer. Check DNS, identity and secrets survive the region too.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Active-passive</th><th>Active-active</th></tr>
+      <tr><td>Failover time</td><td>Minutes, if it was practised</td><td>Seconds: the other region already serves</td></tr>
+      <tr><td>Data</td><td>The passive copy may be behind</td><td>Writes in both regions must be reconciled</td></tr>
+      <tr><td>Cost</td><td>One region mostly idle</td><td>Double the capacity, always on</td></tr>
+      <tr><td>The danger</td><td>It rots if it never serves</td><td>Conflicts between two writers</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I get RPO and RTO from the business, pick backups and replication for the first and failover for the second, and test the failover on purpose, because an untested failover is a plan, not a capability."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const base={f:{"b-us":C,"b-dns":C,"b-r1a":G,"b-r1d":G,"b-r1s":G,"b-r2d":Y,"b-r2a":N,"b-r2s":N,"b-bk":N},
+ x:{"b-dns-l":"points at region 1","b-r1a-l":"serving","b-r1d-l":"primary","b-r1s-l":"","b-r2d-l":"async, seconds behind","b-r2a-l":"never served","b-r2s-l":"?","b-bk-l":"nightly, never restored","r1-l":"Region 1: active","r2-l":"Region 2: passive","rpo":"","rto":"","act1":"","act2":"","cap":""},r1:G,r2:Y};
+const D={night:base,drill:Object.assign({},base,{x:Object.assign({},base.x,{"rpo":"RPO target: lose at most 5 minutes","rto":"RTO target: back within 30 minutes"})})};
+const TO1=[360,120,196,198],TO2=[540,120,780,198],REP=[380,226,518,226];
+const dead={"b-r1a":R,"b-r1d":R,"b-r1s":R};
+const steps={
+night:[
+ {t:"A normal night",b:"Region 1 serves every user. Region 2 holds an async replica of the database and an app that has never served real traffic.",w:"Active-passive looks safe on the diagram. Nobody has ever tried it.",m:[[...TO1,"",C],[...REP,"copy",Y,1]]},
+ {t:"Region 1 fails",b:"At 02:00 the whole of region 1 goes dark: app, database and secrets store.",w:"Every user sees errors. The plan says: fail over to region 2.",f:Object.assign({},dead,{"b-us":R}),x:{"r1-l":"Region 1: down","b-r1a-l":"down","b-r1d-l":"down","b-r1s-l":"down"},r1:R,m:[[...TO1,"errors",R]]},
+ {t:"The failover meets DNS",b:"The team starts the app in region 2. Users still get errors. The first dependency on the list is DNS: is it ready to move by itself? No. It still sends users to region 1, and its records are cached for hours.",w:"A person changes DNS by hand: 40 minutes. DNS is a dependency of the failover. If it is not part of the plan, the failover cannot finish.",f:Object.assign({},dead,{"b-us":R,"b-dns":R}),x:{"r1-l":"Region 1: down","b-r1a-l":"down","b-r1d-l":"down","b-r1s-l":"down","b-dns-l":"still region 1, cached"},r1:R,m:[[...TO1,"still here",R]]},
+ {t:"The app cannot start: no secrets",b:"The next dependency is the secrets. The region 2 app tries to start and cannot read its database password. The secrets lived only in region 1. Ready: no. By hand: 170 minutes.",w:"Identity and secrets must survive the region too. A passive region that was never started never found this out.",f:Object.assign({},dead,{"b-us":R,"b-r2a":R,"b-r2s":R}),x:{"r1-l":"Region 1: down","b-r1a-l":"down","b-r1d-l":"down","b-r1s-l":"down","b-dns-l":"region 2, changed by hand","b-r2a-l":"cannot start","b-r2s-l":"missing"},r1:R,m:[[...TO2,"",C]]},
+ {t:"Data lost, time lost",b:"Promoting the replica takes 10 minutes. 40 plus 170 plus 10 is 220 minutes: region 2 serves at 05:40. The async replica was 240 seconds behind when region 1 died, so those writes are gone.",w:"Nobody had asked the business how much loss and how much downtime were allowed. Now the answer is \"what happened\".",f:Object.assign({},dead,{"b-us":G,"b-r2a":G,"b-r2s":Y,"b-r2d":G}),x:{"r1-l":"Region 1: down","b-r1a-l":"down","b-r1d-l":"down","b-r1s-l":"down","b-dns-l":"region 2","b-r2a-l":"serving at 05:40","b-r2s-l":"rebuilt by hand","b-r2d-l":"promoted, 4 min short","r2-l":"Region 2: active","act1":"lost: 4 minutes of writes","act2":"down: 3 hours 40 minutes"},r1:R,r2:G,m:[[...TO2,"",C]]},
+ {t:"The failure that matters: the backup was a hope",b:"To recover the lost 4 minutes, the team tries the nightly backup. It has never been restored. The restore takes 540 minutes and the check on the newest file fails: corrupt.",w:"A backup never restored is a hope, not a backup. A passive region never exercised rots. Both were plans, not capabilities.",f:Object.assign({},dead,{"b-us":G,"b-r2a":G,"b-r2s":Y,"b-r2d":G,"b-bk":R}),x:{"r1-l":"Region 1: down","b-r1a-l":"down","b-r1d-l":"down","b-r1s-l":"down","b-dns-l":"region 2","b-r2a-l":"serving","b-r2s-l":"rebuilt by hand","b-r2d-l":"promoted, 4 min short","r2-l":"Region 2: active","b-bk-l":"9 h restore, file corrupt","act1":"lost: 4 minutes of writes","act2":"down: 3 hours 40 minutes"},r1:R,r2:G,m:[]}
+],
+drill:[
+ {t:"Ask the business for two numbers",b:"RPO (Recovery Point Objective): at most 5 minutes of data may be lost. RTO (Recovery Time Objective): service back within 30 minutes.",w:"The RPO picks the copying: a nightly backup gives 24 hours, an async replica gives seconds. The RTO picks the failover.",m:[[...TO1,"",C],[...REP,"copy",Y,1]]},
+ {t:"Write a hypothesis and an abort switch",b:"The plan: \"If region 1 drops, region 2 serves within 30 minutes and loses under 5 minutes of data.\" The check after the drill: down at most 30 and lost at most 300 seconds. Any gap on the way means abort: users go back to region 1 in one minute.",w:"Chaos engineering is an experiment. No hypothesis and no abort switch means it is just an outage.",x:{"cap":"abort switch: route users back to region 1 in 1 minute"},m:[[...TO1,"",C],[...REP,"copy",Y,1]]},
+ {t:"Drop region 1 on purpose, at 11:00",b:"On a Tuesday morning, with everyone at their desks, the team cuts region 1 off from users and starts the failover.",w:"The same failure as the night tab, but chosen, timed, and watched by the people who can fix it.",f:{"b-r1a":Y,"b-r1d":Y,"b-r1s":Y},x:{"r1-l":"Region 1: dropped on purpose","b-r1a-l":"cut off","b-r1d-l":"cut off","cap":"drill started 11:00"},r1:Y,m:[[...TO2,"failover",C]]},
+ {t:"A gap found in daylight: abort",b:"The drill walks the same list. DNS is ready now. Secrets are not ready: the app cannot start. A drill stops at the first gap, so the team presses the abort switch at 11:04. Users are back on region 1 within a minute.",w:"The drill did its job. The gap was found at 11:04 with a cost of four minutes, not at 02:00 with a cost of four hours.",f:{"b-r2a":R,"b-r2s":R},x:{"b-r2a-l":"cannot start","b-r2s-l":"missing","cap":"abort pressed at 11:04: users back on region 1"},m:[[...TO1,"abort: back",C]]},
+ {t:"Fix the gaps",b:"Secrets are now copied to region 2, so that dependency reads ready. DNS failover is automatic, driven by health checks, with a short cache time.",w:"Each drill turns one hidden dependency into a known one.",f:{"b-r2s":G,"b-r2a":Y},x:{"b-r2s-l":"replicated","b-r2a-l":"ready","b-dns-l":"health-checked failover"},m:[[...TO1,"",C],[...REP,"copy",Y,1]]},
+ {t:"Drill again: it passes",b:"Next month the team drops region 1 again. Every dependency is ready: DNS 1 minute, secrets 1, promote 2. Region 2 serves in 4 minutes. The replica was 3 seconds behind.",w:"Hypothesis confirmed: 4 minutes is inside the 30-minute RTO, 3 seconds inside the 5-minute RPO.",f:{"b-r1a":Y,"b-r1d":Y,"b-r1s":Y,"b-r2s":G,"b-r2a":G,"b-r2d":G},x:{"r1-l":"Region 1: dropped on purpose","b-r1a-l":"cut off","b-r1d-l":"cut off","b-r2s-l":"replicated","b-r2a-l":"serving","b-r2d-l":"promoted","r2-l":"Region 2: active","b-dns-l":"failed over by itself","act1":"lost: 3 seconds","act2":"down: 4 minutes"},r1:Y,r2:G,m:[[...TO2,"",C]]},
+ {t:"Restore the backup on a timer",b:"Once a quarter the team restores the nightly backup into a scratch database and records the minutes. The check on the newest file passes: 40 minutes, last file readable.",w:"Now the backup is a measured capability with a known time, not a hope.",f:{"b-r2s":G,"b-bk":G},x:{"b-r2s-l":"replicated","b-dns-l":"health-checked failover","b-bk-l":"restored in 40 min","cap":"restore drill: every quarter, time recorded"},m:[[...TO1,"",C],[...REP,"copy",Y,1]]}
+]};
+function draw(s){const d=D[mode];$("f-r1").setAttribute("stroke",s.r1||d.r1);$("f-r2").setAttribute("stroke",s.r2||d.r2);
+  const ok=mode==="drill"&&/3 seconds/.test((s.x||{}).act1||"");$("act1").setAttribute("fill",ok?G:R);$("act2").setAttribute("fill",ok?G:R);}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["dep = name, ready alone?, minutes, minutes by hand", "failover(deps, lag, drill):", "  lost = replica lag at the moment of the failure", "  for each dep in order:", "    if ready: down += minutes; next", "    if drill: stop here, the gap is this dep", "    else: down += minutes by hand", "hypothesis(result, rto, rpo):", "  a gap: abort", "  down > rto or lost > rpo: false", "  else: holds", "restoreDrill(backup):", "  newest file corrupt: a hope, not a backup", "  else: record the minutes"], "real": ["type Dep struct {", "\tName    string", "\tReady   bool // it works without a person", "\tMinutes int  // time when ready", "\tByHand  int  // time when a person must rebuild it", "}", "", "func Failover(deps []Dep, lagSec int, drill bool) Result {", "\tr := Result{LostSec: lagSec}", "\tfor _, d := range deps {", "\t\tif d.Ready {", "\t\t\tr.Down += d.Minutes", "\t\t\tcontinue", "\t\t}", "\t\tif drill {", "\t\t\tr.Gap = d.Name", "\t\t\treturn r", "\t\t}", "\t\tr.Down += d.ByHand", "\t}", "\treturn r", "}", "", "func Hypothesis(r Result, rtoMin, rpoSec int) string {", "\tif r.Gap != \"\" {", "\t\treturn \"abort: gap in \" + r.Gap", "\t}", "\tif r.Down > rtoMin || r.LostSec > rpoSec {", "\t\treturn \"false: over target\"", "\t}", "\treturn \"holds\"", "}", "", "func RestoreDrill(b Backup) string {", "\tif !b.NewestOK {", "\t\treturn fmt.Sprintf(\"%d minutes, newest file corrupt: a hope, not a backup\", b.RestoreMin)", "\t}", "\treturn fmt.Sprintf(\"%d minutes, last file readable\", b.RestoreMin)", "}"], "map": {"1": [1, 2, 3, 4, 5], "2": [8], "3": [9], "4": [10], "5": [11, 12, 13], "6": [15, 16, 17], "7": [19], "8": [24], "9": [25, 26], "10": [28, 29], "11": [31], "12": [34], "13": [35, 36], "14": [38]}}},PCS={"night": [[1], [2, 3], [4, 7], [4, 7], [3, 5, 7], [12, 13]], "drill": [[8, 10], [8, 9], [2, 4, 5], [4, 6, 9], [1, 5], [3, 5, 10, 11], [12, 14]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

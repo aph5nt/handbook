@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool calling</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Tool calling: the model asks, your code runs</h1>
+  <p class="lede">An investigator asks: "Who sent money to 0xabc on robinhood?" The model cannot touch the graph database. It writes a JSON (JavaScript Object Notation) request. The local MCP (Model Context Protocol) proxy checks it, runs it and hands the rows back. Watch each message cross the lanes. Then switch tabs to see a vague tool description send the model the wrong way.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">A clean tool call</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Vague description, invented argument</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 520" aria-labelledby="stage-title">
+      <title id="stage-title">Four lanes: investigator, model, host code and the graph_query tool, with messages between them</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="90" y1="62" x2="90" y2="510"/><line x1="330" y1="62" x2="330" y2="510"/>
+        <line x1="570" y1="62" x2="570" y2="510"/><line x1="810" y1="62" x2="810" y2="510"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="l-u" class="box" x="10" y="16" width="160" height="44" rx="8" fill="var(--line)"/><text x="90" y="44" fill="var(--fg)">Investigator</text>
+        <rect id="l-m" class="box" x="250" y="16" width="160" height="44" rx="8" fill="var(--line)"/><text x="330" y="44" fill="var(--fg)">Model</text>
+        <rect id="l-h" class="box" x="490" y="16" width="160" height="44" rx="8" fill="var(--line)"/><text x="570" y="44" fill="var(--fg)">Host code (proxy)</text>
+        <rect id="l-t" class="box" x="730" y="16" width="160" height="44" rx="8" fill="var(--line)"/><text x="810" y="44" fill="var(--fg)">graph_query tool</text>
+      </g>
+      <g id="seq" font-family="Atkinson Hyperlegible,system-ui" font-size="13"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-tool-calling/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a request: question or tool call</span>
+    <span style="--c:var(--wait)">checking or running</span>
+    <span style="--c:var(--ok)">rows or answer that are right</span>
+    <span style="--c:var(--fail)">misuse, invented argument, refusal</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>The Chain Insights proxy is an MCP server. Claude Desktop, Claude Code or an IDE (integrated development environment) lists its tools with no custom code. A refusal such as <code>query_timeout</code> comes back as a result with a reason, so the model can recover instead of guessing.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Write the description as a rule of use: "Use when you know an address and want its senders, never for a search by name." Put enums in the schema. Give names their own lookup tool, such as <code>meta_dex_lookup</code>, and say in the description that it comes first.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Tool call</th><th>Structured output</th></tr>
+      <tr><td>What the schema shapes</td><td>The arguments of an action</td><td>The final answer itself</td></tr>
+      <tr><td>Who runs something</td><td>Your host code, never the model</td><td>Nobody. It is just checked text</td></tr>
+      <tr><td>Typical guard</td><td>Schema check, enum, time limit, named refusal</td><td>Enum on a field, so a risk kind is never "probably a mixer"</td></tr>
+      <tr><td>Main failure</td><td>Vague description, invented argument</td><td>Free text where a fixed value was needed</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The model writes a JSON request, my code validates and runs it, and the tool description is the contract."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const X={u:90,m:330,h:570,t:810};
+const steps={
+"ok":[
+ {t:"The host lists its tools",b:"Before any question, the host gives the model its tools. Each tool has a name, a description and a JSON schema for its arguments.",w:"The description is the only thing the model reads to decide when to use a tool.",box:{"l-h":"svc"},a:[["h","m","tools: name, description, JSON schema","svc"]]},
+ {t:"The question arrives",b:"The investigator asks who sent money to 0xabc on robinhood. The model has no database access. It only has words and the tool list.",w:"The model cannot answer from memory. It must ask for data.",box:{"l-u":"coord"},a:[["u","m","Who sent money to 0xabc?","coord"]]},
+ {t:"The model writes a tool call",b:"Instead of text, the model answers with tool_use: call graph_query with a statement anchored on 0xabc.",w:"A tool call is a request written as JSON. The model still runs nothing itself.",box:{"l-m":"coord"},a:[["m","h","tool_use graph_query {statement}","coord"]]},
+ {t:"Host code checks the arguments",b:"The proxy validates the arguments against the schema. The network is robinhood, the statement is a string, nothing is missing.",w:"This is the first wall. A bad argument stops here, with a reason, before it costs a query.",box:{"l-h":"wait"},a:[["h","h","schema check: arguments valid","wait"]]},
+ {t:"Host code runs the tool",b:"The proxy sends the statement to the graph, with a 10 second limit.",w:"Your code decides limits, credentials and where the call goes. The model never holds them.",box:{"l-h":"wait","l-t":"wait"},a:[["h","t","run the statement, 10 s limit","wait"]]},
+ {t:"Rows come back",b:"The graph returns three senders of 0xabc.",w:"These rows are the only real facts in the exchange. Everything else is words.",box:{"l-t":"ok"},a:[["t","h","rows: 3 senders","ok",1]]},
+ {t:"The result becomes the next message",b:"The proxy hands the rows to the model as tool_result. The model reads them like any other text.",w:"The model may now call another tool, or answer. Here it has enough.",box:{"l-h":"ok"},a:[["h","m","tool_result with the rows","ok",1]]},
+ {t:"The model answers in words",b:"The model writes a plain answer: the three senders, each address in full, 42 characters.",w:"Rows in, words out. The model turned facts into an answer, and your code made sure the facts were real.",box:{"l-m":"ok","l-u":"ok"},a:[["m","u","plain answer, full addresses","ok",1]]}
+],
+"bad":[
+ {t:"A vague description",b:"This time the tool description says only: 'Query the database.' It does not say when to use it, or what it cannot do.",w:"The model will use a vague tool for everything, including what it cannot do.",box:{"l-h":"fail"},a:[["h","m","tool: 'Query the database'","fail"]]},
+ {t:"A question with a name, not an address",b:"The investigator asks: 'Who sent money to Binance?' Binance is a name. The graph is anchored on addresses.",w:"Nothing tells the model that a name needs a lookup first.",box:{"l-u":"coord"},a:[["u","m","Who sent money to Binance?","coord"]]},
+ {t:"The model invents an argument",b:"The model guesses a table called exchanges and a search by name. No such table exists.",w:"An invented argument looks as confident as a real one. Only a check can tell them apart.",box:{"l-m":"fail"},a:[["m","h","graph_query(table: exchanges, name: Binance)","fail"]]},
+ {t:"The schema check passes, so it runs",b:"The schema check passes: the statement is a string and the network is robinhood. So the proxy runs it. The graph looks for 0x in the statement, finds none, and refuses: anchor_missing.",w:"The cost was paid and nothing came back. A schema enum would have stopped it one step earlier.",box:{"l-t":"fail"},a:[["h","t","run it as given","wait"],["t","h","refused: anchor_missing","fail",1]]},
+ {t:"The refusal goes back with its reason",b:"The proxy returns the refusal as a tool_result: 'anchor_missing, give an address.' The model can recover.",w:"A named refusal is useful. A crash or an empty string would make the model guess again.",box:{"l-h":"wait"},a:[["h","m","tool_result: refused, anchor_missing","wait",1]]},
+ {t:"The fix: a description that is a rule",b:"The description now reads: 'Use when you know an address. For a name, call meta_dex_lookup first.' The schema gains enums.",w:"You fix tool misuse in the contract, not in the conversation.",box:{"l-h":"ok"},a:[["h","m","new description + enum + lookup tool","ok"]]},
+ {t:"Lookup first, then the query",b:"The model calls meta_dex_lookup for the name, gets the address, then calls graph_query anchored on it. The answer names the senders in full.",w:"Two small, honest tool calls beat one confident wrong one.",box:{"l-m":"ok","l-u":"ok"},a:[["m","h","meta_dex_lookup(Binance) gives the address","ok"],["m","u","senders, from an anchored graph_query","ok",1]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paint(list){
+  const g=$("seq");g.innerHTML="";let row=0;
+  for(let k=0;k<=i;k++)for(const a of list[k].a){
+    const y=96+row*46;row++;const col=`var(--${a[3]})`;const cur=k===i;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    if(a[0]===a[1]){el.innerHTML=`<rect x="${X[a[0]]-120}" y="${y-14}" width="240" height="30" rx="6" fill="${col}" opacity=".18"/><rect x="${X[a[0]]-120}" y="${y-14}" width="240" height="30" rx="6" fill="none" stroke="${col}" stroke-width="2"/><text x="${X[a[0]]}" y="${y+6}" text-anchor="middle" fill="var(--fg)" font-weight="700">${a[2]}</text>`;}
+    else{const x1=X[a[0]],x2=X[a[1]],d=x2>x1?1:-1;
+      el.innerHTML=`<line x1="${x1+d*4}" y1="${y+8}" x2="${x2-d*6}" y2="${y+8}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${a[4]?' stroke-dasharray="7 4"':''}/><text x="${(x1+x2)/2}" y="${y}" text-anchor="middle" fill="var(--fg)"${cur?' font-weight="700"':''}>${a[2]}</text>`;}
+    g.appendChild(el);
+    if(!cur){el.classList.add("on");el.style.opacity=".45";}
+    else{const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,40);}
+  }
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");r.nextElementSibling.setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){const r=$(k);r.setAttribute("fill",`var(--${s.box[k]})`);r.nextElementSibling.setAttribute("fill","#fff");}
+  paint(list);
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+
+const CODE={"label": "Python", "pc": ["tools = name, description, JSON schema, given to the model", "call = model(question, tools)        # a request, nothing has run", "host checks the arguments against the schema", "host runs the tool, with a time limit", "on a refusal: return it as tool_result, with the reason", "rows go back as tool_result, and the model answers in words", "a name, not an address: look it up first, then query with the address"], "real": ["SCHEMA = {\"statement\": str, \"network\": (\"robinhood\",)}", "TIME_LIMIT_S = 10", "", "", "def validate(args):", "    for key, rule in SCHEMA.items():", "        if key not in args:", "            return f\"missing {key}\"", "        if isinstance(rule, tuple) and args[key] not in rule:", "            return f\"{key} must be one of {rule}\"", "    return None", "", "", "def call_tool(name, args):", "    if name == \"meta_dex_lookup\":", "        return {\"address\": BINANCE}  # the name, as an address", "    problem = validate(args)", "    if problem:", "        return {\"error\": problem}", "    return graph(args[\"statement\"], timeout_s=TIME_LIMIT_S)  # the host sets the limit", "", "", "def answer(question, description):", "    name, args = fake_model(question, description)  # the model writes the call", "    result = call_tool(name, args)", "    if \"address\" in result:", "        name, args = fake_model(question, description, known=result[\"address\"])", "        result = call_tool(name, args)", "    if \"error\" in result:", "        return f\"tool_result: {result['error']}\"  # the model can recover", "    return \"senders: \" + \", \".join(result[\"rows\"])  # tool_result, then words"], "map": {"1": [1], "4": [2, 20, 25], "3": [5, 6, 7, 8, 9, 10, 11, 17, 25], "7": [15, 16, 26, 27, 28], "5": [19, 29, 30], "2": [24], "6": [31]}, "path": "handbook/code/09-tool-calling/main.py", "cmd": "python3 main.py", "note": ""},PCS={"ok": [[1], [2], [2], [3], [4], [4], [6], [6]], "bad": [[1], [2], [2], [3, 4], [5], [1, 7], [7]]};
+for(const t in PCS)PCS[t].forEach((p,k)=>{steps[t][k].pc=p;});
+let codeView="pc";
+function cesc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE,pc=(steps[mode][i].pc)||[];
+  const v=(codeView==="alt"&&!c.alt)?"real":codeView;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=cesc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const __render=render;render=function(){__render();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{codeView=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

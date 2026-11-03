@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch, micro-batch, stream</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Batch, micro-batch and stream</h1>
+  <p class="lede">A user sends a transfer at 14:05 and asks about it at 14:06. A daily report runs at 02:00. Press <b>Next</b> and see which way of processing fits each one, and what goes wrong when the choice follows fashion.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pick" id="tab-pick">Pick by how stale it may be</button>
+    <button role="tab" aria-selected="false" data-mode="trap" id="tab-trap">Stream because it sounds modern (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 370" aria-labelledby="stage-title">
+      <title id="stage-title">Three processing styles on one time line, with a transfer and a question</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-batch-microbatch-stream/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">when processing runs</span>
+    <span style="--c:var(--undo)">the transfer</span>
+    <span style="--c:var(--wait)">not yet visible</span>
+    <span style="--c:var(--ok)">answer ready</span>
+    <span style="--c:var(--fail)">the question, or a wrong result</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a chain indexer</h2>
+      <p>The chain follow is micro-batch: small block ranges in a loop, each rerunnable. Partition moves and quality reports are nightly batch. A full history rebuild reuses the follower's code from block 1.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: elsewhere</h2>
+      <p>Spark Structured Streaming is micro-batch. Flink and Kafka Streams handle each event. Airflow schedules batch. A fraud check needs seconds, a finance report needs the morning.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Batch</th><th>Micro-batch</th><th>Stream</th></tr>
+      <tr><td>Freshness</td><td>Hours</td><td>Seconds</td><td>Under a second</td></tr>
+      <tr><td>Rerun</td><td>One dated job</td><td>One block range</td><td>Replay with matching state</td></tr>
+      <tr><td>Hard part</td><td>Waiting</td><td>Choosing the range size</td><td>State, event time, restarts</td></tr>
+      <tr><td>Fits</td><td>Reports, tiering</td><td>Chain follow, CDC loads</td><td>Alerts, live counters</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Ask how stale the answer may be: hours means batch, seconds means a stream, and a replayable source lets one code path do both."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"pick": {"label": "Go", "pc": ["batch, every night at 02:00:", "  rows = read all of yesterday            # a bounded set", "  write report(rows)", "micro-batch, in a loop every 3 seconds:", "  range = next blocks after the checkpoint", "  write facts(range); checkpoint = range end", "stream, on each event e:", "  state = update(state, e); emit(e)       # one event at a time", "  save position and state together", "choose: how stale may the answer be? hours: batch, seconds: the others", "history: run the micro-batch loop again from block 1"], "real": ["const (", "\ttransferAt  = 14*3600 + 5*60 // 14:05:00", "\taskAt       = 14*3600 + 6*60 // 14:06:00", "\tbatchRunAt  = 26 * 3600      // 02:00 the next day", "\tmicroPeriod = 3              // a new range every 3 s", ")", "", "// visibleBatch: a bounded set on a schedule. The next run after the event.", "func visibleBatch(event int) int { return batchRunAt }", "", "// visibleMicro: the range holding the event closes at the next loop tick.", "func visibleMicro(event int) int { return (event/microPeriod + 1) * microPeriod }", "", "// visibleStream: each event is handled as it arrives.", "func visibleStream(event int) int { return event }", "", "// in time for the question if visible at or before 14:06", "ok := visibleMicro(transferAt) <= askAt // 14:05:03: true", "", "// history: the same loop again from block 1"], "map": {"1": [4, 8, 9], "2": [9], "3": [9], "4": [5, 11], "5": [12], "6": [12], "7": [14], "8": [15], "9": [15], "10": [17, 18], "11": [20]}}, "trap": {"label": "Go", "pc": ["stream daily report, on each event e:", "  dayState[e.day] += 1                    # held open all day", "  when the day is complete: emit(dayState[day])", "on restart at 15:00: resume from the saved position", "# missing: state saved together with the position", "fix: nightly batch: report(day) = count rows of day, rerun by date"], "real": ["func streamReport(stateMatchesCheckpoint bool) int {", "\tcount := 0", "\tcheckpoint := 0", "\tfor m := 0; m < 24*60; m++ {", "\t\tif m%10 == 0 {", "\t\t\tcheckpoint = m // position saved every 10 minutes", "\t\t}", "\t\tcount++ // dayState[day] += 1, held open all day", "\t\tif m == 15*60-1 { // the job restarts at 15:00", "\t\t\tif stateMatchesCheckpoint {", "\t\t\t\tcontinue // state and position were saved together", "\t\t\t}", "\t\t\t// state holds 14:50 to 14:59, the replay adds them again", "\t\t\tcount += m - checkpoint + 1", "\t\t}", "\t}", "\treturn count // 1450, not 1440", "}", "", "// batchReport is report(day) = count of the day's rows, rerun by date.", "func batchReport(day []int) int { return len(day) }"], "map": {"1": [1, 4], "2": [8], "3": [17], "4": [9, 6], "5": [10, 13, 14], "6": [20, 21]}}};
+
+const ROWS=[["Batch","bounded set, on a schedule"],["Micro-batch","small ranges, tight loop"],["Stream","each event, with state"]];
+const steps={
+"pick":[
+ {pc:[10],t:"A transfer, then a question",b:"A user sends a transfer at 14:05. One minute later, at 14:06, they ask the product about it. Three ways of processing sit side by side.",w:"The only question that matters: how stale may the answer be?",r:["idle","idle","idle"],ev:true,ask:true},
+ {pc:[1, 2, 3],t:"Batch runs tonight",b:"The batch rule is: process yesterday's bounded set at 02:00. The next run after 14:05 is 02:00 tomorrow. Is 02:00 before the question at 14:06? No, so the transfer is not in the answer.",w:"Simple and cheap, and easy to rerun. Far too stale for a user waiting at 14:06.",r:["wait","idle","idle"],ev:true,ask:true,res:["visible at 02:00 tomorrow","",""]},
+ {pc:[4, 5, 6],t:"Micro-batch takes the next range",b:"The chain indexer takes the next range of blocks after its checkpoint every 3 seconds. The range holding the 14:05:00 transfer closes at 14:05:03, before the 14:06 question.",w:"Each range is a small batch: easy to rerun, near-live results. A chain indexer is exactly this.",r:["wait","ok","idle"],ev:true,ask:true,res:["visible at 02:00 tomorrow","visible seconds later",""]},
+ {pc:[7, 8, 9],t:"A stream handles each event",b:"A stream processor handles the transfer as it arrives. It keeps state, tracks event time and checkpoints its position.",w:"The freshest answer. It pays with state, time rules and restarts to get right.",r:["wait","ok","ok"],ev:true,ask:true,res:["visible at 02:00 tomorrow","visible seconds later","visible on arrival"]},
+ {pc:[1, 3],t:"The daily report is batch",b:"The daily quality report and the nightly tiering job run at 02:00. Nobody reads them before morning.",w:"An hour of delay is fine here, so batch is the simple, right choice.",r:["ok","idle","idle"],res:["report ready at 02:00","",""],night:true},
+ {pc:[11, 5, 6],t:"History is a replay",b:"A decoder fix means rebuilding history. The same micro-batch code walks the chain again from block 1.",w:"A replayable source lets one code path serve both live data and history. That is kappa.",r:["idle","ok","idle"],replay:true,res:["","walks from block 1",""]}
+],
+"trap":[
+ {pc:[1],t:"A stream for the daily report",b:"A team builds the daily quality report as a stream job, because streaming sounds modern.",w:"Nobody reads the report before morning.",r:["idle","idle","wait"],night:true},
+ {pc:[2, 3],t:"State stays open all day",b:"The job must keep each day's totals in state until the day ends, and decide when the day is complete with a watermark.",w:"Work a nightly batch never needed.",r:["idle","idle","wait"],night:true,res:["","","day's state held in memory"]},
+ {pc:[4, 5],t:"A restart mid-day",b:"The job restarts at 15:00. Its position was saved at 14:50, but its counts were saved at 14:59. On restart it replays from 14:50 into counts that already hold 14:50 to 14:59: those 10 minutes count twice.",w:"Getting restarts right is the hard part of streaming.",r:["idle","idle","bad"],night:true,res:["","","restart at 15:00"]},
+ {pc:[4, 5],t:"The failure that matters",b:"The day ends at 1,450 transfers instead of 1,440. Rerunning yesterday means replaying a stream with the right state, not running one dated job.",w:"Streaming because it sounds modern buys complexity and nothing the reader needed.",r:["idle","idle","bad"],night:true,res:["","","report wrong, hard to rerun"],fail:true},
+ {pc:[6],t:"The fix",b:"Make the report a nightly batch over a bounded day. A rerun is one command with a date.",w:"Ask how stale the answer may be: hours means batch, seconds means a stream.",r:["ok","idle","idle"],night:true,res:["rerun by date at any time","",""]}
+]};
+const FILL={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",bad:"var(--fail)"};
+function draw(s){
+  let o=T(260,26,"14:00",{c:"var(--muted)",w:400,s:12})+T(520,26,"15:00",{c:"var(--muted)",w:400,s:12})+T(860,26,"02:00",{c:"var(--muted)",w:400,s:12});
+  o+=`<line x1="200" y1="36" x2="880" y2="36" stroke="var(--line)" stroke-width="2"/>`;
+  ROWS.forEach(([n,d],k)=>{const y=60+k*96;const f=FILL[s.r[k]];
+    o+=B(20,y,170,64,f,10)+T(105,y+28,n,{c:ink(f),s:15})+T(105,y+47,d,{c:ink(f),w:400,s:12});
+    o+=`<line x1="200" y1="${y+32}" x2="880" y2="${y+32}" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;
+    if(k===0)o+=B(850,y+16,22,32,"var(--coord)",4);
+    if(k===1)for(let x=210;x<870;x+=26)o+=B(x,y+22,18,20,"var(--coord)",3);
+    if(k===2)o+=`<line x1="200" y1="${y+32}" x2="880" y2="${y+32}" stroke="var(--coord)" stroke-width="4"/>`;
+    if(s.res&&s.res[k])o+=M(T(540,y+70,s.res[k],{c:s.r[k]==="bad"?"var(--fail)":s.r[k]==="wait"?"var(--wait)":"var(--ok)",s:13}));});
+  if(s.ev)o+=M(`<circle cx="282" cy="36" r="9" fill="var(--undo)"/>`+T(282,52,"transfer 14:05",{c:"var(--undo)",s:12}));
+  if(s.ask)o+=M(`<line x1="308" y1="44" x2="308" y2="340" stroke="var(--fail)" stroke-width="2" stroke-dasharray="6 4"/>`+T(330,356,"user asks at 14:06",{c:"var(--fail)",s:13,a:"start"}));
+  if(s.night)o+=M(T(880,356,"02:00 nightly run",{c:"var(--coord)",s:13,a:"end"}));
+  if(s.replay)o+=M(T(540,356,"same code walks the chain again from block 1",{c:"var(--coord)",s:13}));
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

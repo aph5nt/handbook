@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bulk load paths</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Bulk load paths: how a page of rows gets in</h1>
+  <p class="lede">The indexer has a page of 10,000 rows for <b>swaps</b>. Four ways to load it, drawn as four lanes. Watch the statement and commit counts, then a retry.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="paths">Four paths</button>
+    <button role="tab" aria-selected="false" data-mode="retry">Retry without a label fails</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 410" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">A page of rows with four load paths into the swaps table</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="src" class="box" data-f="var(--line)" x="30" y="120" width="180" height="70" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="src-t" data-t="page of blocks" x="120" y="150" text-anchor="middle" font-size="13" fill="var(--fg)">page of blocks</text>
+<text id="src-u" data-t="10,000 rows" x="120" y="170" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">10,000 rows</text>
+<rect id="l0" class="box" data-f="var(--line)" x="280" y="30" width="300" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="l0-t" data-t="INSERT per row" x="430" y="50" text-anchor="middle" font-size="13" fill="var(--fg)">INSERT per row</text>
+<text id="l0-u" data-t="one statement per row" x="430" y="70" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">one statement per row</text>
+<path id="w0" class="msg" d="M210 155 L276 55" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="c0" data-t="" x="600" y="60" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="l1" class="box" data-f="var(--line)" x="280" y="94" width="300" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="l1-t" data-t="multi-row INSERT" x="430" y="114" text-anchor="middle" font-size="13" fill="var(--fg)">multi-row INSERT</text>
+<text id="l1-u" data-t="VALUES (…), (…), …" x="430" y="134" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">VALUES (…), (…), …</text>
+<path id="w1" class="msg" d="M210 155 L276 119" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="c1" data-t="" x="600" y="124" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="l2" class="box" data-f="var(--line)" x="280" y="158" width="300" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="l2-t" data-t="Stream Load or COPY" x="430" y="178" text-anchor="middle" font-size="13" fill="var(--fg)">Stream Load or COPY</text>
+<text id="l2-u" data-t="rows as data, one request" x="430" y="198" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">rows as data, one request</text>
+<path id="w2" class="msg" d="M210 155 L276 183" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="c2" data-t="" x="600" y="188" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="l3" class="box" data-f="var(--line)" x="280" y="222" width="300" height="50" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="l3-t" data-t="files, then parallel load" x="430" y="242" text-anchor="middle" font-size="13" fill="var(--fg)">files, then parallel load</text>
+<text id="l3-u" data-t="Parquet in object storage" x="430" y="262" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">Parquet in object storage</text>
+<path id="w3" class="msg" d="M210 155 L276 247" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text id="c3" data-t="" x="600" y="252" text-anchor="start" font-size="13" font-weight="400" fill="var(--fg)"></text>
+<rect id="tbl" class="box" data-f="var(--line)" x="280" y="296" width="590" height="44" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="tbl-t" data-t="swaps" x="575" y="313" text-anchor="middle" font-size="13" fill="var(--fg)">swaps</text>
+<text id="tbl-u" data-t="empty" x="575" y="333" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">empty</text>
+<path id="wt" class="msg" d="M584 183 Q 660 240 610 292" stroke="var(--ok)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect x="20" y="360" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="386" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="385" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-bulk-load/main.go</code> (<code>go run .</code>). The Go here is copied from the program, which runs it against an in-memory stand-in for the StarRocks front end. It opens no connection.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">sending</span>
+    <span style="--c:var(--ok)">right path, committed once</span>
+    <span style="--c:var(--wait)">strained or unknown</span>
+    <span style="--c:var(--fail)">too costly or duplicated</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>The Go indexer: Stream Load with the label <code>&lt;table&gt;-page-&lt;id&gt;</code>. PostgreSQL backfills: <code>COPY</code>, with indexes created after the load. Snowflake Snowpipe or StarRocks pipes for files that land continuously.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>A bulk protocol for pages, files for history, never per-row inserts. Label every load so a retry is refused instead of doubled. Size loads under the timeout, one per table per page.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Per-row INSERT</th><th>Multi-row INSERT</th><th>Stream Load or COPY</th><th>Files</th></tr>
+      <tr><td>Statements per page</td><td>10,000</td><td>a few</td><td>1 request</td><td>none</td></tr>
+      <tr><td>Good for</td><td>nothing at volume</td><td>a trickle</td><td>pages</td><td>history</td></tr>
+      <tr><td>Retry safety</td><td>needs keys</td><td>needs keys</td><td>label</td><td>load id per file</td></tr>
+      <tr><td>Interview line</td><td colspan=4>"Pick the load path by volume: a bulk protocol like COPY or Stream Load for pages, files for history, never per-row inserts, and always a label so a retry cannot load twice."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+paths:[
+ {"t": "Per-row INSERT", "b": "The first indexer sent one INSERT per row. Each one is parsed, planned and committed on its own, and makes its own tiny segment. The loop runs per row, so the program counts 10,000 commits and 10,000 segments.", "w": "The fixed cost per statement is paid 10,000 times.", "f": {"src": "c", "l0": "f"}, "on": ["w0"], "x": {"c0": "10,000 statements, 10,000 commits", "big": "never for a page of rows"}, "pc": [1, 2]},
+ {"t": "Multi-row INSERT", "b": "One INSERT with many rows of VALUES. Far fewer statements, but the engine still parses a huge SQL text. The check before each send is: would this text pass the size limit? If so, it splits into another statement.", "w": "Fine for a trickle, strained for pages.", "f": {"src": "c", "l1": "w"}, "on": ["w1"], "x": {"c0": "10,000 statements, 10,000 commits", "c1": "a few statements, SQL text limit", "big": "better, still SQL text"}, "pc": [3, 4]},
+ {"t": "A bulk protocol", "b": "Stream Load in StarRocks, COPY in PostgreSQL, LOAD DATA in MySQL: the page goes as CSV or JSON data, not SQL, so nothing is parsed as a statement. The program counts 1 commit and 1 segment for 10,000 rows.", "w": "This is the path for pages of rows.", "f": {"src": "c", "l2": "ok", "tbl": "ok"}, "on": ["w2", "wt"], "x": {"c0": "10,000 statements, 10,000 commits", "c1": "a few statements, SQL text limit", "c2": "1 request, 1 commit per table", "tbl-u": "10,000 rows of page 81200", "big": "the indexer: one Stream Load per table per page"}, "pc": [5, 6]},
+ {"t": "Files for history", "b": "A backfill of years writes Parquet files to object storage, then a broker load, a pipe or COPY INTO reads them in parallel.", "w": "History goes through files: many loaders, no SQL in the way.", "f": {"src": "c", "l3": "ok"}, "on": ["w3"], "x": {"c0": "10,000 statements, 10,000 commits", "c1": "a few statements, SQL text limit", "c2": "1 request, 1 commit per table", "c3": "parallel, for backfills", "big": "files for history"}, "pc": [7, 8]},
+ {"t": "Pick by volume", "b": "Never per-row inserts for pages. Multi-row inserts for a trickle. A bulk protocol for pages. Files for history.", "w": "Size every load by rows and bytes, under the engine's statement and timeout limits.", "f": {"l0": "f", "l1": "w", "l2": "ok", "l3": "ok"}, "x": {"c0": "never", "c1": "a trickle", "c2": "pages", "c3": "history", "big": "the path follows the volume"}, "pc": [9], "rl": [1, 8, 13, 22]}
+],
+retry:[
+ {"t": "A load with no label", "b": "The indexer sends page 81200 by Stream Load with no label. StarRocks has no label to check, so it commits the 10,000 rows.", "w": "So far all is well.", "f": {"src": "c", "l2": "c", "tbl": "ok"}, "on": ["w2", "wt"], "x": {"tbl-u": "10,000 rows of page 81200", "big": "committed"}, "pc": [5, 6], "rl": [4, 5, 8]},
+ {"t": "The reply is lost", "b": "The network times out before the reply reaches the indexer. It cannot tell whether the load committed.", "w": "A timeout means unknown, not failed.", "f": {"src": "w", "l2": "w", "tbl": "ok"}, "x": {"c2": "timeout: no reply", "tbl-u": "10,000 rows of page 81200", "big": "did it commit?"}, "pc": [10, 11], "rl": [8, 9, 10]},
+ {"t": "The retry loads it twice", "b": "The indexer retries. With no label, there is nothing to compare, so StarRocks has no way to know it is the same page. It commits again: 20,000 rows after 2 commits.", "w": "Every swap of the page is now counted twice in every sum.", "f": {"src": "c", "l2": "c", "tbl": "f"}, "on": ["w2", "wt"], "x": {"c2": "retry: committed again", "tbl-u": "20,000 rows: page 81200 loaded twice", "big": "duplicates"}, "pc": [10, 12, 13], "rl": [3, 8, 9, 10]},
+ {"t": "Fix: a label per table per page", "b": "Give each load the label swaps-page-81200. The retry carries the same label. StarRocks checks its label list first, finds it, and replies Label Already Exists. The table stays at 10,000 rows after 1 commit.", "w": "A refused duplicate label means \"already done\". The writer moves on.", "f": {"src": "c", "l2": "ok", "tbl": "ok"}, "on": ["w2"], "x": {"c2": "retry refused: label exists", "tbl-u": "10,000 rows of page 81200", "big": "retry is safe", "sql": "label: swaps-page-81200"}, "pc": [5, 13, 14, 15]},
+ {"t": "Keep loads few and sized", "b": "One load per table per page, sized under the timeout. Many small concurrent loads pile up versions faster than compaction merges them.", "w": "Labels make retries safe. Sizing makes them rare.", "f": {"l2": "ok", "tbl": "ok"}, "on": ["w2", "wt"], "x": {"c2": "one labelled load per table per page", "tbl-u": "one segment per page", "big": "labelled, sized, one per page"}, "pc": [9], "rl": [1, 2, 3]}
+]
+};
+const base={};
+const code={
+"paths":{
+ label:"Go",
+ pc:["per-row: for each row: INSERT, parse, plan, commit", "  every commit makes a segment               # 10,000 segments", "multi-row: build one INSERT with many VALUES", "  if the text passes the size limit: split into another statement", "bulk: send the page as data in one request", "  one commit, one segment per table", "files: write Parquet to object storage", "  load the files in parallel                 # for history", "pick by volume: size every load by rows and bytes", "write_page(table, page):", "  send the page; the reply may never arrive   # a timeout means unknown", "  on a timeout, send the same page again", "  with no label: committed twice", "  label = table + page number", "  the engine refuses a label it already holds; treat that as done"],
+ real:["// never for a page of rows: one statement per row", "func perRowInsert(ctx context.Context, db fakeDB, rows []Row) {", "\tfor _, r := range rows {", "\t\tdb.ExecContext(ctx, \"INSERT INTO swaps VALUES (?, ?, ?)\", r.Pool, r.Amount, r.Tx)", "\t}", "}", "", "// a trickle: one statement, many VALUES, under the text limit", "func trickle(ctx context.Context, db fakeDB, args ...any) {", "\tdb.ExecContext(ctx, \"INSERT INTO swaps VALUES (?, ?, ?), (?, ?, ?)\", args...)", "}", "", "// a page: Stream Load sends rows as data", "func streamLoad(ctx context.Context, client *http.Client, csvBody io.Reader) (*http.Response, error) {", "\turl := \"http://fe:8030/api/robinhood/swaps/_stream_load\"", "\treq, _ := http.NewRequestWithContext(ctx, http.MethodPut, url, csvBody)", "\treq.Header.Set(\"format\", \"csv\")", "\tresp, err := client.Do(req)", "\treturn resp, err", "}", "", "// history: files, read in parallel by the warehouse", "// LOAD LABEL robinhood.swaps_2026 (DATA INFILE(\"s3://bucket/swaps/*.parquet\") ...)"],
+ map:{"1": [3, 4, 5], "2": [4], "3": [8, 10], "4": [8, 10], "5": [13, 14, 15, 16, 17, 18], "6": [18], "7": [22], "8": [23], "9": [13]}},
+"retry":{
+ label:"Go",
+ pc:["per-row: for each row: INSERT, parse, plan, commit", "  every commit makes a segment               # 10,000 segments", "multi-row: build one INSERT with many VALUES", "  if the text passes the size limit: split into another statement", "bulk: send the page as data in one request", "  one commit, one segment per table", "files: write Parquet to object storage", "  load the files in parallel                 # for history", "pick by volume: size every load by rows and bytes", "write_page(table, page):", "  send the page; the reply may never arrive   # a timeout means unknown", "  on a timeout, send the same page again", "  with no label: committed twice", "  label = table + page number", "  the engine refuses a label it already holds; treat that as done"],
+ real:["func loadPage(ctx context.Context, table string, page int, body []byte) error {", "\tlabel := fmt.Sprintf(\"%s-page-%d\", table, page)", "\tfor attempt := 0; attempt < 5; attempt++ {", "\t\treq, _ := http.NewRequestWithContext(ctx, http.MethodPut,", "\t\t\tbaseURL+table+\"/_stream_load\", bytes.NewReader(body))", "\t\treq.Header.Set(\"label\", label) // the same label on every attempt", "\t\treq.Header.Set(\"format\", \"csv\")", "\t\tresp, err := client.Do(req)", "\t\tif err != nil {", "\t\t\tcontinue // a timeout means unknown: send it again", "\t\t}", "\t\tvar r struct{ Status string }", "\t\tjson.NewDecoder(resp.Body).Decode(&r)", "\t\tresp.Body.Close()", "\t\tswitch r.Status {", "\t\tcase \"Success\", \"Label Already Exists\":", "\t\t\treturn nil // the page is in the table, once", "\t\t}", "\t}", "\treturn fmt.Errorf(\"page %d: not loaded\", page)", "}"],
+ map:{"5": [4, 5, 8], "6": [17], "9": [2], "10": [1], "11": [8, 9], "12": [10], "13": [3, 10], "14": [2, 6], "15": [16, 17]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

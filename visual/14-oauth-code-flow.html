@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OAuth Code Flow</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>OAuth code flow with PKCE</h1>
+  <p class="lede">An analyst signs in to a web app that reads a graph API for them. The password goes only to the authorization server. The app gets a short-lived token. Press <b>Next</b> to walk the flow, then open the second tab to see what an attacker can and cannot do.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="flow">The flow</button>
+    <button role="tab" aria-selected="false" data-mode="attack">What goes wrong</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of the OAuth authorization code flow</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-b" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="110" y="52" text-anchor="middle" fill="#fff">Browser</text>
+        <rect id="bx-a" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--coord)"/>
+        <text x="340" y="52" text-anchor="middle" fill="#fff">Web app</text>
+        <rect id="bx-s" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="570" y="52" text-anchor="middle" fill="#fff">Auth server</text>
+        <rect id="bx-r" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="800" y="52" text-anchor="middle" fill="#fff">Graph API</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="340"/><line x1="340" y1="72" x2="340" y2="340"/>
+        <line x1="570" y1="72" x2="570" y2="340"/><line x1="800" y1="72" x2="800" y2="340"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-b" class="box" x="40" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-b" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-a" class="box" x="270" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-a" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-s" class="box" x="500" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-s" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-r" class="box" x="730" y="300" width="140" height="28" rx="14" fill="var(--line)"/><text id="tx-r" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-oauth-code-flow/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">a secret or code held for a short time</span>
+    <span style="--c:var(--ok)">checked and accepted</span>
+    <span style="--c:var(--fail)">attacker, or a hole</span>
+    <span style="--c:var(--undo)">revoked or rotated</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: apps with a user</h2>
+      <p>"Sign in with Google" and every modern web, mobile and single-page app. PKCE (Proof Key for Code Exchange) is now used even by apps that also have a client secret. The old implicit flow, which put the token in the URL, is retired.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet the other flows</h2>
+      <p>Service to service: client credentials, no user and no browser. A command line tool or a TV: device code. The tool prints a URL and a short code, the user approves in any browser, and the tool polls until the token arrives.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Access token</th><th>Refresh token</th><th>ID token (OIDC)</th></tr>
+      <tr><td>Says</td><td>This client may do these scopes</td><td>Give me a new access token</td><td>Who the user is</td></tr>
+      <tr><td>Sent to</td><td>The API, in the <code>Authorization: Bearer</code> header</td><td>The auth server only</td><td>Read by the app itself</td></tr>
+      <tr><td>Lives</td><td>Minutes</td><td>Days, rotated on every use</td><td>Minutes</td></tr>
+      <tr><td>If stolen</td><td>Works until it expires</td><td>Reuse is spotted, the whole family is revoked</td><td>Proves nothing to an API</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"OAuth delegates limited access with a short-lived token. PKCE makes a stolen code useless without the verifier, and short expiry plus rotating refresh tokens make a stolen token expire fast."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const X={b:110,a:340,s:570,r:800};
+const idle=["",'idle'];
+const steps={
+"flow":[
+ {t:"Start: make a secret",b:"The analyst clicks Sign in. The web app makes a random secret, the code verifier, and keeps it. It hashes it into the code challenge.",w:"The verifier never leaves the app until the very end. Only its hash travels through the browser.",m:[],st:{b:["clicked sign in","idle"],a:["verifier kept","wait"],s:["",'idle'],r:["",'idle']}},
+ {t:"Redirect with the challenge",b:"The app sends the browser to the auth server. The URL carries the app id, the scopes it wants (graph:read) and the code challenge.",w:"The challenge is a hash. Seeing it does not let anyone work out the verifier.",m:[["a","b",110,"redirect + challenge"],["b","s",140,"authorize, challenge"]],st:{b:["at auth server","idle"],a:["verifier kept","wait"],s:["challenge stored","wait"],r:["",'idle']}},
+ {t:"Sign in and approve",b:"The analyst types the password into the auth server's own page and approves graph:read. The web app never sees the password.",w:"This is delegation. The app gets a limited right, not the user's password.",m:[["b","s",180,"password, approve graph:read"]],st:{b:["signed in","ok"],a:["verifier kept","wait"],s:["user approved","ok"],r:["",'idle']}},
+ {t:"A one-time code comes back",b:"The auth server redirects the browser back to the app with a short-lived, one-time code. The browser hands it to the app.",w:"The code travels through the browser and its history, so assume someone may see it. PKCE is why that is fine.",m:[["s","b",215,"redirect + code"],["b","a",245,"code"]],st:{b:["signed in","ok"],a:["code + verifier","wait"],s:["code issued","wait"],r:["",'idle']}},
+ {t:"Exchange code plus verifier",b:"The app sends the code and the original verifier straight to the auth server. The server hashes the verifier and compares it with the stored challenge.",w:"Only the app that started the flow knows the verifier. A match proves the code came back to the right app.",m:[["a","s",110,"code + verifier"],["band",0,150,"hash(verifier) equals challenge: match"]],st:{b:["signed in","ok"],a:["waiting","wait"],s:["match","ok"],r:["",'idle']}},
+ {t:"Tokens",b:"The auth server returns an access token that lives 15 minutes, a refresh token, and, with OIDC (OpenID Connect), an ID token that says who the analyst is.",w:"The code is now spent. Using it a second time fails.",m:[["s","a",190,"access 15 min, refresh, ID token"]],st:{b:["signed in","ok"],a:["tokens held","ok"],s:["code spent","undo"],r:["",'idle']}},
+ {t:"Call the API",b:"The app calls the graph API with Authorization: Bearer and the access token. The API checks the JWT (JSON Web Token) signature with the auth server's public key, the expiry and the scope.",w:"The API does not call the auth server on every request. That is fast, and it is why the expiry must be short.",m:[["a","r",110,"Bearer access token"],["r","a",140,"200, rows"]],st:{b:["signed in","ok"],a:["tokens held","ok"],s:["",'idle'],r:["scope ok","ok"]}},
+ {t:"Refresh and rotate",b:"Fifteen minutes later the access token expires. The app sends the refresh token to the auth server and gets a new access token and a new refresh token. The old refresh token is now dead.",w:"Rotation means a stolen refresh token is good for one use at most, and that use is noticed.",m:[["a","r",110,"old access token"],["r","a",135,"401 expired",true],["a","s",175,"refresh token R1"],["s","a",205,"new access, new R2"]],st:{b:["signed in","ok"],a:["new tokens","ok"],s:["R1 dead","undo"],r:["401 then 200","ok"]}}
+],
+"attack":[
+ {t:"A stolen code",b:"An attacker app on the phone catches the redirect and copies the one-time code. It sends the code to the auth server to get tokens.",w:"Without PKCE this worked. That is exactly the attack PKCE was made for.",m:[["s","b",110,"redirect + code"],["band",0,145,"attacker copies the code"],["b","s",185,"attacker: code, no verifier",true]],st:{b:["code leaked","fail"],a:["verifier kept","wait"],s:["checking","wait"],r:["",'idle']}},
+ {t:"Refused: no verifier",b:"The attacker has the code but never saw the verifier. The auth server cannot match a challenge, so it refuses.",w:"The code alone is worthless. The real app still finishes its own exchange with the verifier.",m:[["s","b",215,"invalid_grant",true],["a","s",250,"code + verifier"],["s","a",275,"tokens"]],st:{b:["attacker refused","ok"],a:["tokens held","ok"],s:["match for the app","ok"],r:["",'idle']}},
+ {t:"A JWT with no expiry",b:"Now a different hole. A careless service issued access tokens with no expiry. One leaks in a log file. The attacker calls the API with it.",w:"The API checks the signature only. The signature is real, so the API says yes.",m:[["band",0,110,"token copied from a log file"],["b","r",150,"attacker: Bearer leaked token",true],["r","b",180,"200, rows",true]],st:{b:["attacker in","fail"],a:["",'idle'],s:["cannot recall it","fail"],r:["200 to attacker","fail"]}},
+ {t:"It cannot be revoked",b:"The team rotates the password. The token still works. The auth server cannot pull a signed token back, and the API never asks it.",w:"A JWT is a signed statement. Once signed, its expiry is the only revocation it has.",m:[["s","r",120,"revoke? no channel",true],["b","r",160,"attacker: same token",true],["r","b",190,"200, rows",true]],st:{b:["attacker in","fail"],a:["",'idle'],s:["password rotated","idle"],r:["still 200","fail"]}},
+ {t:"The fix: short expiry and a deny list",b:"Access tokens expire in 15 minutes. For an emergency the API also checks a small deny list. The leaked token is refused.",w:"Short expiry bounds the damage to minutes. The deny list covers those minutes when it matters.",m:[["s","r",120,"deny list: token id"],["b","r",160,"attacker: leaked token",true],["r","b",190,"401",false]],st:{b:["attacker out","ok"],a:["",'idle'],s:["deny list sent","undo"],r:["401","ok"]}},
+ {t:"A reused refresh token",b:"The attacker steals an old refresh token R1 and tries it. R1 was already rotated to R2. Reuse is a theft signal, so the server revokes the whole family, R2 too.",w:"The real analyst must sign in again. That small cost is how a theft is cut off at once.",m:[["b","s",120,"attacker: refresh R1",true],["s","b",150,"invalid_grant"],["s","a",190,"family revoked","undo"],["a","s",225,"refresh R2"],["s","a",255,"sign in again","undo"]],st:{b:["attacker out","ok"],a:["must sign in","undo"],s:["family revoked","undo"],r:["",'idle']}}
+]};
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)"};
+let mode="flow",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+const code={"flow": {"label": "Go", "pc": ["app: verifier = 32 random bytes; keep it", "challenge = base64url(sha256(verifier))", "redirect to the auth server: app id, scope graph:read, challenge", "auth server: check the password, the user approves", "  code = one-time code, stored with the challenge", "exchange(code, verifier):", "  if the code is unknown or used: invalid_grant", "  if base64url(sha256(verifier)) != stored challenge: invalid_grant", "  mark used; return access (15 min), refresh, ID token", "API(token):", "  if the signature is bad: 401", "  if expired or on the deny list: 401", "  if the scope is missing: 403; else 200", "refresh(r):", "  if r was used before: revoke the family; invalid_grant", "  mark r used; return a new access and a new refresh", "# broken API: checks the signature only, so no expiry means forever"], "real": ["// challengeOf hashes the secret verifier. Only the hash goes through the browser.", "func challengeOf(verifier string) string {", "\th := sha256.Sum256([]byte(verifier))", "\treturn b64.EncodeToString(h[:])", "}", "", "// authorize runs after sign-in and approval: it stores the challenge with a one-time code.", "func (a *authServer) authorize(challenge, scope string) string {", "\ta.next++", "\tcode := fmt.Sprintf(\"code-%d\", a.next)", "\ta.codes[code] = &grant{challenge: challenge, scope: scope}", "\treturn code", "}", "", "// exchange swaps code plus verifier for tokens. The code alone is refused.", "func (a *authServer) exchange(code, verifier string, now int) (access, refresh string, err error) {", "\tg, ok := a.codes[code]", "\tif !ok || g.used {", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: code unknown or used\")", "\t}", "\tif challengeOf(verifier) != g.challenge {", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: verifier does not match\")", "\t}", "\tg.used = true", "\taccess = a.sign(claims{\"ana\", g.scope, now + 900, random()[:6]})", "\trefresh = \"R-\" + random()[:6]", "\ta.refresh[refresh] = &refreshToken{family: code}", "\treturn access, refresh, nil", "}", "", "// refreshTokens rotates: a second use of an old token revokes the family.", "func (a *authServer) refreshTokens(r string, now int) (string, string, error) {", "\tt, ok := a.refresh[r]", "\tif !ok || a.revoked[t.family] {", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: sign in again\")", "\t}", "\tif t.used {", "\t\ta.revoked[t.family] = true", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: reuse, family revoked\")", "\t}", "\tt.used = true", "\tnext := \"R-\" + random()[:6]", "\ta.refresh[next] = &refreshToken{family: t.family}", "\treturn a.sign(claims{\"ana\", \"graph:read\", now + 900, random()[:6]}), next, nil", "}", "", "// api checks signature, expiry, deny list and scope. It never asks the auth server.", "func api(pub ed25519.PublicKey, tok, scope string, now int) int {", "\tc, ok := readToken(pub, tok)", "\tif !ok || now >= c.Exp || denyList[c.ID] {", "\t\treturn 401", "\t}", "\tif c.Scope != scope {", "\t\treturn 403", "\t}", "\treturn 200", "}"], "map": {"1": [2], "2": [3, 4], "3": [8], "4": [7, 8], "5": [10, 11], "6": [16], "7": [18, 19], "8": [21, 22], "9": [24, 25, 28], "10": [48], "11": [49, 50], "12": [50, 51], "13": [53, 54, 56], "14": [32], "15": [37, 38, 39], "16": [41, 42, 43]}}, "attack": {"label": "Go", "pc": ["app: verifier = 32 random bytes; keep it", "challenge = base64url(sha256(verifier))", "redirect to the auth server: app id, scope graph:read, challenge", "auth server: check the password, the user approves", "  code = one-time code, stored with the challenge", "exchange(code, verifier):", "  if the code is unknown or used: invalid_grant", "  if base64url(sha256(verifier)) != stored challenge: invalid_grant", "  mark used; return access (15 min), refresh, ID token", "API(token):", "  if the signature is bad: 401", "  if expired or on the deny list: 401", "  if the scope is missing: 403; else 200", "refresh(r):", "  if r was used before: revoke the family; invalid_grant", "  mark r used; return a new access and a new refresh", "# broken API: checks the signature only, so no expiry means forever"], "real": ["// exchange swaps code plus verifier for tokens. The code alone is refused.", "func (a *authServer) exchange(code, verifier string, now int) (access, refresh string, err error) {", "\tg, ok := a.codes[code]", "\tif !ok || g.used {", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: code unknown or used\")", "\t}", "\tif challengeOf(verifier) != g.challenge {", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: verifier does not match\")", "\t}", "\tg.used = true", "\taccess = a.sign(claims{\"ana\", g.scope, now + 900, random()[:6]})", "\trefresh = \"R-\" + random()[:6]", "\ta.refresh[refresh] = &refreshToken{family: code}", "\treturn access, refresh, nil", "}", "", "// refreshTokens rotates: a second use of an old token revokes the family.", "func (a *authServer) refreshTokens(r string, now int) (string, string, error) {", "\tt, ok := a.refresh[r]", "\tif !ok || a.revoked[t.family] {", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: sign in again\")", "\t}", "\tif t.used {", "\t\ta.revoked[t.family] = true", "\t\treturn \"\", \"\", fmt.Errorf(\"invalid_grant: reuse, family revoked\")", "\t}", "\tt.used = true", "\tnext := \"R-\" + random()[:6]", "\ta.refresh[next] = &refreshToken{family: t.family}", "\treturn a.sign(claims{\"ana\", \"graph:read\", now + 900, random()[:6]}), next, nil", "}", "", "// apiBroken checks the signature only, so a token with no expiry lives on.", "func apiBroken(pub ed25519.PublicKey, tok string) int {", "\tif _, ok := readToken(pub, tok); !ok {", "\t\treturn 401", "\t}", "\treturn 200", "}", "", "// api checks signature, expiry, deny list and scope. It never asks the auth server.", "func api(pub ed25519.PublicKey, tok, scope string, now int) int {", "\tc, ok := readToken(pub, tok)", "\tif !ok || now >= c.Exp || denyList[c.ID] {", "\t\treturn 401", "\t}", "\tif c.Scope != scope {", "\t\treturn 403", "\t}", "\treturn 200", "}"], "map": {"5": [3], "6": [2], "7": [4, 5], "8": [7, 8], "9": [10, 11, 14], "10": [42], "11": [43, 44], "12": [44, 45], "13": [47, 48, 50], "14": [18], "15": [23, 24, 25], "16": [27, 28, 29], "17": [34, 35, 38]}}};
+const pcs={"flow": [[1, 2], [3], [4], [5], [6, 7, 8], [9], [10, 11, 12, 13], [14, 16]], "attack": [[5, 6], [8], [17], [17], [12], [15]]};
+const textOver={"flow": {"1": {"b": "The analyst clicks Sign in. The app makes 32 random bytes, the code verifier, and keeps it. It computes base64url(sha256(verifier)), the code challenge."}, "4": {"b": "The auth server stores a one-time code, code-1, together with the challenge, and redirects the browser back to the app with it."}, "5": {"b": "The app sends code-1 and the verifier directly to the auth server. The code is known and unused. The server hashes the verifier and compares it with the stored challenge: equal."}, "6": {"b": "The server marks code-1 used and returns an access token with expiry now + 900 seconds, a refresh token, and with OIDC (OpenID Connect) an ID token. The same code again gets invalid_grant."}, "7": {"b": "The API checks the signature with the public key, the expiry, the deny list and the scope. At second 10, graph:read gets 200, lanes:write gets 403. At second 900 the same token gets 401. It never called the auth server."}, "8": {"b": "At second 900 the app sends R1. It is known and unused, so the server marks it used and returns a new access token and R2. The new access token gets 200."}}, "attack": {"2": {"b": "The attacker sends the stolen code with a made-up verifier. Its hash does not equal the stored challenge, so the server answers invalid_grant: verifier does not match. The real app can still finish."}, "3": {"b": "A careless service issued a token with an expiry so far off that it never ends. The broken API checks only the signature, which is real, so a year later it still answers 200."}, "4": {"b": "The token is a signed statement. The auth server cannot pull it back, and this API never asks it. Rotating the password changes nothing in that check."}, "5": {"b": "The fixed API also compares now with exp. A 15-minute token used a year later gets 401. For an emergency, its id goes on the deny list, and at second 60 it gets 401 too."}, "6": {"b": "The attacker sends R1, already used. The check sees used is true, so the server revokes the family and answers invalid_grant. When the real app sends R2, the family is revoked, so it must sign in again."}}};
+for(const t in steps)steps[t].forEach((s,k)=>{s.pc=pcs[t][k];Object.assign(s,(textOver[t]||{})[k+1]||{});});
+let view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const k of["b","a","s","r"]){const [v,c]=s.st[k]||idle;$("tx-"+k).textContent=v;$("st-"+k).setAttribute("fill",fillFor[c]);
+    $("st-"+k).setAttribute("opacity",v?"1":"0.4");$("tx-"+k).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");}
+  $("bx-b").setAttribute("fill",mode==="attack"&&/attacker in|leaked/.test(s.st.b[0])?"var(--fail)":"var(--svc)");
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="none" stroke="var(--wait)" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[a],x2=X[b];
+      const col=kind===true?"var(--fail)":kind==="undo"?"var(--undo)":"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

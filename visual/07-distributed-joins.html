@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributed joins</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Distributed joins: broadcast, shuffle, colocate</h1>
+  <p class="lede">StarRocks spreads billions of swaps over three backend nodes. Two rows can only be joined on the same node. Watch the three ways the engine brings matching rows together, and what a stale row count does to a broadcast.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="bc">Broadcast: copy the small side</button>
+    <button role="tab" aria-selected="false" data-mode="sh">Shuffle: move both by key</button>
+    <button role="tab" aria-selected="false" data-mode="co">Colocate: nothing moves</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Distributed joins: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">small table, or a row we follow</span>
+    <span style="--c:var(--undo)">rows crossing the network</span>
+    <span style="--c:var(--ok)">joined on this node</span>
+    <span style="--c:var(--line)">data stored on this node</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>A 100-row DEX (decentralised exchange) registry against billions of swaps is a broadcast join. Swaps against transfers on <code>tx_hash</code>, both huge, is a shuffle, or no movement at all when both tables sit in one colocation group. Spark makes the same choice: broadcast hash join under a size limit, otherwise shuffle.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep statistics fresh, because the planner picks from row counts. Read the plan: <code>EXPLAIN</code> shows BROADCAST or SHUFFLE. For two big tables you always join on the same key, bucket both on that key with the same bucket count in one colocation group.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Broadcast</th><th>Shuffle</th><th>Colocate</th></tr>
+      <tr><td>What moves</td><td>The small table, to every node</td><td>Both tables, each row once, by key hash</td><td>Nothing</td></tr>
+      <tr><td>Network cost</td><td>Small table times node count</td><td>Both tables once</td><td>Zero</td></tr>
+      <tr><td>Fits</td><td>One side tiny</td><td>Both sides big, joined rarely or on many keys</td><td>Both sides big, always joined on the same key</td></tr>
+      <tr><td>Trap</td><td>Stale stats broadcast a huge table</td><td>Skew: one hot key floods one node</td><td>Different bucket counts silently fall back to shuffle</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"In a distributed join matching rows must meet: broadcast the small side, shuffle both when both are big, or colocate tables always joined on the same key so nothing moves."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const X=[20,315,610];
+const nodes=(rows)=>X.flatMap((x,j)=>[F(x,50,270,250,"node "+(j+1)),...(rows[j]||[]).map((r,k)=>B(x+10,80+50*k,250,r[0],r[1],38))]);
+const all=(f)=>[0,1,2].map(j=>f(j));
+const cp=(y,k)=>[A(282,y,323,y,"",k||"u"),A(577,y,618,y,"",k||"u")];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-distributed-joins/main.go</code> plays the planner on three nodes, places 3,000 transactions, and prints every plan and row count quoted here (<code>go run .</code>).";
+const CODE={
+bc:{pc:["plan(big, small):",
+"  if small.estimated_rows <= broadcast_limit: BROADCAST",
+"  else: SHUFFLE",
+"BROADCAST: copy small to every other node",
+"  each node joins its own part locally",
+"  rows sent = small.real_rows x (nodes - 1)",
+"stale statistics: estimate 100, real 2,000,000,000",
+"ANALYZE, then read the plan in EXPLAIN"],
+ views:[{v:"real",label:"Go",lines:[].concat(["const nodes = 3", "const broadcastLimit = 1000000 // the planner copies a side to every node only below this"],[""],["// plan picks how to join big with other, the way the planner does.", "func plan(big, other Table) string {", "\tif big.group != \"\" && big.group == other.group && big.key == other.key && big.buckets == other.buckets {", "\t\treturn \"COLOCATE\" // matching buckets already sit on the same node", "\t}", "\tif other.est <= broadcastLimit {", "\t\treturn \"BROADCAST\" // copy the small side to every node", "\t}", "\treturn \"SHUFFLE\" // send both sides to the node their key hashes to", "}"],[""],["// broadcastSent is what a broadcast copies: every real row to every other node.", "func broadcastSent(t Table) int { return t.rows * (nodes - 1) }"],[""],["func broadcast() {", "\tfmt.Printf(\"broadcast limit %s rows\\n\", comma(broadcastLimit))", "\tswaps := Table{name: \"swaps\", rows: 3000000000, est: 3000000000}", "\tregistry := Table{name: \"dex registry\", rows: 100, est: 100}", "\tfmt.Printf(\"swaps join dex registry: plan %s, rows sent %s\\n\", plan(swaps, registry), comma(broadcastSent(registry)))", "\ttransfers := Table{name: \"transfers\", rows: 2000000000, est: 100} // stale statistics", "\tfmt.Printf(\"swaps join transfers, statistics say %d: plan %s, rows sent %s\\n\", transfers.est, plan(swaps, transfers), comma(broadcastSent(transfers)))", "\ttransfers.est = transfers.rows // ANALYZE refreshes the statistics", "\tfmt.Printf(\"after ANALYZE: plan %s\\n\", plan(swaps, transfers))", "}"]),
+  map:[["plan(big, small):","func plan(big, other Table) string {"],["if small.estimated_rows","if other.est <= broadcastLimit {..copy the small side"],["else: SHUFFLE","send both sides to the node"],
+   ["BROADCAST: copy small","const broadcastLimit","copy the small side"],["each node joins its own part","swaps join dex registry: plan"],["rows sent = small.real_rows","func broadcastSent","swaps join dex registry: plan"],
+   ["stale statistics","transfers := Table{","statistics say %d"],["ANALYZE, then read","transfers.est = transfers.rows","after ANALYZE"]]}]},
+sh:{pc:["each row starts on the node of its own key   # swaps by pool, transfers by block",
+"target = node_of(hash(tx_hash) mod 12)       # the same hash for both tables",
+"if row.node != target: send the row to target",
+"each node joins the rows that met there",
+"rows sent = rows not already on their target, on every run"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// hash is the same function on every node, for every table.", "func hash(tx string) uint32 { return crc32.ChecksumIEEE([]byte(tx)) }"],[""],["// bucketOf returns a bucket from 0 to buckets-1.", "func bucketOf(tx string, buckets int) int { return int(hash(tx) % uint32(buckets)) }"],[""],["// nodeOf places a bucket on a node, from 1 to 3.", "func nodeOf(bucket, buckets int) int { return bucket*nodes/buckets + 1 }"],[""],["// shuffle places rows by their own keys, then sends each to the node of hash(tx_hash).", "func shuffle() {", "\tfirst, count := 0xa000, 3000", "\tsent := 0", "\tfor k := first; k < first+count; k++ {", "\t\ttx := fmt.Sprintf(\"0x%04x\", k)", "\t\tpool := k % 3                               // swaps are spread by pool", "\t\tblock := (k - first) / 50                   // 50 transfers per block", "\t\tswapNode, transferNode := pool+1, block%3+1 // transfers are spread by block", "\t\ttarget := nodeOf(bucketOf(tx, 12), 12)", "\t\tif swapNode != target {", "\t\t\tsent++ // the swap crosses the network", "\t\t}", "\t\tif transferNode != target {", "\t\t\tsent++ // the transfer crosses the network", "\t\t}", "\t\tif tx == \"0xab12\" {", "\t\t\tfmt.Printf(\"shuffle: 0xab12 swap on node %d, transfer on node %d, hash sends both to node %d\\n\", swapNode, transferNode, target)", "\t\t}", "\t}", "\tfmt.Printf(\"shuffle: %s of %s rows sent (%d%%)\\n\", comma(sent), comma(2*count), 100*sent/(2*count))", "}"]),
+  map:[["each row starts on the node","pool := k % 3","block := (k - first) / 50","swapNode, transferNode :="],["target = node_of","func hash(tx string)","func bucketOf","func nodeOf","target := nodeOf"],
+   ["if row.node != target","if swapNode != target {..the swap crosses","if transferNode != target {..the transfer crosses"],["each node joins the rows","hash sends both to node"],["rows sent = rows not already","rows sent (%d%%)"]]}]},
+co:{pc:["CREATE both tables: bucket by tx_hash, 12 buckets, group tx",
+"bucket = hash(tx_hash) mod 12, node = node_of(bucket)",
+"plan: same group, same key, same bucket count -> COLOCATE",
+"COLOCATE: each node joins its own buckets, rows sent 0",
+"transfers recreated with 16 buckets: counts differ -> SHUFFLE",
+"fix: 12 buckets, same key, same group -> COLOCATE"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// plan picks how to join big with other, the way the planner does.", "func plan(big, other Table) string {", "\tif big.group != \"\" && big.group == other.group && big.key == other.key && big.buckets == other.buckets {", "\t\treturn \"COLOCATE\" // matching buckets already sit on the same node", "\t}", "\tif other.est <= broadcastLimit {", "\t\treturn \"BROADCAST\" // copy the small side to every node", "\t}", "\treturn \"SHUFFLE\" // send both sides to the node their key hashes to", "}"],[""],["func colocate() {", "\tswaps := Table{name: \"swaps\", est: 3000000000, key: \"tx_hash\", buckets: 12, group: \"tx\"}", "\ttransfers := Table{name: \"transfers\", est: 2000000000, key: \"tx_hash\", buckets: 12, group: \"tx\"}", "\tb := bucketOf(\"0xab12\", 12)", "\tfmt.Printf(\"colocate: 0xab12 in bucket %d of both tables, on node %d\\n\", b+1, nodeOf(b, 12))", "\tsent := 0", "\tfor k := 0xa000; k < 0xa000+3000; k++ {", "\t\ttx := fmt.Sprintf(\"0x%04x\", k)", "\t\tif nodeOf(bucketOf(tx, swaps.buckets), swaps.buckets) != nodeOf(bucketOf(tx, transfers.buckets), transfers.buckets) {", "\t\t\tsent++ // the two rows of tx sit on different nodes", "\t\t}", "\t}", "\tfmt.Printf(\"colocate: plan %s, rows sent %d\\n\", plan(swaps, transfers), sent)", "\ttransfers.buckets = 16 // someone recreates transfers", "\tfmt.Printf(\"16 buckets: 0xab12 in transfers bucket %d, plan %s\\n\", bucketOf(\"0xab12\", 16)+1, plan(swaps, transfers))", "\ttransfers.buckets = 12 // fix: same key, same count, same group", "\tfmt.Printf(\"12 buckets again: plan %s\\n\", plan(swaps, transfers))", "}"]),
+  map:[["CREATE both tables","swaps := Table{..transfers := Table{"],["bucket = hash(tx_hash) mod 12","b := bucketOf(..colocate: 0xab12 in bucket"],
+   ["plan: same group","if big.group != ..matching buckets"],["COLOCATE: each node joins","sent := 0..colocate: plan %s"],
+   ["transfers recreated with 16","transfers.buckets = 16","16 buckets: 0xab12","send both sides to the node"],["fix: 12 buckets","transfers.buckets = 12","12 buckets again"]]}]}};
+// CODE PANEL END
+const S={
+bc:{name:"swaps join dex registry",st:[
+ {t:"Start: the big table is spread out",pc:["plan(big, small):", "if small.estimated_rows"],b:"Swaps are split into three parts, one per node. The DEX registry, 100 rows, sits on node 1 only.",w:"A swap on node 3 cannot be joined to a registry row that lives on node 1.",d:nodes([[["swaps part 1","n"],["dex registry, 100 rows","r"]],[["swaps part 2","n"]],[["swaps part 3","n"]]])},
+ {t:"Copy the small side to every node",pc:["if small.estimated_rows", "BROADCAST: copy small"],b:"The planner reads the statistics: the registry has 100 rows, under the broadcast limit of 1,000,000, so it picks BROADCAST. The engine sends the registry to node 2 and node 3. Each node now holds a full copy.",w:"Broadcast moves the small table. The billions of swaps stay where they are.",d:nodes(all(j=>[["swaps part "+(j+1),"n"],["dex registry, 100 rows","r"]])).concat(cp(179))},
+ {t:"Each node joins locally",pc:["each node joins its own part"],b:"Every node joins its own part of swaps to its own registry copy. The three results are stacked.",w:"No swap crossed the network.",d:nodes(all(j=>[["swaps part "+(j+1),"n"],["dex registry, 100 rows","r"],["joined here","c"]]))},
+ {t:"What it cost",pc:["rows sent = small.real_rows"],b:"The registry went to the 2 other nodes: 100 rows x 2 = 200 rows sent. Tiny next to moving billions of swaps.",w:"Broadcast cost grows with the small table and the node count. It is only cheap while the small side is small.",d:nodes(all(j=>[["swaps part "+(j+1),"n"],["dex registry, 100 rows","r"],["joined here","c"]])).concat([T(20,335,"sent: 100 rows x 2 other nodes = 200 rows","c","start",16)])},
+ {t:"The failure: stale statistics",pc:["if small.estimated_rows", "rows sent = small.real_rows", "stale statistics"],b:"Now the planner's statistics for transfers say 100 rows, because they were taken when the table was new. It really holds 2,000,000,000. 100 is under the limit, so the planner picks BROADCAST and sends 4,000,000,000 rows.",w:"Gigabytes are copied to every node. Memory runs out and the query fails.",d:nodes(all(j=>[["swaps part "+(j+1),"n"],["transfers: 2 billion rows","x"],["out of memory","x"]])).concat(cp(179,"x"),[T(20,335,"statistics said 100 rows","x","start",16)])},
+ {t:"Fix: fresh statistics, read the plan",pc:["ANALYZE, then read", "else: SHUFFLE"],b:"Refresh the statistics with ANALYZE. 2,000,000,000 is over the limit, so the planner picks SHUFFLE. EXPLAIN now shows SHUFFLE for transfers and BROADCAST only for the registry.",w:"The first thing to check in a slow distributed join is which side was broadcast.",d:nodes(all(j=>[["swaps part "+(j+1),"n"],["dex registry, 100 rows","r"],["joined here","c"]])).concat([T(20,335,"EXPLAIN: BROADCAST registry, SHUFFLE transfers","c","start",16)])}
+]},
+sh:{name:"swaps join transfers on tx_hash",st:[
+ {t:"Start: two big tables, spread by other keys",pc:["each row starts on the node"],b:"Swaps are spread by pool, transfers by block. Follow transaction 0xab12: its swap is on node 1, its transfer on node 3.",w:"Both sides are too big to copy everywhere.",d:nodes([[["swaps part 1","n"],["swap of 0xab12","r"],["transfers part 1","n"]],[["swaps part 2","n"],["transfers part 2","n"]],[["swaps part 3","n"],["transfer of 0xab12","r"],["transfers part 3","n"]]])},
+ {t:"Hash the join key",pc:["target = node_of"],b:"Every node computes hash(tx_hash) for each row. The hash picks one node. hash(0xab12) picks node 2.",w:"The same key always hashes to the same node, from whichever table.",d:nodes([[["swaps part 1","n"],["swap of 0xab12 -> node 2","r"],["transfers part 1","n"]],[["swaps part 2","n"],["transfers part 2","n"]],[["swaps part 3","n"],["transfer 0xab12 -> node 2","r"],["transfers part 3","n"]]])},
+ {t:"Send rows to their node",pc:["if row.node != target"],b:"Node 1 sends the swap of 0xab12 to node 2. Node 3 sends the transfer of 0xab12 to node 2.",w:"This is the shuffle: rows cross the network once, to the node their key hashes to.",d:nodes([[["swaps part 1","n"],["swap of 0xab12","u"],["transfers part 1","n"]],[["swaps part 2","n"],["transfers part 2","n"]],[["swaps part 3","n"],["transfer of 0xab12","u"],["transfers part 3","n"]]]).concat([A(282,149,323,149,"","u"),A(618,149,577,149,"","u")])},
+ {t:"They meet and join",pc:["each node joins the rows"],b:"On node 2 the swap and the transfer of 0xab12 meet, and the join pairs them.",w:"Every key now has all its rows on one node.",d:nodes([[["swaps part 1","n"]],[["swap of 0xab12","c"],["transfer of 0xab12","c"],["joined here","c"]],[["swaps part 3","n"]]])},
+ {t:"What the shuffle cost",pc:["if row.node != target", "rows sent = rows not already"],b:"Every row of both tables did the same. In the program 3,975 of 6,000 rows (66%) crossed the network once. A row already sits on its target node only one time in three, so about two thirds move.",w:"Shuffle is the general answer for two big tables. It is paid on every run of the query.",d:nodes(all(j=>[["swaps, hash range "+(j+1),"u"],["transfers, hash range "+(j+1),"u"],["joined here","c"]])).concat([A(282,99,323,149,"","u"),A(323,199,282,149,"","u"),A(577,99,618,149,"","u"),A(618,199,577,149,"","u"),T(20,335,"both tables cross the network, every run","w","start",16)])}
+]},
+co:{name:"colocation group on tx_hash",st:[
+ {t:"Bucket both tables the same way",pc:["CREATE both tables", "bucket = hash(tx_hash) mod 12"],b:"Swaps and transfers are both bucketed by tx_hash into 12 buckets, in one colocation group. Bucket n of each table is placed on the same node.",w:"The shuffle is done once, at load time, instead of on every query.",d:nodes(all(j=>[["swaps buckets "+(4*j+1)+"-"+(4*j+4),"n"],["transfers buckets "+(4*j+1)+"-"+(4*j+4),"n"]]))},
+ {t:"Follow 0xab12: bucket 7",pc:["bucket = hash(tx_hash) mod 12"],b:"hash(0xab12) puts it in bucket 7 in both tables. Both bucket 7s live on node 2.",w:"Same key, same hash, same bucket, same node.",d:nodes([[["swaps buckets 1-4","n"],["transfers buckets 1-4","n"]],[["swaps bucket 7: 0xab12","r"],["transfers bucket 7: 0xab12","r"]],[["swaps buckets 9-12","n"],["transfers buckets 9-12","n"]]])},
+ {t:"Join locally, nothing moves",pc:["plan: same group", "COLOCATE: each node joins"],b:"Each node joins its own buckets of swaps to the same buckets of transfers. No row crosses the network.",w:"Colocate turns the most expensive join into the cheapest one.",d:nodes(all(j=>[["swaps buckets "+(4*j+1)+"-"+(4*j+4),"n"],["transfers buckets "+(4*j+1)+"-"+(4*j+4),"n"],["joined here","c"]])).concat([T(20,335,"rows sent over the network: 0","c","start",16)])},
+ {t:"The trap: different bucket counts",pc:["plan: same group", "transfers recreated with 16"],b:"Someone recreates transfers with 16 buckets. hash(0xab12) mod 16 puts it in bucket 11, not bucket 7. The planner sees 12 against 16 and cannot pair bucket with bucket. The tables are no longer colocated.",w:"The engine quietly falls back to a shuffle. The query still works, only slower, and nobody is told.",d:nodes([[["swaps buckets 1-4","n"],["transfers buckets 1-6","x"]],[["swaps bucket 7: 0xab12","r"],["transfers bucket 11: 0xab12","x"]],[["swaps buckets 9-12","n"],["transfers buckets 12-16","x"]]]).concat([T(20,335,"12 buckets against 16: falls back to shuffle","x","start",16)])},
+ {t:"Fix: same key, same count, one group",pc:["fix: 12 buckets"],b:"Recreate transfers with 12 buckets on tx_hash in the same colocation group. EXPLAIN shows COLOCATE again.",w:"Colocation is a promise kept in the table definitions. Check the plan after every schema change.",d:nodes(all(j=>[["swaps buckets "+(4*j+1)+"-"+(4*j+4),"n"],["transfers buckets "+(4*j+1)+"-"+(4*j+4),"n"],["joined here","c"]])).concat([T(20,335,"EXPLAIN: COLOCATE","c","start",16)])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

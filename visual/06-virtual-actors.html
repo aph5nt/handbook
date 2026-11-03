@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virtual Actors</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Virtual actors: Orleans grains, one call at a time</h1>
+  <p class="lede">A game keeps one grain per player and one per match. Nobody creates them: <code>GetGrain&lt;IPlayer&gt;(7)</code> works from anywhere, and the runtime activates the grain on a silo. Press <b>Next</b> to watch activation, then the trap: player 7 calls match 9, and match 9 calls back into player 7.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="act">Activation by key</button>
+    <button role="tab" aria-selected="false" data-mode="cycle">Call cycle deadlock</button>
+    <button role="tab" aria-selected="false" data-mode="fix">Breaking the cycle</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 370" aria-labelledby="stage-title">
+      <title id="stage-title">The game server, player grain 7, match grain 9 and the Orleans runtime on lifelines</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-g" class="box" x="25" y="20" width="170" height="52" rx="8" fill="var(--coord)"/><text id="t-g" x="110" y="52" fill="#fff">Game server</text>
+        <rect id="c-p" class="box" x="255" y="20" width="170" height="52" rx="8" fill="var(--svc)"/><text id="t-p" x="340" y="52" fill="#fff">Player grain 7</text>
+        <rect id="c-m" class="box" x="485" y="20" width="170" height="52" rx="8" fill="var(--svc)"/><text id="t-m" x="570" y="52" fill="#fff">Match grain 9</text>
+        <rect id="c-r" class="box" x="715" y="20" width="170" height="52" rx="8" fill="var(--undo)"/><text id="t-r" x="800" y="52" fill="#fff">Orleans runtime</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="318"/><line x1="340" y1="72" x2="340" y2="318"/><line x1="570" y1="72" x2="570" y2="318"/><line x1="800" y1="72" x2="800" y2="318"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" text-anchor="middle">
+        <rect id="c-sg" class="box" x="25" y="325" width="170" height="30" rx="15" fill="var(--line)"/><text id="t-sg" x="110" y="345" fill="var(--fg)">idle</text>
+        <rect id="c-sp" class="box" x="255" y="325" width="170" height="30" rx="15" fill="var(--line)"/><text id="t-sp" x="340" y="345" fill="var(--fg)">not active</text>
+        <rect id="c-sm" class="box" x="485" y="325" width="170" height="30" rx="15" fill="var(--line)"/><text id="t-sm" x="570" y="345" fill="var(--fg)">not active</text>
+        <rect id="c-sr" class="box" x="715" y="325" width="170" height="30" rx="15" fill="var(--line)"/><text id="t-sr" x="800" y="345" fill="var(--fg)">silos 1 and 2</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--ok)">active, free for a call</span>
+    <span style="--c:var(--wait)">busy inside a call, awaiting</span>
+    <span style="--c:var(--fail)">stuck or failed</span>
+    <span style="--c:var(--line)">not active</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet grains</h2>
+      <p>Orleans runs the cloud services of Halo, and suits games, sessions, IoT devices and carts. Akka cluster sharding with passivation gives the same behaviour on classic actors. The runtime keeps one activation per key, so one grain holds one player's state.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Keep grains turn-based, the default, and design calls with no cycles: send what the callee needs in the first call. Use a one-way call when no answer is needed. Mark a method reentrant only when you accept that state may change across an await.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Turn-based grain (default)</th><th>Reentrant grain</th></tr>
+      <tr><td>Calls at once</td><td>One, including its awaits</td><td>Several interleave at await points</td></tr>
+      <tr><td>Call cycle A to B to A</td><td>Deadlock until the timeout</td><td>Works</td></tr>
+      <tr><td>State across an await</td><td>Unchanged</td><td>May have changed</td></tr>
+      <tr><td>Reasoning</td><td>Simple, like any actor</td><td>Harder: interleaving is back</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A grain always exists, is activated by key on some silo and runs one call at a time, so a call cycle between grains deadlocks until timeout unless you break the cycle or mark it reentrant."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-virtual-actors/main.go";
+const code={_:{pc:`
+GetGrain(key): a handle only, nothing activates
+call(key, method):
+  if key is not in the directory:
+    silo = runtime picks one; state = storage.load(key)   # activate
+  put the call in the grain's mailbox
+grain loop: take one call, run its whole turn, awaits included
+on idle timeout: storage.save(state); remove from the directory
+a thrown exception returns to the caller                  # no supervisor
+# the cycle:
+player.JoinMatch(9): await match.AddPlayer(7)             # the turn stays open
+match.AddPlayer(7): await player.GetRating()              # queues behind JoinMatch
+every wait has its own timeout: the oldest call fails first
+# fix 1, no cycle:
+player.JoinMatch(9): await match.AddPlayer(7, rating)
+match.AddPlayer(7, rating): add the player; return
+# fix 2, a reentrant method:
+[AlwaysInterleave] GetRating(): return rating
+at an await: run calls marked reentrant now, the rest wait
+the cost: before = score; await x; score = before + 10    # stale read
+so re-read the state after every await`,go:`
+log("GetGrain player/7: active activations %d", len(rt.active)) //@1
+func (rt *Runtime) send(key string, c Call) { //@2
+	g, ok := rt.active[key] //@3
+	if !ok { //@3
+		silo := rt.silos[0] //@4
+		g = &Grain{key: key, silo: silo, score: rt.storage[key], rt: rt, mailbox: make(chan Call, 16)} //@4
+		rt.active[key] = g //@4
+		go g.run() //@4
+	}
+	g.mailbox <- c //@5
+}
+func (g *Grain) run() {
+	select {
+	case c := <-g.mailbox: //@6
+		g.turn(c) //@6
+	case <-idle: //@7
+		g.rt.storage[g.key] = g.score //@7
+		delete(g.rt.active, g.key) //@7
+		return //@7
+	}
+func (g *Grain) turn(c Call) {
+	v, err := c.Fn(g) //@6
+	c.Reply <- Reply{v, err} //@8
+}
+_, err := p.Await("match/9", c, false) //@10,14
+rating, err = m.Await("player/7", getRating(reentrant), false) //@11
+func (g *Grain) Await(key string, c Call, all bool) (int, error) {
+	g.rt.send(key, c)
+	timer := time.After(callTimeout) //@12
+	for {
+		select {
+		case r := <-c.Reply:
+			return r.Val, r.Err
+		case <-timer: //@12
+			return 0, errTimeout //@12
+		case in := <-g.mailbox: //@18
+			if in.Reentrant || all { //@17,18
+				g.turn(in) // runs now, in the middle of this turn //@18
+			} else {
+				g.pending = append(g.pending, in) // waits its turn //@18
+			}
+		}
+	}
+}
+rating := 1500 //@15
+if !withRating { //@15
+log("%s: added player 7, rating %d", m.key, rating) //@15
+return Call{Name: "GetRating", Reentrant: reentrant, Fn: func(g *Grain) (int, error) { //@17
+before := p.score // read before the await //@19
+p.score = before + 10 // the bonus, computed on the stale read //@19,20`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+// Orleans: the grain interface is the whole contract.
+public interface IPlayer : IGrainWithIntegerKey { //@1
+    Task JoinMatch(int match); Task AddScore(int n);
+    [AlwaysInterleave] Task<int> GetRating(); } //@17
+var player = client.GetGrain<IPlayer>(7); // nothing activates //@1
+await player.JoinLobby(); // the first call activates it //@2,3,4,5
+public class PlayerGrain : Grain, IPlayer { //@6
+    public override Task OnActivateAsync(CancellationToken t) => _state.ReadStateAsync(); //@4
+    public override Task OnDeactivateAsync(DeactivationReason r, CancellationToken t) => _state.WriteStateAsync(); //@7
+    public async Task AddScore(int n) { Score += n; await _state.WriteStateAsync(); } // one turn //@6
+    public async Task JoinMatch(int m) { //@10
+        var match = GrainFactory.GetGrain<IMatch>(m);
+        await match.AddPlayer(this.GetPrimaryKeyLong()); } // the cycle //@10
+    public Task JoinMatchFixed(int m) => //@14
+        GrainFactory.GetGrain<IMatch>(m).AddPlayer(this.GetPrimaryKeyLong(), Rating); //@14
+}
+public class MatchGrain : Grain, IMatch {
+    public async Task AddPlayer(long p) { //@11
+        var r = await GrainFactory.GetGrain<IPlayer>(p).GetRating(); } //@11
+    public Task AddPlayer(long p, int rating) { Add(p, rating); return Task.CompletedTask; } //@15
+}
+try { await player.JoinMatch(9); } catch (TimeoutException e) { Log(e); } // rethrown at the caller //@8
+siloBuilder.Configure<SiloMessagingOptions>(o => o.ResponseTimeout = TimeSpan.FromSeconds(30)); //@12
+[Reentrant] public class Loose : Grain { } // every await is open //@18
+var before = Score; await match.Ping(); Score = before + 10; // stale: the +20 is lost //@19
+await match.Ping(); Score = Score + 10; // re-read after the await //@20`}};
+const G=110,P=340,M=570,R=800;
+const tabInit={cycle:{f:{"c-sp":"ok","c-sm":"ok"},x:{"t-sp":"active on silo 2","t-sm":"active on silo 1"}},fix:{f:{"c-sp":"ok","c-sm":"ok"},x:{"t-sp":"active on silo 2","t-sm":"active on silo 1"}}};
+const steps={
+act:[
+ {pc:[1],t:"A grain always exists",b:"The game server calls GetGrain for player 7. No code ever created that grain, and it is not active anywhere.",w:"A virtual actor exists by its key. Only its activation comes and goes."},
+ {pc:[2,3,4,5],t:"The first call activates it",b:"The game server calls JoinLobby on player 7. The runtime checks its directory: is player 7 active? No. So it picks silo 2, activates the grain, loads score 0, and puts the call in the mailbox.",w:"Placement is the runtime's job. The caller never says where.",a:[[G,115,P,115,"JoinLobby"],[R,140,P,140,"activate on silo 2","undo"]],f:{"c-sp":"ok"},x:{"t-sp":"active on silo 2"}},
+ {pc:[6],t:"One call at a time",b:"While JoinLobby runs, an AddScore call arrives. The rule: a turn lasts until the method returns, awaits included. JoinLobby awaits a store for 20 ms, so AddScore starts at 20 ms and the score becomes 120.",w:"Turn-based: inside a grain no two calls overlap, so its state needs no lock.",a:[[G,180,P,180,"AddScore: waits its turn","wait"]],f:{"c-sp":"wait"},x:{"t-sp":"in JoinLobby, 1 waiting"}},
+ {pc:[7],t:"Idle: deactivated",b:"Player 7 goes quiet. The idle timer fires with an empty mailbox. So the runtime saves score 120, removes player 7 from the directory and frees the memory.",w:"Millions of players can exist while only the active ones use memory.",a:[[R,225,P,225,"deactivate, save state","undo"]],f:{"c-sp":"line"},x:{"t-sp":"not active"}},
+ {pc:[3,4],t:"The next call, maybe elsewhere",b:"An hour later a call arrives. The directory check says not active, so activation runs again. The runtime picks silo 1 this time and loads score 120.",w:"The caller's code is the same. GetGrain by key works whichever silo holds it.",a:[[G,265,P,265,"GetStats"],[R,285,P,285,"activate on silo 1","undo"]],f:{"c-sp":"ok"},x:{"t-sp":"active on silo 1"}},
+ {pc:[8],t:"A failure goes to the caller",b:"GetStats throws. There is no supervisor. The exception travels back to the game server.",w:"Grains trade the supervision tree for less code. The caller handles failures.",a:[[P,300,G,300,"exception","fail"]],f:{"c-sg":"fail"},x:{"t-sg":"must handle exception"}}
+],
+cycle:[
+ {pc:[6,10],t:"Join a match",b:"The game server asks player 7 to join match 9.",w:"Player 7 is now inside JoinMatch. Until it returns, it takes no other call.",a:[[G,110,P,110,"JoinMatch(9)"]],f:{"c-sp":"wait"},x:{"t-sp":"in JoinMatch"}},
+ {pc:[10],t:"Player calls match",b:"Inside JoinMatch, player 7 calls AddPlayer(7) on match 9 and awaits the answer.",w:"Player 7 is still in its turn while it awaits.",a:[[P,150,M,150,"AddPlayer(7), await"]],f:{"c-sm":"wait"},x:{"t-sp":"in JoinMatch, awaiting","t-sm":"in AddPlayer"}},
+ {pc:[11],t:"Match calls back",b:"Inside AddPlayer, match 9 needs player 7's rating to balance the teams. It calls GetRating on player 7 and awaits.",w:"The call goes into player 7's queue. Player 7 is busy in JoinMatch.",a:[[M,190,P,190,"GetRating(), await"]],x:{"t-sm":"in AddPlayer, awaiting"}},
+ {pc:[6,10,11],t:"The failure that matters: deadlock",b:"Player 7 cannot take GetRating until JoinMatch finishes. JoinMatch cannot finish until match 9 answers. Match 9 cannot answer until GetRating returns.",w:"A call cycle between turn-based grains waits on itself.",band:[235,"A waits for B, B waits for A"],f:{"c-sp":"fail","c-sm":"fail"},x:{"t-sp":"stuck","t-sm":"stuck"}},
+ {pc:[12],t:"Rescued only by the timeout",b:"Each wait has its own timeout, so the oldest call fails first: the game server's JoinMatch, then the player's AddPlayer. Now the player's turn ends, and GetRating finally runs. Match 9 gets its answer and adds player 7, though the game server was told it failed.",w:"The player waited the whole timeout, and a failed call still changed the match. Orleans waits 30 s by default. The program uses 300 ms.",a:[[P,265,G,265,"JoinMatch: timed out","fail"],[P,290,M,290,"GetRating runs at last","wait",true]],f:{"c-sg":"fail","c-sp":"ok","c-sm":"wait"},x:{"t-sg":"exception after timeout","t-sp":"free again","t-sm":"added player 7 anyway"}}
+],
+fix:[
+ {pc:[6,14],t:"Same request",b:"The game server asks player 7 to join match 9 again.",w:"This time the call design has no cycle.",a:[[G,110,P,110,"JoinMatch(9)"]],f:{"c-sp":"wait"},x:{"t-sp":"in JoinMatch"}},
+ {pc:[14,15],t:"Send what the callee needs",b:"Player 7 passes its rating in the first call: AddPlayer(7, rating 1,500). Match 9 has everything and never calls back.",w:"The best fix is a design without the cycle.",a:[[P,150,M,150,"AddPlayer(7, 1,500)"]],f:{"c-sm":"wait"},x:{"t-sm":"in AddPlayer"}},
+ {pc:[15],t:"Both finish",b:"Match 9 adds the player and answers. Player 7 finishes JoinMatch. The game server gets its answer at once.",w:"No waiting on a timeout, no lost join.",a:[[M,190,P,190,"added"],[P,215,G,215,"joined","ok"]],f:{"c-sp":"ok","c-sm":"ok","c-sg":"ok"},x:{"t-sp":"active, free","t-sm":"active, free","t-sg":"joined"}},
+ {pc:[17,18],t:"Other fix: a reentrant method",b:"If the callback cannot be avoided, GetRating can be marked reentrant. At its await, player 7 checks each incoming call: is it marked? GetRating is, so it runs now, and match 9 gets 1,500.",w:"The cycle no longer deadlocks.",a:[[P,250,M,250,"AddPlayer(7), await"],[M,275,P,275,"GetRating: runs at once","ok"]],f:{"c-sp":"wait"},x:{"t-sp":"JoinMatch + GetRating"}},
+ {pc:[19,20],t:"The cost of reentrancy",b:"Make the whole grain reentrant, and any call runs at an await. JoinMatch reads score 100 and awaits. AddScore runs and makes it 120. JoinMatch then writes its stale 100 plus a bonus of 10, so the score is 110 and the +20 is lost.",w:"Interleaving is back. After every await, re-check the state you depended on.",a:[[G,300,P,300,"AddScore runs mid-JoinMatch","wait"]],x:{"t-sp":"state changed across await"}}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

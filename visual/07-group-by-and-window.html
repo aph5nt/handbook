@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Group by and windows</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>GROUP BY folds rows, a window keeps them</h1>
+  <p class="lede">An analyst asks two questions. How many swaps did each pool have on 1 October? And what is each address's running balance? The first folds rows into one per pool. The second keeps every row and adds a column. Press <b>Next</b> on each tab.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="group">GROUP BY: how many swaps per pool</button>
+    <button role="tab" aria-selected="false" data-mode="window">Window: running balance per address</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Group by and windows: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">key or partition</span>
+    <span style="--c:var(--ok)">computed value</span>
+    <span style="--c:var(--wait)">being looked at now</span>
+    <span style="--c:var(--line)">plain value</span>
+    <span style="--c:var(--fail)">the trap</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>Daily volume per exchange is <code>GROUP BY day, dex</code>. The latest swap per pool is <code>ROW_NUMBER()</code> filtered to 1, instead of a self join. A running balance per address is one sort per partition and one scan.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Pick the tie rule on purpose: <code>RANK</code> leaves gaps (1, 1, 3), <code>DENSE_RANK</code> does not (1, 1, 2), <code>ROW_NUMBER</code> breaks ties in no fixed order. Watch <code>SUM</code> on big integers: StarRocks wraps a <code>BIGINT</code> sum silently instead of raising an error.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>GROUP BY</th><th>Window function</th></tr>
+      <tr><td>Rows out</td><td>One per group</td><td>One per input row</td></tr>
+      <tr><td>Filter before</td><td><code>WHERE</code> on rows</td><td><code>WHERE</code> on rows</td></tr>
+      <tr><td>Filter after</td><td><code>HAVING</code> on groups</td><td>Wrap in a CTE, filter outside</td></tr>
+      <tr><td>Typical use</td><td>Totals: count per pool, volume per day</td><td>Running sums, previous row with <code>LAG</code>, latest row per key</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"GROUP BY folds rows into one per key. A window keeps every row and adds a computed column."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const SW=[["30 Sep","p1","10"],["1 Oct","p1","10"],["1 Oct","p1","20"],["1 Oct","p2","5"],["1 Oct","p2","NULL"],["1 Oct","p3","7"]];
+const sw=(ks)=>[F(20,50,380,310,"swaps"),T(30,86,"day"),T(140,86,"pool"),T(220,86,"amount"),...SW.flatMap((r,j)=>{const k=ks[j],y=94+42*j;return[B(30,y,100,r[0],k==="g"?"g":"n"),B(140,y,70,r[1],k==="g"?"g":k),B(220,y,90,r[2],k==="g"?"g":r[2]==="NULL"&&k==="x"?"x":"n")];})];
+const res=(rows,hd)=>[F(470,50,410,310,"result: one row per pool"),...hd.map((h,c)=>T(480+[0,90,220][c],86,h)),...rows.flatMap((r,j)=>r.slice(0,-1).map((v,c)=>B(480+[0,90,220][c],94+60*j,[80,120,140][c],v,c===0?(r[3]==="g"?"g":"r"):Array.isArray(r[3])?r[3][c-1]:r[3])))];
+const grp=[F(25,132,355,80,"","w"),F(25,216,355,80,"","w"),F(25,300,355,40,"","w"),T(330,175,"p1","w"),T(330,259,"p2","w"),T(330,325,"p3","w")];
+const keep=["g","r","r","r","r","r"];
+const LR=[["a","t1","10"],["a","t2","20"],["a","t3","-5"],["b","t1","5"],["b","t2","5"]];
+const led=(bal,rn,ks,ex)=>[F(20,50,540,310,"ledger"),T(30,86,"address"),T(130,86,"ts"),T(210,86,"amount"),...(bal?[T(320,86,"balance")]:[]),...(rn?[T(450,86,"rn")]:[]),
+ ...LR.flatMap((r,j)=>{const y=94+44*j+(j>2?12:0),k=(ks||[])[j]||"n";return[B(30,y,90,r[0],"r"),B(130,y,70,r[1],k),B(210,y,90,r[2],k),...(bal?[B(320,y,110,bal[j],"c")]:[]),...(rn?[B(450,y,70,rn[j],rn[j]==="1"?"c":"n")]:[])];})].concat(ex||[]);
+const parts=[F(24,90,520,136,"","r"),F(24,236,520,92,"","r")];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The SQL is the real code: <code>handbook/code/07-group-by-and-window/main.py</code> loads these rows into SQLite, runs each statement and prints the rows quoted here (<code>python3 main.py</code>).";
+const CODE={
+group:{pc:["swaps: 6 rows   p1 x3 (one on 30 Sep)   p2 x2 (one NULL amount)   p3 x1",
+"rows = filter(swaps, day == '1 Oct')        # WHERE: on rows, before the fold",
+"groups = bucket(rows, by pool)              # GROUP BY",
+"for each group g:",
+"  out(g.pool, count(g.rows), sum(g.amount))  # one row per group",
+"keep groups where count(g.rows) > 1         # HAVING: on groups, after the fold",
+"count(g.amount) skips rows with a NULL amount  # COUNT(col) is not COUNT(*)"],
+ views:[{v:"real",label:"SQL",lines:[].concat(["CREATE TABLE swaps (day TEXT, pool TEXT, amount INT);", "INSERT INTO swaps VALUES ('30 Sep', 'p1', 10), ('1 Oct', 'p1', 10), ('1 Oct', 'p1', 20),", "  ('1 Oct', 'p2', 5), ('1 Oct', 'p2', NULL), ('1 Oct', 'p3', 7);"],[""],["-- fold the rows of 1 October into one row per pool", "SELECT pool, COUNT(*) AS swaps, SUM(amount) AS volume", "FROM swaps", "WHERE day = '1 Oct'", "GROUP BY pool", "ORDER BY pool;"],[""],["-- HAVING filters groups, after the fold", "SELECT pool, COUNT(*) AS swaps, SUM(amount) AS volume", "FROM swaps", "WHERE day = '1 Oct'", "GROUP BY pool", "HAVING COUNT(*) > 1", "ORDER BY pool;"],[""],["-- COUNT(amount) skips rows where amount is NULL", "SELECT pool, COUNT(amount) AS swaps, SUM(amount) AS volume", "FROM swaps", "WHERE day = '1 Oct'", "GROUP BY pool", "HAVING COUNT(*) > 1", "ORDER BY pool;"]),
+  map:[["swaps: 6 rows","CREATE TABLE swaps..'p3', 7);"],["rows = filter","WHERE day = '1 Oct'#1"],["groups = bucket","GROUP BY pool#1"],
+   ["for each group g","fold the rows of 1 October"],["out(g.pool","SELECT pool, COUNT(*) AS swaps, SUM(amount) AS volume#1"],
+   ["keep groups where","HAVING filters groups..ORDER BY pool;"],["count(g.amount)","COUNT(amount) skips..ORDER BY pool;"]]}]},
+window:{pc:["ledger: a = 10, 20, -5   b = 5, 5   (times t1, t2, t3)",
+"windows = split(ledger, by address)         # PARTITION BY: no fold",
+"sort each window by ts",
+"balance = running sum of amount            # SUM() OVER",
+"rn = 1, 2, 3 counted from the newest row     # ROW_NUMBER() OVER (... DESC)",
+"filter rn = 1 in the same query            # refused: WHERE runs first",
+"r = the window query",
+"filter r where rn = 1                       # the CTE fix",
+"ties at t3: RANK 1,1,3   DENSE_RANK 1,1,2   ROW_NUMBER 1,2 by chance",
+"break the tie: sort by ts DESC, log_index DESC"],
+ views:[{v:"real",label:"SQL",lines:[].concat(["CREATE TABLE ledger (address TEXT, ts TEXT, amount INT);", "INSERT INTO ledger VALUES ('a', 't1', 10), ('a', 't2', 20), ('a', 't3', -5),", "  ('b', 't1', 5), ('b', 't2', 5);", "CREATE TABLE ties (address TEXT, ts TEXT, log_index INT);", "INSERT INTO ties VALUES ('a', 't3', 0), ('a', 't3', 1), ('a', 't2', 0);"],[""],["-- every row stays, a window adds two columns", "SELECT address, ts, amount,", "       SUM(amount) OVER (PARTITION BY address ORDER BY ts) AS balance,", "       ROW_NUMBER() OVER (PARTITION BY address ORDER BY ts DESC) AS rn", "FROM ledger", "ORDER BY address, ts;"],[""],["-- refused: WHERE runs before the window exists", "SELECT address, ts,", "       ROW_NUMBER() OVER (PARTITION BY address ORDER BY ts DESC) AS rn", "FROM ledger", "WHERE rn = 1;"],[""],["-- the fix: name the window query, filter it outside", "WITH r AS (", "  SELECT address, ts, amount,", "         SUM(amount) OVER (PARTITION BY address ORDER BY ts) AS balance,", "         ROW_NUMBER() OVER (PARTITION BY address ORDER BY ts DESC) AS rn", "  FROM ledger", ")", "SELECT address, ts, balance FROM r WHERE rn = 1 ORDER BY address;"],[""],["-- two rows at the same time t3: three ways to number them", "SELECT ts, log_index,", "       RANK() OVER (ORDER BY ts DESC) AS rnk,", "       DENSE_RANK() OVER (ORDER BY ts DESC) AS dense,", "       ROW_NUMBER() OVER (ORDER BY ts DESC) AS rn,", "       ROW_NUMBER() OVER (ORDER BY ts DESC, log_index DESC) AS rn_fixed", "FROM ties", "ORDER BY ts DESC, log_index;"]),
+  map:[["ledger: a","CREATE TABLE ledger..('b', 't2', 5);"],["windows = split","SUM(amount) OVER (PARTITION BY address ORDER BY ts) AS balance,#1"],
+   ["sort each window","SUM(amount) OVER (PARTITION BY address ORDER BY ts) AS balance,#1"],["balance = running","SUM(amount) OVER (PARTITION BY address ORDER BY ts) AS balance,#1"],
+   ["rn = 1, 2, 3","ROW_NUMBER() OVER (PARTITION BY address ORDER BY ts DESC) AS rn#1"],["filter rn = 1 in","refused: WHERE runs..WHERE rn = 1;"],
+   ["r = the window","the fix: name the window..FROM ledger","=)"],["filter r where","SELECT address, ts, balance FROM r WHERE rn = 1"],
+   ["ties at t3","CREATE TABLE ties","INSERT INTO ties","two rows at the same time..AS rn,"],["break the tie","log_index DESC) AS rn_fixed"]]}]}};
+// CODE PANEL END
+const S={
+group:{name:"swaps per pool on 1 October",st:[
+ {t:"Start: six swap rows",pc:["swaps: 6 rows"],b:"The swaps table holds six rows. One is from 30 September. Pool p2 has one swap with no amount recorded: NULL.",w:"The question: how many swaps did each pool have on 1 October, and how much volume?",d:sw(["n","n","n","n","n","n"]).concat(res([],[]))},
+ {t:"WHERE filters rows first",pc:["rows = filter"],b:"WHERE day = '1 Oct' checks each row before anything is grouped. The 30 September row fails the check and drops out. Five rows go on.",w:"WHERE works on rows, before the fold. It cannot see a count, because no count exists yet.",d:sw(["g","n","n","n","n","n"]).concat(res([],[]))},
+ {t:"GROUP BY pool gathers rows",pc:["groups = bucket"],b:"GROUP BY pool puts rows with the same pool value in one bucket: two rows for p1, two for p2, one for p3.",w:"Each group will become exactly one output row.",d:sw(keep).concat(grp,res([],[]))},
+ {t:"Aggregates fold each group",pc:["for each group g", "out(g.pool"],b:"COUNT(*) counts rows. SUM(amount) adds the amounts. p1: 2 swaps, 30. p2: 2 swaps, 5. p3: 1 swap, 7.",w:"Five rows went in, three rows came out. That is the fold.",d:sw(keep).concat(grp,res([["p1","2","30","c"],["p2","2","5","c"],["p3","1","7","c"]],["pool","COUNT(*)","SUM(amount)"]),[A(382,170,476,111,"","w"),A(382,256,476,171,"","w"),A(382,320,476,231,"","w")])},
+ {t:"HAVING filters groups after",pc:["keep groups where"],b:"HAVING COUNT(*) > 1 checks the count of each group, after the fold. p1 (2) and p2 (2) pass. p3 (1) fails and drops out.",w:"HAVING works on groups, after the fold. That is the only place a count can be filtered.",d:sw(keep).concat(grp,res([["p1","2","30","c"],["p2","2","5","c"],["p3","1","7","g"]],["pool","COUNT(*)","SUM(amount)"]),[T(480,300,"HAVING COUNT(*) > 1","f","start",15)])},
+ {t:"The trap: COUNT(amount) skips NULL",pc:["count(g.amount)"],b:"Swap the count for COUNT(amount). It checks each row's amount and skips a NULL. p2 now shows 1, not 2, and its volume stays 5.",w:"COUNT(*) counts rows. COUNT(column) counts rows where that column is not NULL. Pick the one you mean.",d:sw(["g","r","r","x","x","r"]).concat(grp,res([["p1","2","30","c"],["p2","1","5",["x","c"]],["p3","1","7","g"]],["pool","COUNT(amount)","SUM(amount)"]),[T(480,300,"p2 had 2 swaps, not 1","x","start",15)])}
+]},
+window:{name:"running balance per address",st:[
+ {t:"Start: five ledger rows",pc:["ledger: a"],b:"The ledger holds movements for two addresses, a and b, at times t1, t2 and t3.",w:"The question: the balance of each address after each movement. Every row must stay.",d:led()},
+ {t:"PARTITION BY address",pc:["windows = split"],b:"OVER (PARTITION BY address ...) splits the rows into one window per address. Nothing is folded.",w:"A partition is the set of rows one window function looks at.",d:led().concat(parts,[T(580,150,"window for a","r","start",15),T(580,285,"window for b","r","start",15)])},
+ {t:"ORDER BY ts inside each window",pc:["sort each window"],b:"Inside each partition the rows are sorted by time. The running sum will walk them top to bottom.",w:"One sort per partition, then one scan.",d:led(null,null,["w","w","w","w","w"]).concat(parts,[A(570,105,570,210,"","w"),A(570,250,570,310,"","w"),T(585,160,"t1, t2, t3","w"),T(585,285,"t1, t2","w")])},
+ {t:"SUM(amount) OVER: a running balance",pc:["balance = running"],b:"Each row gets the sum of its own amount and every earlier amount in its partition. a: 10, 30, 25. b: 5, 10.",w:"Five rows in, five rows out. GROUP BY would have given two.",d:led(["10","30","25","5","10"]).concat(parts,[T(580,200,"5 rows in, 5 rows out","c","start",15)])},
+ {t:"ROW_NUMBER, newest first",pc:["rn = 1, 2, 3"],b:"ROW_NUMBER() OVER (PARTITION BY address ORDER BY ts DESC) numbers rows from the newest. a: t3 is 1, t2 is 2, t1 is 3. b: t2 is 1, t1 is 2. rn = 1 is the latest row per address.",w:"This replaces a self join for 'latest row per key'.",d:led(["10","30","25","5","10"],["3","2","1","2","1"]).concat(parts)},
+ {t:"The trap: WHERE rn = 1 fails",pc:["filter rn = 1 in"],b:"You add WHERE rn = 1 to the same query. The engine refuses, because rn does not exist yet. SQLite says: misuse of aliased window function rn.",w:"WHERE runs before window functions are computed. A window column cannot be filtered in its own query.",d:led(["10","30","25","5","10"],["3","2","1","2","1"]).concat(parts,[B(580,160,290,"WHERE rn = 1: error","x",40),T(580,230,"WHERE runs before the window","x","start",15)])},
+ {t:"Fix: wrap it in a CTE",pc:["r = the window", "filter r where"],b:"Put the window query in WITH r AS (...), then filter r WHERE rn = 1. Two rows come back: a at t3 with balance 25, b at t2 with balance 10.",w:"The outer query sees rn as a plain column, so it can filter it.",d:led(["10","30","25","5","10"],["3","2","1","2","1"],["g","g","c","g","c"]).concat(parts,[T(580,180,"latest row per address","c","start",15),T(580,205,"a: balance 25, b: balance 10","c","start",15)])},
+ {t:"Ties: pick the rule",pc:["ties at t3", "break the tie"],b:"Two rows share time t3. RANK gives 1, 1, 3. DENSE_RANK gives 1, 1, 2. ROW_NUMBER gives the two t3 rows 1 and 2 in no fixed order. Sort by ts DESC, log_index DESC and log index 1 gets 1 on every run.",w:"A tie broken by chance gives a different 'latest row' on the next run. Add a second sort key, such as the log index.",d:[F(20,50,860,310,"two rows at the same time t3"),T(40,100,"rows","m"),T(260,100,"RANK","m"),T(440,100,"DENSE_RANK","m"),T(640,100,"ROW_NUMBER","m"),
+  ...[["t3","1","1","1 or 2"],["t3","1","1","2 or 1"],["t2","3","2","3"]].flatMap((r,j)=>[B(40,112+50*j,150,"a at "+r[0],"n"),B(260,112+50*j,120,r[1],r[1]==="3"?"w":"n"),B(440,112+50*j,140,r[2],"n"),B(640,112+50*j,160,r[3],j<2?"x":"n")]),T(260,300,"gap after a tie","w"),T(640,300,"random among ties","x")]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

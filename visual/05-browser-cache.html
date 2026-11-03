@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Browser Cache</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Browser cache: the copy on the user's own machine</h1>
+  <p class="lede">A user opens the Chain Insights website, clicks around, and comes back the next day. Press <b>Next</b> and watch where each file comes from. Then switch tabs and watch a deploy break the page for everyone with an old file.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="load">A page load</button>
+    <button role="tab" aria-selected="false" data-mode="deploy">A deploy with a fixed file name</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A page, the browser's memory cache and disk cache, and the server</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="a-p" class="box" x="10" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-p" data-on="a-p" x="105" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Page</text>
+        <line x1="105" y1="68" x2="105" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-p" class="box" x="7.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-p" data-on="c-p" x="105.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-m" class="box" x="240" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-m" data-on="a-m" x="335" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Memory cache</text>
+        <line x1="335" y1="68" x2="335" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-m" class="box" x="237.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-m" data-on="c-m" x="335.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-d" class="box" x="470" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-d" data-on="a-d" x="565" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Disk cache</text>
+        <line x1="565" y1="68" x2="565" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-d" class="box" x="467.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-d" data-on="c-d" x="565.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-s" class="box" x="700" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-s" data-on="a-s" x="795" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Server</text>
+        <line x1="795" y1="68" x2="795" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-s" class="box" x="697.0" y="324" width="196" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-s" data-on="c-s" x="795.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-browser-cache/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">fresh copy, or a good answer</span>
+    <span style="--c:var(--wait)">old file kept for a long time</span>
+    <span style="--c:var(--fail)">old script with a new page</span>
+    <span style="--c:var(--line)">empty</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every web front end. Bundlers such as Vite and webpack hash file names for exactly this reason. The back/forward cache keeps whole pages for the back button. A service worker can add its own cache under the site's code.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Static files: hashed names and a max-age of a year with immutable. The HTML page: no-cache with an ETag. Telling users to clear their cache means the headers are wrong.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Memory cache</th><th>Disk cache</th></tr>
+      <tr><td>Lives</td><td>While the tab is open</td><td>Across visits and restarts</td></tr>
+      <tr><td>Follows Cache-Control</td><td>Loosely</td><td>Yes</td></tr>
+      <tr><td>Typical hit</td><td>Same file on the next page</td><td>Same file the next day</td></tr>
+      <tr><td>Cleared by</td><td>Closing the tab</td><td>Expiry, eviction, or the user</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;The browser keeps memory and disk caches that follow Cache-Control, and since I cannot reach into users' browsers, I give static files hashed names and the HTML no-cache.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[150,270,600];
+const P=105,M=335,D=565,S=795;
+const steps={
+"load":[
+ {pc:[2, 4, 9, 10, 11],t:"First visit: nothing cached",b:"A user opens the Chain Insights website. The page asks for app.3f9a.js. The memory cache and the disk cache are empty, so the browser downloads it.",
+  w2:"The server sends Cache-Control: public, max-age one year, immutable. The browser stores the file in both caches.",fill:{"c-m":OK,"c-d":OK,"c-s":SVC},text:{"t-c-p":"needs app.3f9a.js","t-c-m":"app.3f9a.js","t-c-d":"app.3f9a.js, 1 year","t-c-s":"app.3f9a.js"},
+  a:[[P,100,M-2,100,"app.3f9a.js?"],[M,125,D-2,125,"miss"],[D,150,S-2,150,"miss: download"],[S,180,P+2,180,"200, max-age 1 year",OK]]},
+ {pc:[2, 3],t:"Next page: from memory",b:"The user clicks to another page in the same tab. It needs the same script. The check on line 2: is it in memory, and is its age under max-age? Yes.",w2:"No disk read, no network. The fastest copy there is.",a:[[P,100,M-2,100,"app.3f9a.js?"],[M,130,P+2,130,"hit",OK]]},
+ {pc:[2, 4, 5, 6],t:"Next day: from disk",b:"The user comes back the next day in a new tab. The memory cache is empty. The check on line 5: is the age, one day, under max-age, one year? Yes. So no request is sent.",w2:"Fresh means younger than max-age. A fresh copy is used without asking anyone.",
+  fill:{"c-m":LINE},text:{"t-c-m":"empty, new tab"},a:[[P,100,M-2,100,"app.3f9a.js?"],[M,125,D-2,125,"miss"],[D,155,P+2,155,"fresh: hit, no network",OK]]},
+ {pc:[4, 7, 8],t:"The HTML page is checked every time",b:"The HTML page itself is sent with no-cache. The browser keeps it but asks the server first, with its ETag. Usually the answer is 304.",w2:"The page is always current. It names the scripts, so it decides which files are used.",
+  a:[[P,100,S-2,100,"index.html, If-None-Match: v41"],[S,130,P+2,130,"304, use your copy",OK]]},
+ {pc:[13],t:"Hard reload skips the caches",b:"A developer presses the hard reload key. The browser ignores its caches and downloads everything again.",w2:"A normal reload revalidates the page. A hard reload is for developers, not a fix for users.",a:[[P,100,S-2,100,"everything, no cache"],[S,130,P+2,130,"200, full downloads"]]}
+],
+"deploy":[
+ {pc:[5],t:"A script without a hash in its name",b:"An older version of the site served app.js, with no hash, and max-age of one year. Every visitor has it on disk.",w2:"The name stays the same whatever is inside.",
+  fill:{"c-d":WAIT,"c-m":LINE,"c-s":SVC},text:{"t-c-p":"","t-c-m":"empty","t-c-d":"app.js (old), 1 year","t-c-s":"app.js (old)"}},
+ {pc:[10],t:"A deploy changes both files",b:"A deploy ships a new page that calls a new function in a new app.js, under the same name.",w2:"The server now holds the new script. The browsers do not know.",text:{"t-c-s":"app.js (new)"}},
+ {pc:[4, 5, 6],t:"The failure that matters: new page, old script",b:"The user opens the site. The HTML is checked, so the new page loads. It asks for app.js. The check on line 5 says the disk copy is one day old, under its one year of max-age, so the browser uses the old script. Nobody asks the server. The page calls a function that does not exist and breaks.",
+  w2:"You cannot reach into a user's browser and delete a file. A long max-age on a fixed name is a promise you cannot take back.",fill:{"c-p":FAIL,"c-d":FAIL},text:{"t-c-p":"new page, old script","t-c-d":"app.js (old), still fresh"},
+  a:[[P,100,S-2,100,"index.html: new page",OK],[P,140,M-2,140,"app.js?"],[M,160,D-2,160,"miss"],[D,185,P+2,185,"old app.js, fresh",FAIL]],ban:["the page breaks until the old file expires",270]},
+ {pc:[15, 16],t:"Fix: hashed names, HTML no-cache",b:"The build names the new script app.7c21.js, from a hash of its content. The checked HTML names app.7c21.js. The browser has never seen it, so it downloads it.",
+  w2:"Old files are never deleted. They are simply never asked for again.",fill:{"c-p":OK,"c-d":OK},text:{"t-c-p":"new page, new script","t-c-d":"app.7c21.js, 1 year","t-c-s":"app.7c21.js"},
+  a:[[P,100,S-2,100,"index.html: new page",OK],[P,140,D-2,140,"app.7c21.js? not cached"],[D,165,S-2,165,"download"],[S,195,P+2,195,"200, new script",OK]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"load": {
+"label": "Go",
+"pc": [
+"function get(url):",
+"  if url in memory and age < maxAge:    # this tab, the fastest copy",
+"    return it",
+"  if url in disk:",
+"    if age < maxAge:                    # fresh: nobody is asked",
+"      return it",
+"    ask the server with If-None-Match   # stale, or no-cache (maxAge 0)",
+"    if the answer is 304: keep the copy; return it",
+"  download from the server (200)        # nothing usable",
+"  store in memory and on disk",
+"  return it",
+"",
+"a hard reload skips lines 2 to 8",
+"",
+"build: app.js -> app.<hash of content>.js, max-age 1 year  # the fix",
+"       HTML is sent with no-cache                          # always checked"
+],
+"real": [
+"func (b *Browser) Get(url string) (string, string) {",
+"\tif e, ok := b.memory[url]; ok && b.now-e.stored < e.f.maxAge {",
+"\t\treturn e.f.body, \"memory cache\"",
+"\t}",
+"\tif e, ok := b.disk[url]; ok {",
+"\t\tif b.now-e.stored < e.f.maxAge { // fresh: nobody is asked",
+"\t\t\tb.memory[url] = e",
+"\t\t\treturn e.f.body, \"disk cache, no request\"",
+"\t\t}",
+"\t\tif s := b.server[url]; s.etag == e.f.etag { // ask with the ETag",
+"\t\t\tb.store(url, e.f)",
+"\t\t\treturn e.f.body, \"304, kept the copy\"",
+"\t\t}",
+"\t}",
+"\ts := b.server[url] // nothing usable: full download",
+"\tb.store(url, s)",
+"\treturn s.body, \"200, downloaded\"",
+"}",
+"",
+"const year = 365 * day",
+"\"/page\":        {\"page\", 0, \"p1\"},             // no-cache: always checked",
+"\"/app.js\":      {\"script with f1\", year, \"s1\"}, // the trap",
+"s[\"/app.7c21.js\"] = file{\"script with f2\", year, \"s3\"} // the deploy: a new name"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+3
+],
+"4": [
+5
+],
+"5": [
+6
+],
+"6": [
+7,
+8
+],
+"7": [
+10
+],
+"8": [
+10,
+11,
+12
+],
+"9": [
+15
+],
+"10": [
+16
+],
+"11": [
+17
+],
+"13": [
+1
+],
+"15": [
+23
+],
+"16": [
+21
+]
+}
+},
+"deploy": {
+"label": "Go",
+"pc": [
+"function get(url):",
+"  if url in memory and age < maxAge:    # this tab, the fastest copy",
+"    return it",
+"  if url in disk:",
+"    if age < maxAge:                    # fresh: nobody is asked",
+"      return it",
+"    ask the server with If-None-Match   # stale, or no-cache (maxAge 0)",
+"    if the answer is 304: keep the copy; return it",
+"  download from the server (200)        # nothing usable",
+"  store in memory and on disk",
+"  return it",
+"",
+"a hard reload skips lines 2 to 8",
+"",
+"build: app.js -> app.<hash of content>.js, max-age 1 year  # the fix",
+"       HTML is sent with no-cache                          # always checked"
+],
+"real": [
+"func (b *Browser) Get(url string) (string, string) {",
+"\tif e, ok := b.memory[url]; ok && b.now-e.stored < e.f.maxAge {",
+"\t\treturn e.f.body, \"memory cache\"",
+"\t}",
+"\tif e, ok := b.disk[url]; ok {",
+"\t\tif b.now-e.stored < e.f.maxAge { // fresh: nobody is asked",
+"\t\t\tb.memory[url] = e",
+"\t\t\treturn e.f.body, \"disk cache, no request\"",
+"\t\t}",
+"\t\tif s := b.server[url]; s.etag == e.f.etag { // ask with the ETag",
+"\t\t\tb.store(url, e.f)",
+"\t\t\treturn e.f.body, \"304, kept the copy\"",
+"\t\t}",
+"\t}",
+"\ts := b.server[url] // nothing usable: full download",
+"\tb.store(url, s)",
+"\treturn s.body, \"200, downloaded\"",
+"}",
+"",
+"const year = 365 * day",
+"\"/page\":        {\"page\", 0, \"p1\"},             // no-cache: always checked",
+"\"/app.js\":      {\"script with f1\", year, \"s1\"}, // the trap",
+"s[\"/app.7c21.js\"] = file{\"script with f2\", year, \"s3\"} // the deploy: a new name"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+3
+],
+"4": [
+5
+],
+"5": [
+6
+],
+"6": [
+7,
+8
+],
+"7": [
+10
+],
+"8": [
+10,
+11,
+12
+],
+"9": [
+15
+],
+"10": [
+16
+],
+"11": [
+17
+],
+"13": [
+1
+],
+"15": [
+23
+],
+"16": [
+21
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The ReAct loop</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>The ReAct loop: think, act, observe</h1>
+  <p class="lede">A user asks: "Which exchange did address 0x9f…0071 sell into?" The agent cannot know. It must think, pick a tool, read what comes back, and think again. Watch the loop turn, and watch the context window fill on the right. Then switch tabs to see the loop that never ends.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok" id="tab-ok">A run that finishes</button>
+    <button role="tab" aria-selected="false" data-mode="loop" id="tab-loop">The loop that never ends</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">The reason-act-observe cycle with the context window beside it</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <!-- cycle arrows -->
+      <g fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)">
+        <path id="a-ta" d="M300 92 A110 110 0 0 1 388 190"/>
+        <path id="a-ao" d="M388 210 A110 110 0 0 1 300 300"/>
+        <path id="a-ot" d="M200 300 A110 110 0 0 1 112 210"/>
+        <path id="a-tt" d="M112 190 A110 110 0 0 1 200 92"/>
+        <path id="a-ans" d="M250 50 L250 10" stroke-dasharray="5 5"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700" text-anchor="middle">
+        <rect id="n-think" class="box" x="190" y="50" width="120" height="44" rx="22" fill="var(--line)"/><text x="250" y="78" fill="var(--fg)">Think</text>
+        <rect id="n-act" class="box" x="330" y="178" width="120" height="44" rx="22" fill="var(--line)"/><text x="390" y="206" fill="var(--fg)">Act: tool</text>
+        <rect id="n-obs" class="box" x="190" y="290" width="120" height="44" rx="22" fill="var(--line)"/><text x="250" y="318" fill="var(--fg)">Observe</text>
+        <rect id="n-ans" class="box" x="20" y="178" width="140" height="44" rx="22" fill="var(--line)"/><text x="90" y="206" fill="var(--fg)">Answer</text>
+      </g>
+      <!-- centre caption -->
+      <g id="centre" font-family="Atkinson Hyperlegible,system-ui" font-size="13" text-anchor="middle" fill="var(--fg)"></g>
+      <!-- iteration counter -->
+      <text id="iter" x="250" y="30" text-anchor="middle" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" fill="var(--muted)"></text>
+      <!-- context window -->
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14">
+        <text x="560" y="28" font-weight="700" fill="var(--fg)">Context (example fill)</text>
+        <text id="ctx-pct" x="880" y="28" text-anchor="end" fill="var(--muted)">0% full</text>
+        <rect x="560" y="40" width="320" height="300" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <g id="ctx"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-react-loop/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">model is thinking</span>
+    <span style="--c:var(--wait)">a tool is running</span>
+    <span style="--c:var(--ok)">observation read, or final answer</span>
+    <span style="--c:var(--fail)">repeated call, guard fired</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Every Claude Code turn is this loop. The model writes a thought, calls Read or Bash or an MCP tool, gets the result pasted into its context, and thinks again. Chain Insights runs the same loop over <code>graph_query</code> and <code>meta_dex_lookup</code>. LangChain's agent executor and LangGraph's ReAct template are the same loop with different names.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Every observation is appended, never removed. A 40 KB tool result stays in the window for the rest of the run. So you cap the result size, you cap the number of iterations, and you refuse a call whose tool and arguments match the previous call. The thought text is output, not a log. Trust the tool results, not the reasoning.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Healthy loop</th><th>Stuck loop</th></tr>
+      <tr><td>Each iteration</td><td>A new tool, or new arguments, based on the last observation</td><td>The same tool with the same arguments</td></tr>
+      <tr><td>Context window</td><td>Grows with useful facts</td><td>Grows with the same error repeated</td></tr>
+      <tr><td>Exit</td><td>The model decides it is done and answers</td><td>Only the step cap can stop it</td></tr>
+      <tr><td>Guards</td><td>Max iterations, result size cap, repeat-call detector, hooks on dangerous tools</td><td>Without them: a bill and a timeout</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"ReAct is think, act, observe, repeat. The written thought is output, not truth. I cap iterations, cap tool result size, and detect a repeated call with identical arguments, because the loop has no natural stop."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps={
+"ok":[
+ {t:"The question arrives",b:"The user asks which exchange address 0x9f…0071 sold into. The context window holds the system prompt, the tool list and this one question.",w:"The model has no answer yet. It only has tools and a loop.",node:null,ctx:["system prompt + tools","user: which exchange did 0x9f…0071 sell into?"],it:0,c:"start"},
+ {t:"Think, round 1",b:"The model writes: 'I need the swaps of this address. A SWAPPED link points at a pool. I will query the topology layer anchored on the address.'",w:"A thought is a plan written in words. It is output text. Nothing has happened yet.",node:"think",ctx:["thought: find SWAPPED links from the address"],it:1,c:"plan: find the pool it swapped on"},
+ {t:"Act, round 1",b:"The model calls graph_query with the address and a query over SWAPPED links. The host runs the tool. The model waits.",w:"The call and its arguments are appended to the context. The harness can refuse here with a hook.",node:"act",ctx:["tool call: graph_query(address, SWAPPED)"],it:1,c:"graph_query is running"},
+ {t:"Observe, round 1",b:"The result comes back: 14 swaps, all into pool 0x4a…ee02, 2026-10-30. The host pastes the rows into the context.",w:"An observation is the only real fact in the loop. The model reads it as text, like anything else.",node:"obs",ctx:["result: 14 swaps → pool 0x4a…ee02"],it:1,c:"14 swaps into pool 0x4a…ee02"},
+ {t:"Think, round 2",b:"The model writes: 'A pool address is not an exchange name. The proxy has a lookup for that. Call meta_dex_lookup with the pool.'",w:"The second thought uses the first observation. That is what makes it a loop and not a chain.",node:"think",ctx:["thought: map the pool to an exchange name"],it:2,c:"plan: pool → exchange name"},
+ {t:"Act, round 2",b:"The model calls meta_dex_lookup with the pool address. This tool runs locally in the proxy, from a cached registry file.",w:"A different tool with different arguments. The loop is making progress.",node:"act",ctx:["tool call: meta_dex_lookup(pool 0x4a…ee02)"],it:2,c:"meta_dex_lookup is running"},
+ {t:"Observe, round 2",b:"Result: pool 0x4a…ee02 belongs to Aerodrome, a USDC/WETH pool.",w:"The context window is now about a third full. Every round costs tokens on every later call, because the whole window is sent again.",node:"obs",ctx:["result: Aerodrome USDC/WETH"],it:2,c:"Aerodrome, USDC/WETH pool"},
+ {t:"Answer",b:"The model decides it is done and writes: 'The address sold into Aerodrome, through its USDC/WETH pool 0x4a…ee02, in 14 swaps on 30 October.'",w:"The exit is the model's decision. No code forced it. That is the strength and the risk of an agent.",node:"ans",ctx:["answer: sold into Aerodrome"],it:2,c:"answer in round 3"}
+],
+"loop":[
+ {t:"Same question, bad start",b:"The user asks the same thing. This time the address has no swaps in the graph at all.",w:"The loop is about to meet a result it cannot use.",node:null,ctx:["system prompt + tools","user: which exchange did 0x77…30ff sell into?"],it:0,c:"start"},
+ {t:"Round 1: call, empty result",b:"Think: query SWAPPED links. Act: graph_query. Observe: zero rows.",w:"An empty result is a fact. The model should change its plan or tell the user.",node:"obs",ctx:["thought: find SWAPPED links","tool call: graph_query(address, SWAPPED)","result: 0 rows"],it:1,c:"0 rows"},
+ {t:"Round 2: the same call",b:"Think: 'Maybe it failed. Try again.' Act: graph_query with the same address and the same query. Suppose line 5, the repeat check, is off: nothing compares this call with the last one. Observe: zero rows.",w:"Same tool, same arguments. Nothing in the world changed, so the result cannot change either.",node:"act",ctx:["thought: maybe it failed, retry","tool call: graph_query(address, SWAPPED)","result: 0 rows"],it:2,c:"same call, same 0 rows",bad:true},
+ {t:"Round 3: and again",b:"The model repeats the exact call a third time. The context window now holds three copies of the same empty result and three near-identical thoughts.",w:"The window fills with noise. Each new call is more expensive and sees more of its own failure, which makes the next decision worse, not better.",node:"act",ctx:["thought: retry once more","tool call: graph_query(address, SWAPPED)","result: 0 rows"],it:3,c:"3 identical calls",bad:true},
+ {t:"Rounds 4 to 7",b:"Without a guard this goes on until the provider's context limit or your credit card stops it. Every round re-sends everything before it.",w:"The cost of round n is proportional to n. Seven rounds of a 20,000-token window is not 7 calls, it is about 7 times the growing window.",node:"act",ctx:["tool call: graph_query (4)","tool call: graph_query (5)","tool call: graph_query (6)","tool call: graph_query (7)"],it:7,c:"7 identical calls",bad:true},
+ {t:"The guard fires",b:"The harness has a max-iterations cap of 8 and a repeat-call detector. Line 5 goes on: the set of past calls holds this tool with these arguments, so run() is skipped. With line 5 on from the start, this block comes in round 2, the first repeat, not round 8. Its refusal is pasted in as the observation: 'repeated call blocked, change the plan or answer.'",w:"A guard is code outside the model. The model cannot talk its way past it. The refusal becomes an observation the model can act on.",node:"obs",ctx:["guard: repeated call blocked (cap 8)"],it:8,c:"guard: stop, change plan",bad:true},
+ {t:"A forced answer",b:"With the guard's text as its last observation, the model writes: 'The graph holds no swaps for 0x77…30ff. Either the address never sold on a DEX, or the data is behind. Give me a transaction hash to check.'",w:"The honest answer was available at round 1. The guard only made it unavoidable. Good prompts ask for it early; good harnesses demand it late.",node:"ans",ctx:["answer: no swaps found, ask for more"],it:8,c:"answered because it had to"}
+]};
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  $("iter").textContent=s.it?`iteration ${s.it}`:"";
+  const nodes={think:"n-think",act:"n-act",obs:"n-obs",ans:"n-ans"};
+  for(const k in nodes){const r=$(nodes[k]);r.setAttribute("fill","var(--line)");r.nextElementSibling.setAttribute("fill","var(--fg)");}
+  if(s.node){const r=$(nodes[s.node]);
+    const col=s.bad?"var(--fail)":s.node==="think"?"var(--coord)":s.node==="act"?"var(--wait)":"var(--ok)";
+    r.setAttribute("fill",col);r.nextElementSibling.setAttribute("fill","#fff");}
+  $("centre").innerHTML=`<text x="250" y="195" class="msg on" fill="${s.bad?"var(--fail)":"var(--fg)"}" font-weight="700">${s.c}</text>`;
+  // context window: accumulate every ctx line up to this step
+  const lines=[];for(let k=0;k<=i;k++)for(const l of list[k].ctx)lines.push({l,bad:list[k].bad,k});
+  const g=$("ctx");g.innerHTML="";
+  const h=Math.min(26,Math.floor(290/Math.max(lines.length,1)));
+  lines.forEach((o,k)=>{
+    const y=46+k*h;const col=o.bad?"var(--fail)":/^result|^guard/.test(o.l)?"var(--ok)":/^tool call/.test(o.l)?"var(--wait)":/^thought/.test(o.l)?"var(--coord)":"var(--muted)";
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg"+(o.k<i?" on":""));
+    el.innerHTML=`<rect x="566" y="${y}" width="308" height="${h-4}" rx="4" fill="${col}" opacity=".18"/><rect x="566" y="${y}" width="5" height="${h-4}" fill="${col}"/><text x="578" y="${y+h/2+1}" dominant-baseline="middle" font-size="${h<22?11:13}" fill="var(--fg)">${o.l}</text>`;
+    g.appendChild(el);
+    if(o.k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,120*(k-lines.findIndex(x=>x.k===i))+30);}
+  });
+  const pct=Math.min(100,Math.round(lines.length*(mode==="loop"?6:4.5)));
+  $("ctx-pct").textContent=`${pct}% full`;$("ctx-pct").setAttribute("fill",pct>70?"var(--fail)":"var(--muted)");
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+
+const CODE={"label": "Python", "pc": ["messages = [system prompt, tool list, question]", "for round in 1 to 8:                  # the max-iterations cap", "  thought, action = model(messages)", "  if action is an answer: return it", "  if the same tool and arguments ran before: observation = 'repeated call blocked'", "  else: observation = run(action)", "  messages += thought, action, observation", "at the cap: return the best answer so far"], "real": ["MAX_ROUNDS = 8", "", "", "def react(question, model, detect_repeats=True):", "    messages = [\"system prompt\", \"tool list\", question]", "    seen = set()", "    for round_no in range(1, MAX_ROUNDS + 1):", "        thought, action = model(messages)", "        if action[0] == \"answer\":", "            return round_no, action[1]", "        if detect_repeats and action in seen:  # same tool, same arguments", "            observation = \"repeated call blocked, change the plan or answer\"", "        else:", "            observation = run_tool(*action)", "        seen.add(action)", "        messages += [f\"think: {thought}\", f\"act: {action[0]}\", f\"observe: {observation}\"]", "        print(f\"  round {round_no}: {action[0]} -> {observation[:90]}\")", "    return MAX_ROUNDS, \"stopped at the cap: best answer so far\""], "map": {"2": [1, 7], "1": [5], "3": [8], "4": [9, 10], "5": [11, 12], "6": [14], "7": [16], "8": [18]}, "path": "handbook/code/09-react-loop/main.py", "cmd": "python3 main.py", "note": ""},PCS={"ok": [[1], [3], [3, 6], [6, 7], [3], [3, 6], [6, 7], [4]], "loop": [[1], [3, 6, 7], [3, 5, 6], [3, 5, 6, 7], [2, 7], [2, 5], [4]]};
+for(const t in PCS)PCS[t].forEach((p,k)=>{steps[t][k].pc=p;});
+let codeView="pc";
+function cesc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE,pc=(steps[mode][i].pc)||[];
+  const v=(codeView==="alt"&&!c.alt)?"real":codeView;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=cesc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const __render=render;render=function(){__render();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{codeView=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

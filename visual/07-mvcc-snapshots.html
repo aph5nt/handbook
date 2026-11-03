@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MVCC snapshots</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>MVCC: readers never block writers</h1>
+  <p class="lede">A long report starts at transaction 110 and reads row 7. Meanwhile the app updates row 7 twice. MVCC (Multi-Version Concurrency Control) keeps every version, so the report and the app each read the version their snapshot can see. Nobody waits. The second tab shows the bill: old versions nobody may clean up.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="versions">Versions and snapshots</button>
+    <button role="tab" aria-selected="false" data-mode="bloat">The failure: a long snapshot</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">MVCC snapshots: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">newest version, live</span>
+    <span style="--c:var(--line)">older version, ended</span>
+    <span style="--c:var(--coord)">a reader and what it sees</span>
+    <span style="--c:var(--wait)">kept because a snapshot may need it</span>
+    <span style="--c:var(--undo)">removed by cleanup</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL and Oracle use MVCC so reads stay fast under writes. PostgreSQL's cleanup is <code>VACUUM</code>. Column stores do a cousin of it: a delete writes a mask, and compaction rewrites the segment later.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Keep transactions short. Run long analytics on a warehouse copy, not on the app database. Remember that snapshots are not serializability: write skew still passes unless the engine adds SSI (Serializable Snapshot Isolation).</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>MVCC</th><th>Locking reads only</th></tr>
+      <tr><td>A reader during a write</td><td>Reads the old version, no wait</td><td>Waits for the writer's lock</td></tr>
+      <tr><td>A writer during a read</td><td>Writes a new version, no wait</td><td>Waits for the reader's shared lock</td></tr>
+      <tr><td>Cost</td><td>Old versions pile up until cleanup</td><td>Waiting, and more deadlocks</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A write makes a new version, each reader sees the versions of its snapshot, and old versions are garbage someone must collect."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const VX=[40,330,620];
+const ver=(vs)=>vs.flatMap(([lab,made,end,k],j)=>[B(VX[j],90,250,lab,k,50),T(VX[j]+10,166,"made by tx "+made,k==="g"?"m":"f"),T(VX[j]+10,186,end?"ended by tx "+end:"live",k==="g"?"m":"f")]);
+const head=[T(40,60,"row id 7","f","start",16)];
+const rep=(k,lab)=>[B(150,290,200,lab||"report: snapshot tx 110",k||"r",44)];
+const app=[B(640,290,240,"app read: snapshot tx 150","r",44)];
+const V1=["v1  balance 10","100",null,"c"];
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-mvcc-snapshots/main.go</code> keeps every version of row 7, reads it through two snapshots, runs cleanup, then replays the hour of bloat on table wallets. It prints every number quoted here (<code>go run .</code>).";
+const CODE={
+versions:{pc:["version = (balance, made_by, ended_by)     # no ended_by: live",
+"update(row, tx, balance):",
+"  live.ended_by = tx                         # never overwrite",
+"  append new version, made_by = tx",
+"visible(version, snapshot):",
+"  made_by < snapshot and (live or ended_by > snapshot)",
+"read(row, snapshot): the one visible version",
+"vacuum(row, horizon):                        # horizon = oldest open snapshot",
+"  remove versions with ended_by <= horizon",
+"row 7: v1 balance 10, made by tx 100",
+"report = snapshot at tx 110",
+"tx 120 sets balance 2",
+"tx 140 sets balance 50",
+"app = snapshot at tx 150",
+"report done: vacuum(row, horizon = tx 150)"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Version is one copy of a row. made is the transaction that wrote it", "// (xmin in PostgreSQL), ended the one that replaced it (xmax), 0 = live.", "type Version struct {", "\tname    string", "\tbalance int", "\tmade    int", "\tended   int", "}"],[""],["// Update never overwrites. It ends the live version and adds a new one.", "func (r *Row) Update(tx, balance int) {", "\tlive := r.versions[len(r.versions)-1]", "\tlive.ended = tx", "\tname := fmt.Sprintf(\"v%d\", len(r.versions)+1)", "\tr.versions = append(r.versions, &Version{name: name, balance: balance, made: tx})", "}"],[""],["// Visible is the rule: made before my snapshot, and not ended before it.", "func (s Snapshot) Visible(v *Version) bool {", "\tmadeBefore := v.made < s.tx", "\tstillLive := v.ended == 0 || v.ended > s.tx", "\treturn madeBefore && stillLive", "}"],[""],["// Read returns the one version this snapshot can see.", "func (s Snapshot) Read(r *Row) *Version {", "\tfor _, v := range r.versions {", "\t\tif s.Visible(v) {", "\t\t\treturn v", "\t\t}", "\t}", "\treturn nil", "}"],[""],["// Vacuum removes versions ended at or before the horizon: the oldest open", "// snapshot. A version ended after it may still be read, so it stays.", "func (r *Row) Vacuum(horizon int) (removed int) {", "\tkept := r.versions[:0]", "\tfor _, v := range r.versions {", "\t\tif v.ended != 0 && v.ended <= horizon {", "\t\t\tremoved++", "\t\t\tcontinue", "\t\t}", "\t\tkept = append(kept, v)", "\t}", "\tr.versions = kept", "\treturn removed", "}"],[""],["func versions() {", "\tfmt.Println(\"== row 7 over time\")", "\trow := &Row{versions: []*Version{{name: \"v1\", balance: 10, made: 100}}}", "\tfmt.Println(\"v1 balance 10, made by tx 100, live\")", "", "\treport := Snapshot{tx: 110}", "\tv := report.Read(row)", "\tfmt.Printf(\"report snapshot tx %d reads %s: %d\\n\", report.tx, v.name, v.balance)", "", "\trow.Update(120, 2)", "\tv = report.Read(row)", "\tfmt.Printf(\"tx 120 makes v2 balance 2, v1 ended by 120; report still reads %s: %d\\n\", v.name, v.balance)", "", "\trow.Update(140, 50)", "\tfmt.Printf(\"tx 140 makes v3 balance 50; versions kept: %d\\n\", len(row.versions))", "", "\tapp := Snapshot{tx: 150}", "\ta := app.Read(row)", "\tr := report.Read(row)", "\tfmt.Printf(\"app snapshot tx %d reads %s: %d, report reads %s: %d\\n\", app.tx, a.name, a.balance, r.name, r.balance)", "", "\t// The report finishes. The oldest open snapshot is now the app's, tx 150.", "\tremoved := row.Vacuum(app.tx)", "\tfmt.Printf(\"report done, VACUUM horizon tx %d removes %d (v1, v2), keeps %d\\n\", app.tx, removed, len(row.versions))", "}"]),
+  map:[["version = (balance","type Version struct..}"],["update(row, tx, balance):","func (r *Row) Update("],["live.ended_by = tx","live.ended = tx"],["append new version","r.versions = append(r.versions, &Version{name: name"],
+   ["visible(version, snapshot):","func (s Snapshot) Visible("],["made_by < snapshot and","madeBefore := v.made < s.tx..return madeBefore && stillLive"],["read(row, snapshot)","func (s Snapshot) Read(..return nil"],
+   ["vacuum(row, horizon):","func (r *Row) Vacuum("],["remove versions with ended_by","if v.ended != 0 && v.ended <= horizon..continue"],
+   ["row 7: v1 balance 10","row := &Row{","fmt.Println(\"v1 balance 10"],["report = snapshot at tx 110","report := Snapshot{tx: 110}..report snapshot tx"],
+   ["tx 120 sets balance 2","row.Update(120, 2)..report still reads"],["tx 140 sets balance 50","row.Update(140, 50)..versions kept"],
+   ["app = snapshot at tx 150","app := Snapshot{tx: 150}..report reads %s"],["report done: vacuum","// The report finishes..keeps %d"]]}]},
+bloat:{pc:["table wallets: 36 rows, one version each",
+"report opens a snapshot at 09:00             # the horizon stays there",
+"each update ends one version: one dead version",
+"vacuum(horizon = report's snapshot):",
+"  each dead version ended after it: keep    # removed 0",
+"size = stored versions / live rows",
+"12 updates: 12 dead, size 1.3x",
+"10:00: 36 dead, size 2x",
+"fix: report on the warehouse, horizon = newest tx",
+"  vacuum removes every dead version          # size 1x"],
+ views:[{v:"real",label:"Go",lines:[].concat(["const wallets = 36 // rows in table wallets"],[""],["func newTable() *Table {", "\tt := &Table{tx: 900}", "\tfor i := 0; i < wallets; i++ {", "\t\tt.rows = append(t.rows, &Row{versions: []*Version{{name: \"v1\", balance: 10, made: 899}}})", "\t}", "\treturn t", "}"],[""],["// UpdateSome updates n wallets, one transaction each.", "func (t *Table) UpdateSome(n int) {", "\tfor i := 0; i < n; i++ {", "\t\tt.tx++", "\t\tt.rows[i%wallets].Update(t.tx, 5)", "\t}", "}"],[""],["func (t *Table) Dead() int {", "\tdead := 0", "\tfor _, r := range t.rows {", "\t\tdead += len(r.versions) - 1", "\t}", "\treturn dead", "}"],[""],["// Size is the stored versions against the live rows: 1x means no garbage.", "func (t *Table) Size() string {", "\tstored := wallets + t.Dead()", "\tf := fmt.Sprintf(\"%.1f\", float64(stored)/wallets)", "\treturn strings.TrimSuffix(f, \".0\") + \"x\"", "}"],[""],["func (t *Table) Vacuum(horizon int) (removed int) {", "\tfor _, r := range t.rows {", "\t\tremoved += r.Vacuum(horizon)", "\t}", "\treturn removed", "}"],[""],["func bloat() {", "\tfmt.Println(\"== table wallets, one hour\")", "\tt := newTable()", "\treport := Snapshot{tx: t.tx} // 09:00: the hour-long report starts", "\tfmt.Printf(\"09:00 report holds snapshot tx %d; %d wallets, size %s\\n\", report.tx, wallets, t.Size())", "", "\tt.UpdateSome(12)", "\tfmt.Printf(\"12 updates: dead versions %d, size %s\\n\", t.Dead(), t.Size())", "", "\tt.UpdateSome(12)", "\tremoved := t.Vacuum(report.tx) // the report is the oldest open snapshot", "\tfmt.Printf(\"09:30 VACUUM horizon tx %d: removed %d, dead versions %d, size %s\\n\", report.tx, removed, t.Dead(), t.Size())", "", "\tt.UpdateSome(12)", "\tfmt.Printf(\"10:00 dead versions %d, size %s: bloat\\n\", t.Dead(), t.Size())", "", "\t// Fix: the report runs on the warehouse, so no app snapshot stays open.", "\thorizon := t.tx", "\tremoved = t.Vacuum(horizon)", "\tfmt.Printf(\"fix: no open snapshot, VACUUM horizon tx %d: removed %d, size %s\\n\", horizon, removed, t.Size())", "}"]),
+  map:[["table wallets: 36 rows","const wallets = 36","func newTable()..return t","t := newTable()"],["report opens a snapshot","report := Snapshot{tx: t.tx}..09:00 report holds"],
+   ["each update ends one version","// UpdateSome..t.rows[i%wallets].Update"],["12 updates: 12 dead","t.UpdateSome(12)#1..12 updates"],["10:00: 36 dead","t.UpdateSome(12)#3..10:00 dead versions"],["vacuum(horizon = report","t.UpdateSome(12)#2..09:30 VACUUM"],["each dead version ended after it","removed := t.Vacuum(report.tx)","func (t *Table) Vacuum..removed += r.Vacuum(horizon)"],
+   ["size = stored versions","// Size is the stored..return strings.TrimSuffix"],["fix: report on the warehouse","// Fix: the report runs..horizon := t.tx"],["vacuum removes every dead version","removed = t.Vacuum(horizon)..fix: no open snapshot"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- who holds the oldest snapshot",
+"SELECT pid, xact_start, backend_xmin",
+"FROM pg_stat_activity",
+"WHERE backend_xmin IS NOT NULL",
+"ORDER BY xact_start;",
+"",
+"-- live and dead versions, table size",
+"SELECT n_live_tup, n_dead_tup, pg_size_pretty(pg_table_size('wallets'))",
+"FROM pg_stat_user_tables WHERE relname = 'wallets';",
+"",
+"-- what VACUUM could not remove",
+"VACUUM (VERBOSE) wallets;",
+"-- ... dead row versions cannot be removed yet",
+"",
+"-- fix: end forgotten transactions",
+"ALTER SYSTEM SET idle_in_transaction_session_timeout = '5min';"],
+  map:[["report opens a snapshot","-- who holds..ORDER BY xact_start;"],["each update ends one version","n_dead_tup"],["size = stored versions","SELECT n_live_tup..relname = 'wallets';"],["12 updates: 12 dead","SELECT n_live_tup..relname = 'wallets';"],["10:00: 36 dead","SELECT n_live_tup..relname = 'wallets';"],["vacuum(horizon = report","VACUUM (VERBOSE) wallets;"],["each dead version ended after it","cannot be removed yet"],["fix: report on the warehouse","-- fix: end forgotten","ALTER SYSTEM"],["vacuum removes every dead version","VACUUM (VERBOSE) wallets;"]]}]}};
+// CODE PANEL END
+const S={
+versions:{name:"row 7 over time",st:[
+ {t:"Start: one version",pc:["version = (balance", "row 7: v1 balance 10"],b:"Row 7 holds balance 10. Transaction 100 made this version. No transaction has ended it, so it is live.",w:"Each version records who made it and who ended it.",d:head.concat(ver([V1]))},
+ {t:"The report takes a snapshot",pc:["report = snapshot at tx 110", "read(row, snapshot)", "made_by < snapshot and"],b:"A long report starts at transaction 110. Its snapshot is fixed: it sees a version made before tx 110 and not ended by then. v1 was made by 100 and is live, so the report reads v1: balance 10.",w:"The snapshot is fixed for the whole report.",d:head.concat(ver([V1]),rep(),[A(250,288,250,144,"reads 10","r")])},
+ {t:"Transaction 120 writes, without overwriting",pc:["update(row, tx, balance):", "live.ended_by = tx", "append new version", "tx 120 sets balance 2"],b:"Transaction 120 sets the balance to 2. The engine does not overwrite v1. It marks v1 ended by 120 and adds v2, made by 120.",w:"The report reads row 7 again. v2 was made by 120, after its snapshot of 110, so it is not visible. v1 ended at 120, also after 110, so the report still sees v1: 10. The writer did not wait for the reader.",d:head.concat(ver([["v1  balance 10","100","120","n"],["v2  balance 2","120",null,"c"]]),rep(),[A(250,288,250,144,"still 10","r")])},
+ {t:"Transaction 140 writes again",pc:["update(row, tx, balance):", "tx 140 sets balance 50"],b:"Transaction 140 sets the balance to 50. It ends v2 and adds v3. Row 7 now keeps 3 versions: v1 ended by 120, v2 ended by 140, v3 live.",w:"One row, three versions. Each is a complete copy of the row.",d:head.concat(ver([["v1  balance 10","100","120","n"],["v2  balance 2","120","140","n"],["v3  balance 50","140",null,"c"]]),rep(),[A(250,288,250,144,"still 10","r")])},
+ {t:"Two readers, two right answers",pc:["app = snapshot at tx 150", "visible(version, snapshot):", "made_by < snapshot and"],b:"The app reads with a snapshot at transaction 150. v3 was made by 140, before 150, and is live, so the app sees 50. For the report at 110, v2 and v3 were made too late, so it still sees v1: 10. Both are right for their snapshot.",w:"The reader never blocked a writer, and no writer blocked a reader.",d:head.concat(ver([["v1  balance 10","100","120","n"],["v2  balance 2","120","140","n"],["v3  balance 50","140",null,"c"]]),rep(),app,[A(250,288,250,144,"10","r"),A(760,288,760,144,"50","r")])},
+ {t:"Cleanup removes what nobody can see",pc:["vacuum(row, horizon):", "remove versions with ended_by", "report done: vacuum"],b:"The report finishes. The oldest open snapshot is now the app's, tx 150: that is the cleanup horizon. Cleanup, VACUUM in PostgreSQL, removes every version ended at or before it: v1 (ended 120) and v2 (ended 140). It removes 2 and keeps 1.",w:"Old versions stay until nothing can see them. Then someone must collect the garbage.",d:head.concat(ver([["v1  removed","100","120","g"],["v2  removed","120","140","g"],["v3  balance 50","140",null,"c"]]),app,[B(150,290,200,"VACUUM","u",44),A(760,288,760,144,"50","r")])}
+]},
+bloat:{name:"table wallets, one hour",st:[
+ {t:"09:00: a report holds a snapshot",pc:["table wallets: 36 rows", "report opens a snapshot"],b:"Someone runs an hour-long analytics report on the app database. Its snapshot starts at 09:00, transaction 900, and stays open. Table wallets has 36 rows with one version each: size 1x.",w:"While a snapshot is open, the engine must keep every version it might still read.",d:[B(40,60,300,"report: snapshot 09:00","w",44),T(40,140,"dead versions kept:","f","start",15),T(40,320,"table size","f","start",15),B(160,300,200,"1x","c",34)]},
+ {t:"Every update leaves a version behind",pc:["each update ends one version", "size = stored versions", "12 updates: 12 dead"],b:"The app updates 12 wallets. Each update ends the old version and adds a new one, so 12 dead versions pile up. The table now stores 1.3x what its live rows need.",w:"Before the report, cleanup would remove them within minutes.",d:[B(40,60,300,"report: snapshot 09:00","w",44),T(40,140,"dead versions kept:","f","start",15),...Array.from({length:12},(_,j)=>B(40+70*j,160,60,"old","w",30)),T(40,320,"table size","f","start",15),B(160,300,300,"1.3x","w",34)]},
+ {t:"09:30: cleanup removes nothing",pc:["vacuum(horizon = report", "each dead version ended after it"],b:"VACUUM runs at 09:30. Its horizon is the oldest open snapshot: the report's tx 900. Every dead version was ended after 900, so the report may still read it. VACUUM removes 0. 24 dead versions, size 1.7x.",w:"One open snapshot holds back cleanup for the whole database.",d:[B(40,60,300,"report: snapshot 09:00","w",44),B(380,60,300,"VACUUM: removed 0","x",44),T(40,140,"dead versions kept:","f","start",15),...Array.from({length:12},(_,j)=>B(40+70*j,160,60,"old","w",30)),...Array.from({length:12},(_,j)=>B(40+70*j,200,60,"old","w",30)),T(40,320,"table size","f","start",15),B(160,300,400,"1.7x","w",34)]},
+ {t:"The failure: the table doubles",pc:["size = stored versions", "10:00: 36 dead"],b:"By 10:00 there are 36 dead versions, one for every live row. The table is 2x its size. Scans read twice the pages. The app slows down, and nobody touched the app.",w:"This is bloat. The report caused it by holding one snapshot for an hour.",d:[B(40,60,300,"report: snapshot 09:00","w",44),B(380,60,300,"VACUUM: removed 0","x",44),T(40,140,"dead versions kept:","f","start",15),...[160,200,240].flatMap(y=>Array.from({length:12},(_,j)=>B(40+70*j,y,60,"old","x",30))),T(40,320,"table size","f","start",15),B(160,300,520,"2x: bloat","x",34)]},
+ {t:"Fix: short transactions, analytics elsewhere",pc:["fix: report on the warehouse", "vacuum removes every dead version"],b:"Move the report to the warehouse copy. Keep app transactions short. With no old snapshot open, the horizon is the newest transaction, 936. VACUUM removes all 36 dead versions, the size is back to 1x, and the space is reused.",w:"MVCC is cheap only while snapshots are short.",d:[B(40,60,300,"report: on the warehouse","c",44),B(380,60,300,"VACUUM: removed all","u",44),T(40,140,"dead versions kept:","f","start",15),T(40,180,"none","c","start",16),T(40,320,"table size","f","start",15),B(160,300,200,"1x","c",34)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

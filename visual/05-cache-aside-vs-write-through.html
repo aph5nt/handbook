@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Write Patterns</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cache-aside, write-through, write-behind</h1>
+  <p class="lede">A shop shows the price of a phone. The price is 500, then the shop lowers it to 450. Three ways to keep the cache and the database in step. Press <b>Next</b> and watch where the old price survives, and where a write is lost.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="aside">Cache-aside</button>
+    <button role="tab" aria-selected="false" data-mode="through">Write-through</button>
+    <button role="tab" aria-selected="false" data-mode="behind">Write-behind</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Messages between the shop app, the cache and the database</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect class="box" x="70" y="20" width="160" height="52" rx="8" fill="var(--coord)"/>
+        <text x="150" y="52" text-anchor="middle" fill="#fff">Shop app</text>
+        <rect id="bx-c" class="box" x="370" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="450" y="52" text-anchor="middle" fill="#fff">Cache (Redis)</text>
+        <rect id="bx-d" class="box" x="670" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="750" y="52" text-anchor="middle" fill="#fff">Database</text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="150" y1="72" x2="150" y2="320"/><line x1="450" y1="72" x2="450" y2="320"/><line x1="750" y1="72" x2="750" y2="320"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <text x="450" y="346" fill="var(--muted)">price in cache</text>
+        <rect id="ch-c" class="box" x="380" y="352" width="140" height="26" rx="13" fill="var(--line)"/><text id="tx-c" x="450" y="370" fill="var(--fg)"></text>
+        <text x="750" y="346" fill="var(--muted)">price in database</text>
+        <rect id="ch-d" class="box" x="680" y="352" width="140" height="26" rx="13" fill="var(--line)"/><text id="tx-d" x="750" y="370" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cache-aside-vs-write-through/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">fresh: matches the database</span>
+    <span style="--c:var(--wait)">stale or not yet saved</span>
+    <span style="--c:var(--fail)">lost or failed</span>
+    <span style="--c:var(--line)">empty</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet cache-aside</h2>
+      <p>Most read-heavy services: user profiles, product pages, an address-risk lookup in front of a graph database. The app reads Redis, misses, reads the source, and fills Redis with a time to live (TTL). Delete the key on every write, and keep the TTL as the safety net.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet write-behind</h2>
+      <p>Counters, rate limits, page views: values written thousands of times a second. They live in memory and reach the warehouse once a minute in a batch. An actor that holds device state and snapshots later is the same pattern. You accept losing the unflushed window.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Cache-aside</th><th>Write-through</th><th>Write-behind</th></tr>
+      <tr><td>Who writes the cache</td><td>The app, on a read miss</td><td>The write path, every write</td><td>The write path, every write</td></tr>
+      <tr><td>Write is acknowledged</td><td>After the database</td><td>After cache and database</td><td>After the cache only</td></tr>
+      <tr><td>Stale after a write?</td><td>Yes, until delete or TTL</td><td>No</td><td>No in cache. Database lags</td></tr>
+      <tr><td>On a cache crash</td><td>Nothing lost, only misses</td><td>Nothing lost, only misses</td><td>Unflushed writes are lost</td></tr>
+      <tr><td>Fits</td><td>Read-heavy, the default</td><td>Read right after write</td><td>Very hot writes, loss accepted</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Cache-aside is my default with a delete on write. Write-through when a read must see the write. Write-behind only when I can say out loud how many seconds of writes I may lose."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const X={a:150,c:450,d:750};
+const steps={
+"aside":[
+ {pc:[1],t:"Start",b:"The database holds the phone's price: 500. The cache is empty. The app owns all the logic. The cache never talks to the database.",w:"Cache-aside is also called lazy loading: nothing is cached until someone asks.",m:[],st:{c:["empty","line"],d:["500","ok"]}},
+ {pc:[2, 3, 4, 5, 6],t:"First read: a miss",b:"A customer opens the phone page. The check on line 3: did the cache find the key? No. So line 4 makes the app read the database, gets 500, and stores it in the cache with a TTL of 10 minutes.",w:"The first read of every key is slow. A burst of first reads at once is a stampede.",m:[["a","c",100,"get phone"],["c","a",125,"miss"],["a","d",165,"read phone"],["d","a",190,"500"],["a","c",230,"set 500, TTL 10 min"]],st:{c:["500","ok"],d:["500","ok"]}},
+ {pc:[2, 3],t:"Second read: a hit",b:"The next customer asks. The cache answers 500 at once. The database is not touched.",w:"This is the whole point: most reads stop at the cache, about a thousand times faster than a database round trip with a query.",m:[["a","c",110,"get phone"],["c","a",140,"hit: 500"]],st:{c:["500","ok"],d:["500","ok"]}},
+ {pc:[8, 9],t:"A write to the database",b:"The shop lowers the price. The app writes 450 to the database. Nobody tells the cache.",w:"Now there are two answers. The database says 450. The cache still says 500.",m:[["a","d",120,"update price 450"],["d","a",150,"ok"]],st:{c:["500 stale","wait"],d:["450","ok"]}},
+ {pc:[2, 3, 10],t:"The failure that matters: the stale window",b:"Line 10 is missing, so nothing removed the key. The check on line 3 finds 500. They see the old price for up to 10 minutes, until the TTL ends.",w:"This is the stale window of cache-aside. The interviewer wants to hear how long it is and how you shrink it.",m:[["a","c",120,"get phone"],["c","a",150,"hit: 500 (old)",true]],st:{c:["500 stale","fail"],d:["450","ok"]},bad:"c"},
+ {pc:[8, 9, 10],t:"The fix: delete on write",b:"The app writes 450 to the database, then deletes the key from the cache. The next read misses, reads 450, and fills the cache.",w:"Delete, do not update: a delete is safe to repeat and never stores a value nobody reads. The TTL stays as a safety net for a lost delete.",m:[["a","d",100,"update price 450"],["a","c",140,"delete phone"],["a","c",190,"get phone"],["c","a",210,"miss"],["a","d",245,"read phone"],["d","a",268,"450"],["a","c",300,"set 450"]],st:{c:["450","ok"],d:["450","ok"]}}
+],
+"through":[
+ {pc:[1],t:"Start",b:"The cache and the database both hold 500. Every write goes through the cache to the database before the app hears ok.",w:"Write-through keeps the cache fresh for every key it writes.",m:[],st:{c:["500","ok"],d:["500","ok"]}},
+ {pc:[1, 2, 5, 6],t:"A write goes through both",b:"The app sets 450. The cache stores it and writes it to the database. The database says ok, then the cache says ok to the app.",w:"The write waits for two systems. Write time is roughly doubled.",m:[["a","c",100,"set 450"],["c","d",135,"write 450"],["d","c",165,"ok"],["c","a",200,"ok"]],st:{c:["450","ok"],d:["450","ok"]}},
+ {pc:[8, 9],t:"The next read is fresh",b:"A customer opens the page. The cache answers 450 at once. There is no stale window.",w:"This is why you pay the double write: a read right after a write always sees it.",m:[["a","c",120,"get phone"],["c","a",150,"hit: 450"]],st:{c:["450","ok"],d:["450","ok"]}},
+ {pc:[1, 2, 5, 6],t:"The hidden cost",b:"An admin bulk-updates 10,000 old accessories nobody looks at. Every one goes into the cache too.",w:"Write-through fills the cache with keys nobody reads. They push out keys people do read.",m:[["a","c",110,"set 10,000 items"],["c","d",145,"write 10,000"],["d","c",175,"ok"],["c","a",205,"ok"]],st:{c:["450 + 10,000 unread","wait"],d:["450","ok"]}},
+ {pc:[3, 4, 11, 12],t:"The failure that matters: half a write",b:"The price drops to 400. This code has the wrong order from line 11: the cache stores 400, then the database write fails. The cache now shows a price the database never saved.",w:"The two writes are not one transaction. Write to the database first, and on any error delete the cache key, so the cache can only lag, never lead.",m:[["a","c",110,"set 400"],["c","d",150,"write 400"],["d","c",185,"error",true],["c","a",225,"error",true]],st:{c:["400 never saved","fail"],d:["450","ok"]},bad:"d"}
+],
+"behind":[
+ {pc:[1],t:"Start",b:"The cache and the database both hold 500. Writes go to the cache and are acknowledged at once. The cache saves them to the database later, in a batch.",w:"Write-behind is also called write-back. It trades durability for speed.",m:[],st:{c:["500","ok"],d:["500","ok"]}},
+ {pc:[1, 2, 3, 4],t:"A fast write",b:"The app sets 450. The cache stores it and says ok at once. The database still says 500.",w:"The write took one memory hop. That is why counters and rate limits use this pattern.",m:[["a","c",120,"set 450"],["c","a",150,"ok"]],st:{c:["450","ok"],d:["500 behind","wait"]}},
+ {pc:[2, 3, 4],t:"More writes pile up",b:"A flash sale: the price changes to 440, then 430. Each write is acknowledged at once. The database has seen none of them.",w:"Every acknowledged write that is not yet in the database is at risk.",m:[["a","c",110,"set 440"],["c","a",135,"ok"],["a","c",175,"set 430"],["c","a",200,"ok"]],st:{c:["430, 3 pending","wait"],d:["500 behind","wait"]}},
+ {pc:[6, 7, 8, 9],t:"The flush",b:"The timer fires. The check on line 7: is pending above 0? Yes, 3. So line 8 writes the latest value, 430, to the database in one batch.",w:"Three writes became one database write. That is the gain: far fewer writes to the slow store.",m:[["c","d",140,"flush: 430"],["d","c",170,"ok"]],st:{c:["430","ok"],d:["430","ok"]}},
+ {pc:[11, 12, 13],t:"The failure that matters: crash before the flush",b:"Two more changes, 420 and 410, are acknowledged. Then the cache process crashes before the next flush. Both writes are gone. The database still says 430.",w:"The app told the shop both prices were saved. They were not. Use write-behind only when you can name the window you may lose, and when losing it is acceptable.",m:[["a","c",100,"set 420"],["c","a",122,"ok"],["a","c",160,"set 410"],["c","a",182,"ok"],["crash",0,240,"cache crashed: 420 and 410 lost"]],st:{c:["crashed","fail"],d:["430","wait"]},crash:"c"}
+]};
+const fill={ok:"var(--ok)",wait:"var(--wait)",fail:"var(--fail)",line:"var(--line)"};
+let mode="aside",i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const k of["c","d"]){const [v,c]=s.st[k];$("tx-"+k).textContent=v;$("ch-"+k).setAttribute("fill",fill[c]);$("tx-"+k).setAttribute("fill",c==="line"?"var(--fg)":"#fff");
+    $("bx-"+k).setAttribute("fill",(s.crash===k||s.bad===k)?"var(--fail)":"var(--svc)");}
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="crash"){
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fail)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,bad]=m;const x1=X[a],x2=X[b];const col=bad?"var(--fail)":"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,120*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+const code={
+"aside": {
+"label": "Go",
+"pc": [
+"function read(key):",
+"  v = cache.get(key)",
+"  if v found: return v                  # hit, the database rests",
+"  v = database.read(key)                # miss: the app reads",
+"  cache.set(key, v, ttl 10 minutes)     # the app fills",
+"  return v",
+"",
+"function write(key, v):",
+"  database.write(key, v)",
+"  cache.delete(key)                     # the fix: shrink the stale window"
+],
+"real": [
+"func (s *Store) AsideRead() (int, string) {",
+"\tif s.cached {",
+"\t\treturn s.cache, \"hit\"",
+"\t}",
+"\ts.cache, s.cached = s.db, true // read the database, fill the cache",
+"\treturn s.cache, \"miss, filled\"",
+"}",
+"",
+"func (s *Store) AsideWrite(v int, deleteKey bool) {",
+"\ts.db = v",
+"\ts.dbWrites++",
+"\tif deleteKey {",
+"\t\ts.cached = false // delete, do not update",
+"\t}",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+2,
+3
+],
+"4": [
+5
+],
+"5": [
+5
+],
+"6": [
+6
+],
+"8": [
+9
+],
+"9": [
+10,
+11
+],
+"10": [
+12,
+13,
+14
+]
+}
+},
+"through": {
+"label": "Go",
+"pc": [
+"function write(key, v):                 # the app waits for both",
+"  if database.write(key, v) fails:      # the fix: database first",
+"    cache.delete(key)                   # the cache can only lag, never lead",
+"    return the error",
+"  cache.set(key, v)",
+"  answer ok",
+"",
+"function read(key):",
+"  return cache.get(key)                 # always the last write",
+"",
+"# the wrong order: cache.set first, then database.write",
+"# a failed database write leaves a price the database never saved"
+],
+"real": [
+"func (s *Store) ThroughWrite(v int) error {",
+"\tif err := s.writeDB(v); err != nil {",
+"\t\ts.cached = false // the cache can only lag, never lead",
+"\t\treturn err",
+"\t}",
+"\ts.cache, s.cached = v, true",
+"\treturn nil",
+"}",
+"",
+"func (s *Store) writeDB(v int) error {",
+"\tif s.dbFails {",
+"\t\treturn errors.New(\"database write failed\")",
+"\t}",
+"\ts.db = v",
+"\ts.dbWrites++",
+"\treturn nil",
+"}",
+"",
+"// the bug: cache first, then the database",
+"func (s *Store) ThroughWriteBad(v int) error {",
+"\ts.cache, s.cached = v, true",
+"\treturn s.writeDB(v)",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2,
+10,
+11,
+12,
+13,
+14,
+15,
+16
+],
+"3": [
+3
+],
+"4": [
+4
+],
+"5": [
+6
+],
+"6": [
+7
+],
+"8": [
+6
+],
+"9": [
+6
+],
+"11": [
+19,
+20,
+21,
+22
+],
+"12": [
+21
+]
+}
+},
+"behind": {
+"label": "Go",
+"pc": [
+"function write(key, v):",
+"  cache.set(key, v)",
+"  pending += 1",
+"  answer ok at once                     # one memory hop",
+"",
+"every minute, the flush:",
+"  if pending > 0:",
+"    database.write(key, cache.get(key)) # many writes become one",
+"    pending = 0",
+"",
+"on a crash:",
+"  lost = pending                        # acknowledged, and now gone",
+"  pending = 0"
+],
+"real": [
+"func (s *Store) BehindWrite(v int) {",
+"\ts.cache, s.cached = v, true",
+"\ts.pending++ // acknowledged at once",
+"}",
+"",
+"func (s *Store) Flush() {",
+"\tif s.pending > 0 {",
+"\t\ts.db = s.cache // many writes become one",
+"\t\ts.dbWrites++",
+"\t\ts.pending = 0",
+"\t}",
+"}",
+"",
+"func (s *Store) Crash() (lost int) {",
+"\tlost, s.pending, s.cached = s.pending, 0, false",
+"\treturn lost",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2
+],
+"3": [
+3
+],
+"4": [
+3
+],
+"6": [
+6
+],
+"7": [
+7
+],
+"8": [
+8,
+9
+],
+"9": [
+10
+],
+"11": [
+14
+],
+"12": [
+15,
+16
+],
+"13": [
+15
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

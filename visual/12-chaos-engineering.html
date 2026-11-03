@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chaos engineering</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Chaos engineering: break it on purpose, with a hypothesis</h1>
+  <p class="lede">The team believes the graph sync survives a database pod restart. Nobody has seen it. Watch a game day turn that belief into a tested fact, then watch the same fault injected with no hypothesis and no abort switch. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="gameday">Game day with a hypothesis</button>
+    <button role="tab" aria-selected="false" data-mode="reckless">No hypothesis, no abort: the failure</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">The chaos loop, three database pods, the graph sync and a freshness gauge</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="s-ss" class="box" x="20" y="20" width="155" height="50" rx="8"/><text id="s-ss-t" x="97" y="50">Steady state</text>
+        <rect id="s-hy" class="box" x="196" y="20" width="155" height="50" rx="8"/><text id="s-hy-t" x="273" y="50">Hypothesis</text>
+        <rect id="s-in" class="box" x="372" y="20" width="155" height="50" rx="8"/><text id="s-in-t" x="449" y="50">Inject</text>
+        <rect id="s-wa" class="box" x="548" y="20" width="155" height="50" rx="8"/><text id="s-wa-t" x="625" y="50">Watch</text>
+        <rect id="s-en" class="box" x="724" y="20" width="155" height="50" rx="8"/><text id="s-en-t" x="801" y="50">Abort or widen</text>
+        <g stroke="var(--muted)" stroke-width="2"><line x1="175" y1="45" x2="194" y2="45" marker-end="url(#arr)"/><line x1="351" y1="45" x2="370" y2="45" marker-end="url(#arr)"/><line x1="527" y1="45" x2="546" y2="45" marker-end="url(#arr)"/><line x1="703" y1="45" x2="722" y2="45" marker-end="url(#arr)"/></g>
+        <text id="hyp" x="450" y="104" fill="var(--fg)" font-size="15"></text>
+        <rect id="b-p1" class="box" x="40" y="130" width="150" height="56" rx="8"/><text id="b-p1-t" x="115" y="154">DB pod 1</text><text id="b-p1-l" x="115" y="175" class="sm"></text>
+        <rect id="b-p2" class="box" x="210" y="130" width="150" height="56" rx="8"/><text id="b-p2-t" x="285" y="154">DB pod 2</text><text id="b-p2-l" x="285" y="175" class="sm"></text>
+        <rect id="b-p3" class="box" x="380" y="130" width="150" height="56" rx="8"/><text id="b-p3-t" x="455" y="154">DB pod 3</text><text id="b-p3-l" x="455" y="175" class="sm"></text>
+        <rect id="b-sy" class="box" x="640" y="130" width="220" height="56" rx="8"/><text id="b-sy-t" x="750" y="154">Graph sync</text><text id="b-sy-l" x="750" y="175" class="sm"></text>
+        <line x1="638" y1="158" x2="532" y2="158" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="40" y="232" text-anchor="start" class="sm" fill="var(--fg)">freshness: blocks behind the chain head</text>
+        <rect x="40" y="242" width="820" height="22" rx="11" fill="var(--line)"/>
+        <rect id="fr" class="box" x="40" y="242" width="0" height="22" rx="11"/>
+        <line x1="450" y1="234" x2="450" y2="272" stroke="var(--fail)" stroke-width="3"/>
+        <text x="450" y="290" class="sm" fill="var(--fail)">abort line: 100 blocks</text>
+        <text id="fr-t" x="40" y="290" text-anchor="start" class="sm" fill="var(--fg)"></text>
+        <rect id="b-ab" class="box" x="660" y="306" width="200" height="44" rx="22"/><text id="b-ab-t" x="760" y="333" class="sm">Abort switch</text>
+        <text id="cap" x="40" y="334" text-anchor="start" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-chaos-engineering/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">the current stage of the loop</span>
+    <span style="--c:var(--ok)">healthy, or hypothesis holds</span>
+    <span style="--c:var(--wait)">fault injected, watching</span>
+    <span style="--c:var(--fail)">steady state broken</span>
+    <span style="--c:var(--line)">not reached, or missing</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Kill the primary database pod on staging and time the failover. Netflix Chaos Monkey kills instances in production during work hours, so engineers build services that shrug it off. Chaos Mesh or Litmus inject pod kills, network delay and full disks on Kubernetes.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Define steady state as a user-facing number first. Write the hypothesis down. Start with the smallest blast radius: one pod, staging, a small share of traffic. Agree the abort line and test the abort switch before the fault. Run it as a game day with people watching, then automate what passes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Chaos experiment</th><th>Breaking things to see</th></tr>
+      <tr><td>Starts with</td><td>A measured steady state and a written hypothesis</td><td>Curiosity</td></tr>
+      <tr><td>Blast radius</td><td>Smallest first, widened only when it holds</td><td>Whatever happens</td></tr>
+      <tr><td>Stop</td><td>An abort switch and an agreed line</td><td>Hope, and a manual scramble</td></tr>
+      <tr><td>Result</td><td>A tested fact, or a gap found cheaply</td><td>An outage you caused</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Chaos engineering tests a written hypothesis about steady state by injecting a small, abortable fault, and widens only when the system holds."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const st=k=>{const o={"s-ss":N,"s-hy":N,"s-in":N,"s-wa":N,"s-en":N};if(k)o[k]=C;return o;};
+const base={f:Object.assign(st(),{"b-p1":G,"b-p2":G,"b-p3":G,"b-sy":G,"b-ab":G}),x:{"hyp":"","b-p1-l":"","b-p2-l":"","b-p3-l":"","b-sy-l":"syncing","b-ab-t":"Abort switch: ready","cap":"","s-en-t":"Abort or widen"}};
+const D={gameday:base,reckless:Object.assign({},base,{f:Object.assign({},base.f,{"b-ab":N}),x:Object.assign({},base.x,{"b-ab-t":"Abort switch: none"})})};
+const H="if one DB pod dies, freshness stays under 100 blocks";
+const steps={
+gameday:[
+ {t:"Measure the steady state",b:"On a normal Tuesday the graph sync keeps the data about 20 blocks behind the chain head. That number is the steady state: the check for the experiment compares against it.",w:"Steady state is a user-facing number: freshness, p99, error rate. Without it, nobody can tell normal from broken.",f:st("s-ss"),x:{"cap":"staging, 11:00, everyone watching"},fr:20},
+ {t:"Write the hypothesis and agree the abort line",b:"The team writes: \"if one database pod dies, freshness stays under 100 blocks\". The rule: every minute, if blocks behind is over 100, press the abort switch.",w:"A hypothesis turns a belief into something that can be proven wrong. The abort line is agreed before anyone is nervous.",f:st("s-hy"),x:{"hyp":H},fr:20},
+ {t:"Inject: kill one pod on staging",b:"They kill database pod 2 on staging at 11:01. The blast radius is 1 pod of 3, 33 percent, on a lane with no customers. Freshness reads 30: not over 100, so the run goes on.",w:"Start with the smallest blast radius that can still teach something.",f:Object.assign(st("s-in"),{"b-p2":Y}),x:{"hyp":H,"b-p2-l":"killed on purpose"},fr:30},
+ {t:"Watch: freshness crosses the line",b:"Each minute the sync falls 30 further behind: 60, 90, then 120 at 11:04. 120 is over 100. The pod came back, but the sync did not reconnect to it.",w:"The hypothesis is false. That is a result, not a failure of the experiment.",f:Object.assign(st("s-wa"),{"b-p2":G,"b-sy":R}),x:{"hyp":H,"b-p2-l":"back up","b-sy-l":"stuck: did not reconnect"},fr:120},
+ {t:"Abort, record the gap",b:"The rule fires: they press the abort switch and restart the sync. Freshness falls back to 20 by 11:06. The gap goes into a ticket: the sync must reconnect after a pod restart.",w:"Found at 11:04 on staging with people watching, instead of at 03:00 on production with nobody awake.",f:Object.assign(st("s-en"),{"b-sy":G,"b-ab":Y}),x:{"hyp":H,"s-en-t":"Abort","b-ab-t":"Abort switch: pressed","b-sy-l":"restarted","cap":"gap: sync does not reconnect after a pod restart"},fr:20},
+ {t:"Fix and run again: it holds",b:"The sync now retries with backoff and reconnects. Same fault, same pod. Freshness goes 30, 60, 40, 20: the peak of 60 never passes 100.",w:"The hypothesis holds. The belief is now a tested fact.",f:Object.assign(st("s-wa"),{"b-p2":Y,"b-sy":G}),x:{"hyp":H,"b-p2-l":"killed on purpose","b-sy-l":"reconnected"},fr:60},
+ {t:"Widen the blast radius",b:"The rule for the next step: widen only what held. Next game day: two pods, then one pod in production during working hours. Once it passes there, it runs every week automatically.",w:"Widen only after the small version holds. Automate what passes so it keeps being true.",f:Object.assign(st("s-en"),{"b-sy":G}),x:{"hyp":"next: two pods, then production in working hours","s-en-t":"Widen","b-sy-l":"syncing","cap":"automated weekly once it passes in production"},fr:20}
+],
+reckless:[
+ {t:"\"Let's see what happens\"",b:"An engineer kills a database pod in production at peak hour to see what happens. No steady state was written down, no hypothesis, no abort switch.",w:"Same fault as the game day. Everything around it is missing.",f:{"b-p2":R},x:{"b-p2-l":"killed at peak","cap":"production, 18:00, peak traffic"},fr:20},
+ {t:"Freshness climbs, and nobody knows if that is normal",b:"Four minutes later freshness reads 150 blocks. Is that expected after a pod restart? The check needs a steady state and a line. Neither was written down, so nobody can say.",w:"Without a steady state there is nothing to compare against. People argue instead of acting.",f:{"b-p2":G,"b-sy":R},x:{"b-p2-l":"back up","b-sy-l":"stuck: did not reconnect","cap":"is this normal? nobody knows"},fr:150},
+ {t:"No abort switch",b:"There is no prepared way back. Someone looks up how to restart the sync. It takes 20 minutes, and at 30 blocks a minute freshness reaches 750. Users see stale data the whole time.",w:"An abort switch must exist, and be tested, before the fault.",f:{"b-sy":R,"b-ab":R},x:{"b-sy-l":"stuck","b-ab-t":"Abort switch: none","cap":"20 minutes to find a manual fix"},fr:750},
+ {t:"The failure that matters: the experiment becomes an outage",b:"The remaining two pods take all the peak load and one falls over. Now the sync and the reads behind it are down for real.",w:"Chaos with no hypothesis, no small blast radius and no abort switch is just an outage you caused.",f:{"b-p1":R,"b-p2":G,"b-sy":R,"b-ab":R},x:{"b-p1-l":"overloaded, down","b-sy-l":"down","b-ab-t":"Abort switch: none","cap":"an incident, a postmortem, and a team that now fears chaos"},fr:840},
+ {t:"The fix: the game day shape",b:"Steady state measured, hypothesis written, one pod on staging first, abort line agreed and the switch tested, people watching.",w:"The same fault then teaches the same lesson for the price of a few minutes on staging. That is the first tab.",f:Object.assign(st("s-hy"),{"b-ab":G}),x:{"hyp":H,"b-ab-t":"Abort switch: ready"},fr:20}
+]};
+function draw(s){const v=s.fr||0;$("fr").setAttribute("width",Math.min(820,v*4.1));$("fr").setAttribute("fill",v>=100?R:v>50?Y:G);
+  $("fr-t").textContent=`${v} blocks behind`;if(!(s.x&&s.x["s-en-t"]))$("s-en-t").textContent="Abort or widen";}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["experiment = hypothesis, abort line, switch, pods touched", "blast(): pods touched / all pods", "behind(minute):        # freshness after the kill", "  sync stuck: 30 + 30 x minute", "  sync reconnects: rises to 60, drains to 20", "run(experiment, sync):", "  for each minute: b = behind(minute); keep the peak", "    if switch and b > abort line: abort, false", "  no switch: nothing to judge by, an outage", "  else: hypothesis holds", "nextStep(verdict):", "  did not hold: fix the gap, same fault again", "  held: widen by one pod, then production"], "real": ["type Experiment struct {", "\tHypothesis string", "\tAbortAt    int", "\tHasAbort   bool", "\tPods, Of   int", "}", "", "func (e Experiment) Blast() int {", "\treturn 100 * e.Pods / e.Of", "}", "", "func (s Sync) Behind(m int) int {", "\tif !s.Reconnects {", "\t\treturn 30 + 30*m // stuck: falls 30 further behind each minute", "\t}", "\tswitch {", "\tcase m <= 1:", "\t\treturn 30 + 30*m // the pod is coming back", "\tcase m == 2:", "\t\treturn 40", "\t}", "\treturn steady", "}", "", "func Run(e Experiment, s Sync, minutes int) (peak, at int, verdict string) {", "\tfor m := 0; m < minutes; m++ {", "\t\tb := s.Behind(m)", "\t\tif b > peak {", "\t\t\tpeak, at = b, m", "\t\t}", "\t\tif e.HasAbort && b > e.AbortAt {", "\t\t\treturn peak, m, \"hypothesis false: abort, record the gap\"", "\t\t}", "\t}", "\tif !e.HasAbort {", "\t\treturn peak, at, \"no line to judge it by: an outage you caused\"", "\t}", "\treturn peak, at, \"hypothesis holds\"", "}", "", "func NextStep(verdict string, pods int) string {", "\tif verdict != \"hypothesis holds\" {", "\t\treturn \"fix the gap, run the same fault again\"", "\t}", "\treturn fmt.Sprintf(\"widen: %d pods, then production in working hours\", pods+1)", "}"], "map": {"1": [1, 2, 3, 4, 5], "2": [8, 9], "3": [12], "4": [13, 14], "5": [16, 17, 18, 19, 20, 21, 22], "6": [25], "7": [26, 27, 28, 29], "8": [31, 32], "9": [35, 36], "10": [38], "11": [41], "12": [42, 43], "13": [45]}}},PCS={"gameday": [[1], [1, 8], [2], [3, 4, 6, 7], [8, 12], [3, 5, 7, 10], [11, 13]], "reckless": [[1, 2], [3, 4, 7], [4, 9], [4, 9], [1, 2, 8]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

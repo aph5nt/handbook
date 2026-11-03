@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingress, network policy and the mesh</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.nd rect{transition:fill .35s,stroke .35s}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.nd rect{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Ingress, network policy and the mesh</h1>
+  <p class="lede">Traefik receives api.example, ends TLS and forwards to the API. A NetworkPolicy says only the ingress may talk to the API pods. Press <b>Next</b> to watch a reboot turn the policy on, then open the second tab for the door that bypasses the ingress.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pol">Ingress and policy</button>
+    <button role="tab" aria-selected="false" data-mode="byp">Bypass and retries</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Ingress, network policy and the mesh, step by step</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle">
+        <rect id="fence" class="lb" x="470" y="20" width="270" height="215" rx="10" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="8 6"/>
+        <text id="fence-l" data-t class="lb" x="732" y="228" text-anchor="end" font-size="13" font-weight="700" fill="var(--muted)">no policy yet</text>
+        <g id="user" class="nd" data-s="coord"><rect x="20" y="40" width="150" height="60" rx="8" stroke-width="3"/><text id="user-t" data-t x="95.0" y="67.0" font-size="15" font-weight="700">User</text><text id="user-s" data-t x="95.0" y="85.0" font-size="12">https://api.example</text></g>
+        <g id="ing" class="nd" data-s="coord"><rect x="215" y="40" width="210" height="70" rx="8" stroke-width="3"/><text id="ing-t" data-t x="320.0" y="72.0" font-size="15" font-weight="700">Traefik ingress</text><text id="ing-s" data-t x="320.0" y="90.0" font-size="12">waiting</text></g>
+        <g id="cert" class="nd" data-s="coord"><rect x="215" y="160" width="210" height="56" rx="8" stroke-width="3"/><text id="cert-t" data-t x="320.0" y="185.0" font-size="15" font-weight="700">cert-manager</text><text id="cert-s" data-t x="320.0" y="203.0" font-size="12">holds the certificate</text></g>
+        <g id="svc" class="nd" data-s="coord"><rect x="490" y="40" width="230" height="56" rx="8" stroke-width="3"/><text id="svc-t" data-t x="605.0" y="65.0" font-size="15" font-weight="700">API Service</text><text id="svc-s" data-t x="605.0" y="83.0" font-size="12">no traffic yet</text></g>
+        <g id="pods" class="nd" data-s="ok"><rect x="490" y="130" width="230" height="70" rx="8" stroke-width="3"/><text id="pods-t" data-t x="605.0" y="162.0" font-size="15" font-weight="700">API pods</text><text id="pods-s" data-t x="605.0" y="180.0" font-size="12">idle</text></g>
+        <g id="gf" class="nd" data-s="coord"><rect x="775" y="40" width="115" height="60" rx="8" stroke-width="3"/><text id="gf-t" data-t x="832.5" y="67.0" font-size="15" font-weight="700">Grafana</text><text id="gf-s" data-t x="832.5" y="85.0" font-size="12">Service</text></g>
+        <g id="prom" class="nd" data-s="coord"><rect x="775" y="150" width="115" height="60" rx="8" stroke-width="3"/><text id="prom-t" data-t x="832.5" y="177.0" font-size="15" font-weight="700">Prometheus</text><text id="prom-s" data-t x="832.5" y="195.0" font-size="12">scraper</text></g>
+        <g id="np" class="nd" data-s="ghost" data-tab="byp"><rect x="215" y="280" width="210" height="60" rx="8" stroke-width="3"/><text id="np-t" data-t x="320.0" y="307.0" font-size="15" font-weight="700">NodePort 30080</text><text id="np-s" data-t x="320.0" y="325.0" font-size="12">open on the host</text></g>
+        <g id="atk" class="nd" data-s="ghost" data-tab="byp"><rect x="20" y="280" width="150" height="60" rx="8" stroke-width="3"/><text id="atk-t" data-t x="95.0" y="307.0" font-size="15" font-weight="700">Stranger</text><text id="atk-s" data-t x="95.0" y="325.0" font-size="12">scans ports</text></g>
+        <g id="db" class="nd" data-s="svc" data-tab="byp"><rect x="775" y="280" width="115" height="60" rx="8" stroke-width="3"/><text id="db-t" data-t x="832.5" y="307.0" font-size="15" font-weight="700">Database</text><text id="db-s" data-t x="832.5" y="325.0" font-size="12">healthy</text></g>
+        <g id="a-u" class="msg"><line x1="170" y1="70" x2="213" y2="72" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-c" class="msg"><line x1="320" y1="158" x2="320" y2="112" stroke="var(--coord)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-c-l" data-t x="330" y="140" text-anchor="start" font-size="13" font-weight="700" fill="var(--coord)">cert</text></g>
+        <g id="a-api" class="msg"><line x1="425" y1="68" x2="488" y2="68" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-gf" class="msg"><path d="M330 40V10H832V38" fill="none" stroke="var(--fg)" stroke-width="2.5" marker-end="url(#arr)"/><text x="345" y="28" text-anchor="start" font-size="13" font-weight="700" fill="var(--fg)">grafana.example</text></g>
+        <g id="a-sp" class="msg"><line x1="605" y1="98" x2="605" y2="128" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-pr" class="msg"><line x1="773" y1="180" x2="722" y2="170" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-prx" class="msg"><line x1="773" y1="195" x2="742" y2="195" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-atk" class="msg" data-tab="byp"><line x1="170" y1="310" x2="213" y2="310" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="a-np" class="msg" data-tab="byp"><line x1="425" y1="300" x2="505" y2="202" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/><text id="a-np-l" data-t x="440" y="330" text-anchor="start" font-size="13" font-weight="700" fill="var(--fail)">skips the ingress</text></g>
+        <g id="a-db" class="msg" data-tab="byp"><line x1="722" y1="190" x2="790" y2="278" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <text id="note" data-t class="lb" x="20" y="365" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter" aria-live="polite"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The real code is the YAML you write. The Go program in <code>handbook/code/15-ingress-network-policy/</code> replays the rule lookup, the policy check with enforcement off and on, and the retry count (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">declared object or controller</span>
+    <span style="--c:var(--ok)">allowed and working</span>
+    <span style="--c:var(--wait)">waiting or under strain</span>
+    <span style="--c:var(--fail)">refused, exposed or overloaded</span>
+    <span style="--c:var(--svc)">the policy fence, when enforced</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: public hosts</h2>
+      <p>Each public host is a Traefik IngressRoute with a certificate from cert-manager. A host-level guard checks that no NodePort is open to the internet.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: policies and the mesh</h2>
+      <p>Every service gets a NetworkPolicy that lists the ingress and the scraper. A mesh such as Istio or Linkerd adds mTLS and can send 10 percent of traffic to a new version.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Part</th><th>What it does</th><th>What it does not do</th></tr>
+      <tr><td>Ingress</td><td>Routes host and path, ends TLS</td><td>Protect a door that skips it</td></tr>
+      <tr><td>NetworkPolicy</td><td>Says who may connect to which pods</td><td>Route traffic or encrypt it</td></tr>
+      <tr><td>Service mesh</td><td>mTLS, retries, timeouts, traffic splits with no code change</td><td>Replace a decision about where retries live</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The ingress routes and ends TLS, network policy decides who may connect, and anything that bypasses the ingress is unprotected."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps={
+"pol":[
+ {"t": "A request arrives", "b": "A user calls https://api.example/balance. The request reaches Traefik, the ingress controller: the one pod that implements every Ingress rule in the cluster.", "w": "The Ingress object is the rule. The controller is the program that obeys it.", "c": {"ing": "wait"}, "a": ["a-u"], "x": {"ing": "request in"}, "h": ["ing"], "pc": [1]},
+ {"t": "Traefik ends TLS", "b": "Traefik ends the TLS (Transport Layer Security) connection with a certificate that cert-manager issued and renews on its own.", "w": "Certificates are one more declared object. Nobody copies a key file by hand.", "c": {"ing": "ok"}, "a": ["a-u", "a-c"], "x": {"ing": "TLS ended"}, "h": ["cert"], "pc": [2]},
+ {"t": "Host rules route the request", "b": "The rule for host api.example forwards to the API Service, which picks a ready pod. A second rule sends grafana.example to Grafana.", "w": "One entry point, many services, chosen by host name and path.", "c": {"ing": "ok"}, "a": ["a-u", "a-api", "a-sp", "a-gf"], "x": {"ing": "TLS ended", "svc": "api.example → here", "pods": "serving"}, "h": ["svc"], "pc": [3, 5]},
+ {"t": "A policy fences the API pods", "b": "A NetworkPolicy says: only the ingress may connect to the API pods. Prometheus also scrapes the pods for metrics, and that still works today.", "w": "It works because on this cluster the policy is written but not yet enforced. Nobody notices the scraper is not on the list.", "c": {"ing": "ok"}, "a": ["a-api", "a-sp", "a-pr"], "x": {"ing": "TLS ended", "svc": "api.example → here", "pods": "serving", "fence-l": "policy: ingress only (not enforced)", "prom": "scrape works"}, "h": [], "pc": [6, 7]},
+ {"t": "The failure that matters", "b": "The cluster reboots, and policy enforcement turns on. Users are fine: source traefik, port 8080 matches the one rule. The Prometheus scrape comes from monitoring on port 9090. It matches no rule, so it is dropped.", "w": "The board goes blank and the alerts go quiet. Nothing is wrong with the API, but you are now blind.", "c": {"ing": "ok", "prom": "fail"}, "a": ["a-api", "a-sp", "a-prx"], "x": {"ing": "TLS ended", "svc": "api.example → here", "pods": "serving", "fence-l": "policy: ingress only, enforced", "prom": "scrape refused"}, "h": ["prom"], "pc": [7, 8], "at": {"fence": {"stroke": "var(--svc)", "stroke-dasharray": "none"}, "fence-l": {"fill": "var(--svc)"}}},
+ {"t": "List every caller", "b": "The policy gains a second rule: namespace monitoring, port 9090. The same check now finds a match, and the scrape works with enforcement on.", "w": "A NetworkPolicy lists every caller: the ingress, the scraper, and any other service that talks to the pods.", "c": {"ing": "ok"}, "a": ["a-api", "a-sp", "a-pr"], "x": {"ing": "TLS ended", "svc": "api.example → here", "pods": "serving", "fence-l": "policy: ingress + scraper", "prom": "scrape allowed"}, "h": [], "pc": [7], "at": {"fence": {"stroke": "var(--svc)", "stroke-dasharray": "none"}, "fence-l": {"fill": "var(--svc)"}}}
+],
+"byp":[
+ {"t": "A second door", "b": "The ingress and the policy guard the front door. But the API Service is also a NodePort: port 30080 is open on every host's own address.", "w": "A NodePort is a door in the host itself. It sits beside the ingress, not behind it.", "c": {"ing": "ok", "np": "wait"}, "a": ["a-u", "a-api", "a-sp"], "x": {"ing": "TLS ended", "svc": "type NodePort", "pods": "serving", "np": "open on the internet"}, "h": ["np"], "pc": [9]},
+ {"t": "The failure that matters", "b": "A stranger scans the host, finds port 30080 and reaches the API pods directly. No TLS, no host rule, no rate limit, no login check at the ingress.", "w": "Every protection the ingress gives is skipped. The ingress rules protect only traffic that passes through the ingress.", "c": {"ing": "ok", "np": "fail", "atk": "fail", "pods": "fail"}, "a": ["a-atk", "a-np", "a-api", "a-sp"], "x": {"ing": "TLS ended", "svc": "type NodePort", "pods": "reached directly", "np": "open on the internet", "atk": "found 30080"}, "h": [], "pc": [9]},
+ {"t": "Close the door", "b": "Audit what the host listens on. The Service goes back to ClusterIP, reachable only inside the cluster, and the NodePort closes.", "w": "Only the ingress faces the internet. Anything that bypasses it is unprotected.", "c": {"ing": "ok", "np": "ghost", "atk": "ghost"}, "a": ["a-u", "a-api", "a-sp"], "x": {"ing": "TLS ended", "svc": "type ClusterIP", "pods": "serving", "np": "closed", "atk": "nothing open"}, "h": [], "pc": [9], "at": {"fence": {"stroke": "var(--svc)", "stroke-dasharray": "none"}, "fence-l": {"fill": "var(--svc)"}}},
+ {"t": "Retries in two places", "b": "The database is slow. A service mesh proxy beside each pod retries a failed call 3 times. The application code also retries 3 times.", "w": "Nobody chose this. Each layer added its own retries.", "c": {"ing": "ok", "np": "ghost", "db": "wait", "pods": "wait"}, "a": ["a-u", "a-api", "a-sp", "a-db"], "x": {"ing": "TLS ended", "svc": "type ClusterIP", "pods": "app retries 3", "np": "closed", "db": "slow", "note": "mesh 3 × app 3"}, "h": [], "pc": [10], "at": {"fence": {"stroke": "var(--svc)", "stroke-dasharray": "none"}, "fence-l": {"fill": "var(--svc)"}}},
+ {"t": "The second failure", "b": "Each user request makes up to 3 tries in the application. Each try makes up to 3 tries in the mesh. 3 times 3 is 9 database calls. The slow database gets nine times the load and falls over.", "w": "Retries multiply when they stack. A slow dependency becomes a dead one.", "c": {"ing": "ok", "np": "ghost", "db": "fail", "pods": "fail"}, "a": ["a-u", "a-api", "a-sp", "a-db"], "x": {"ing": "TLS ended", "svc": "type ClusterIP", "pods": "9 calls per request", "np": "closed", "db": "overloaded", "note": "mesh 3 × app 3 = 9 tries"}, "h": [], "pc": [10], "at": {"fence": {"stroke": "var(--svc)", "stroke-dasharray": "none"}, "fence-l": {"fill": "var(--svc)"}}},
+ {"t": "Decide once where retries live", "b": "Retries live in the mesh only, with a timeout and a retry budget. The application retries nothing. One request makes at most 3 database calls.", "w": "One owner for retries, timeouts and mutual TLS (mTLS): the mesh. The code stays plain.", "c": {"ing": "ok", "np": "ghost", "db": "svc"}, "a": ["a-u", "a-api", "a-sp", "a-db"], "x": {"ing": "TLS ended", "svc": "type ClusterIP", "pods": "serving", "np": "closed", "db": "recovering", "note": "mesh 3, app 0 = 3 tries"}, "h": [], "pc": [10], "at": {"fence": {"stroke": "var(--svc)", "stroke-dasharray": "none"}, "fence-l": {"fill": "var(--svc)"}}}
+]
+};
+const code={
+ "pol":{"label":"YAML",
+  "pc":["on a request at the ingress controller (Traefik):", "  end TLS with the certificate for the host   # from cert-manager", "  find the rule for the host                  # api.example -> API Service", "  no rule: answer 404", "  forward to the Service, which picks a ready pod", "on a connection to a pod that a NetworkPolicy selects:", "  if the source and the port match a rule: allow", "  else: drop                                  # only if enforcement is on", "a NodePort opens the port on every host: traffic skips lines 1 to 5", "calls per request = app tries * mesh tries    # 3 * 3 = 9"],
+  "real":["apiVersion: networking.k8s.io/v1", "kind: Ingress", "metadata: {name: api}", "spec:", "  tls:", "  - {hosts: [api.example], secretName: api-tls}   # cert-manager renews it", "  rules:", "  - host: api.example", "    http:", "      paths:", "      - path: /", "        pathType: Prefix", "        backend: {service: {name: api, port: {number: 80}}}", "---", "apiVersion: networking.k8s.io/v1", "kind: NetworkPolicy", "metadata: {name: api-allow}", "spec:", "  podSelector: {matchLabels: {app: api}}", "  policyTypes: [Ingress]", "  ingress:", "  - from:                 # the ingress controller", "    - namespaceSelector: {matchLabels: {name: traefik}}", "    ports: [{port: 8080}]", "  - from:                 # Prometheus, the second rule", "    - namespaceSelector: {matchLabels: {name: monitoring}}", "    ports: [{port: 9090}]", "---", "apiVersion: v1", "kind: Service", "metadata: {name: api}", "spec:", "  type: ClusterIP         # not NodePort: no door on the host", "  selector: {app: api}", "  ports: [{port: 80, targetPort: 8080}]", "---", "# retries live in one place: the mesh", "apiVersion: networking.istio.io/v1", "kind: VirtualService", "metadata: {name: database}", "spec:", "  hosts: [database]", "  http:", "  - route: [{destination: {host: database}}]", "    timeout: 2s", "    retries: {attempts: 2, perTryTimeout: 500ms}   # 2 retries: 3 calls at most"],
+  "map":{"1": [2], "2": [5, 6], "3": [7, 8, 11, 12, 13], "4": [7], "5": [13, 34], "6": [16, 19], "7": [21, 22, 23, 24], "8": [19, 20], "9": [33], "10": [46]}},
+ "byp":{"label":"YAML",
+  "pc":["on a request at the ingress controller (Traefik):", "  end TLS with the certificate for the host   # from cert-manager", "  find the rule for the host                  # api.example -> API Service", "  no rule: answer 404", "  forward to the Service, which picks a ready pod", "on a connection to a pod that a NetworkPolicy selects:", "  if the source and the port match a rule: allow", "  else: drop                                  # only if enforcement is on", "a NodePort opens the port on every host: traffic skips lines 1 to 5", "calls per request = app tries * mesh tries    # 3 * 3 = 9"],
+  "real":["apiVersion: networking.k8s.io/v1", "kind: Ingress", "metadata: {name: api}", "spec:", "  tls:", "  - {hosts: [api.example], secretName: api-tls}   # cert-manager renews it", "  rules:", "  - host: api.example", "    http:", "      paths:", "      - path: /", "        pathType: Prefix", "        backend: {service: {name: api, port: {number: 80}}}", "---", "apiVersion: networking.k8s.io/v1", "kind: NetworkPolicy", "metadata: {name: api-allow}", "spec:", "  podSelector: {matchLabels: {app: api}}", "  policyTypes: [Ingress]", "  ingress:", "  - from:                 # the ingress controller", "    - namespaceSelector: {matchLabels: {name: traefik}}", "    ports: [{port: 8080}]", "  - from:                 # Prometheus, the second rule", "    - namespaceSelector: {matchLabels: {name: monitoring}}", "    ports: [{port: 9090}]", "---", "apiVersion: v1", "kind: Service", "metadata: {name: api}", "spec:", "  type: ClusterIP         # not NodePort: no door on the host", "  selector: {app: api}", "  ports: [{port: 80, targetPort: 8080}]", "---", "# retries live in one place: the mesh", "apiVersion: networking.istio.io/v1", "kind: VirtualService", "metadata: {name: database}", "spec:", "  hosts: [database]", "  http:", "  - route: [{destination: {host: database}}]", "    timeout: 2s", "    retries: {attempts: 2, perTryTimeout: 500ms}   # 2 retries: 3 calls at most"],
+  "map":{"1": [2], "2": [5, 6], "3": [7, 8, 11, 12, 13], "4": [7], "5": [13, 34], "6": [16, 19], "7": [21, 22, 23, 24], "8": [19, 20], "9": [33], "10": [46]}}
+};
+const COL={idle:["var(--line)","var(--fg)"],coord:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],wait:["var(--wait)","#1f2320"],undo:["var(--undo)","#fff"],ghost:["none","var(--muted)"],hide:["none","transparent"]};
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)");
+const nodes=[...document.querySelectorAll(".nd")],msgs=[...document.querySelectorAll(".msg")],labs=[...document.querySelectorAll(".lb")];
+document.querySelectorAll("[data-t]").forEach(t=>t.dataset.d=t.textContent);
+const saved={};
+Object.values(steps).flat().forEach(s=>Object.entries(s.at||{}).forEach(([id,o])=>Object.keys(o).forEach(k=>{const key=id+"|"+k;if(!(key in saved))saved[key]=$(id).getAttribute(k);})));
+const vis=el=>{const t=el.dataset.tab;return !t||t.split(" ").includes(mode);};
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-t]").forEach(t=>t.textContent=t.dataset.d);
+  for(const[k,v]of Object.entries(s.x)){const el=$(k+"-s")||$(k);if(el&&el.tagName==="text")el.textContent=v;}
+  nodes.forEach(g=>{g.style.display=vis(g)?"":"none";const st=s.c[g.id]||g.dataset.s;const[f,tc]=COL[st];const r=g.querySelector("rect");
+    r.setAttribute("fill",f);r.setAttribute("stroke",s.h.includes(g.id)?"var(--fg)":(st==="ghost"?"var(--line)":"none"));
+    r.setAttribute("stroke-dasharray",st==="ghost"?"5 5":"none");g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",tc));});
+  labs.forEach(l=>l.style.display=vis(l)?"":"none");
+  msgs.forEach((m,k)=>{m.style.display=vis(m)?"":"none";const on=s.a.includes(m.id);
+    if(!on)return m.classList.remove("on");if(m.classList.contains("on"))return;
+    RM.matches?m.classList.add("on"):setTimeout(()=>{if(steps[mode][i].a.includes(m.id))m.classList.add("on")},40+60*s.a.indexOf(m.id));});
+  for(const[key,v]of Object.entries(saved)){const[id,k]=key.split("|");v===null?$(id).removeAttribute(k):$(id).setAttribute(k,v);}
+  for(const[id,o]of Object.entries(s.at||{}))for(const[k,v]of Object.entries(o))$(id).setAttribute(k,v);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

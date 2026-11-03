@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lateral join</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Lateral join: a subquery per left row</h1>
+  <p class="lede">A dashboard shows each pool with its three newest swaps. A plain join cannot say "the top three for each pool". A <code>LATERAL</code> subquery runs once per pool and can see that pool's id. Press <b>Next</b>, then open the second tab to see the same query with no index.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="lat">LATERAL with an index</button>
+    <button role="tab" aria-selected="false" data-mode="noidx">The failure: no index</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Lateral join: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">the pool row being worked on</span>
+    <span style="--c:var(--wait)">the subquery running now</span>
+    <span style="--c:var(--ok)">rows returned</span>
+    <span style="--c:var(--line)">pool waiting its turn</span>
+    <span style="--c:var(--undo)">NULL, kept by LEFT JOIN</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL: top N per group with <code>JOIN LATERAL</code> and an index on <code>(pool, ts)</code>. SQL Server calls the same idea <code>CROSS APPLY</code> and <code>OUTER APPLY</code>. A warehouse such as StarRocks writes it with <code>ROW_NUMBER()</code> in a CTE, filtered outside.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Few groups and a matching index: <code>LATERAL</code>, a short index read per group. Every group over the whole table, or no <code>LATERAL</code> in the engine: <code>ROW_NUMBER() OVER (PARTITION BY pool ORDER BY ts DESC) &lt;= 3</code>, one scan. Use <code>LEFT JOIN LATERAL ... ON true</code> to keep groups with no rows.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>LATERAL</th><th>ROW_NUMBER in a CTE</th><th>Correlated subquery in WHERE</th></tr>
+      <tr><td>Runs</td><td>Once per left row</td><td>One scan, one sort per partition</td><td>Once per row, in principle</td></tr>
+      <tr><td>Returns per left row</td><td>Many rows and columns</td><td>Many rows</td><td>One value</td></tr>
+      <tr><td>Needs</td><td>An index on the inner key and sort</td><td>Window function support</td><td>A planner that rewrites it</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"LATERAL is a correlated subquery in FROM: it runs per left row and can return many rows, which is how I write top N per group."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const pools=(ks)=>[F(20,50,190,220,"pools"),...["p1","p2","p3, no swaps"].map((p,j)=>B(30,94+56*j,170,p,ks[j]||"n",40))];
+const sub=(lab,k,j)=>[B(250,94+56*j,320,lab,k,40),A(202,114+56*j,246,114+56*j,"",k)];
+const R1=[["p1","10:05","40"],["p1","10:02","15"],["p1","09:58","22"]],R2=[["p2","10:01","8"],["p2","09:40","30"]];
+const res=(rows,k)=>[F(600,50,280,280,"result"),T(610,86,"pool"),T(680,86,"ts"),T(780,86,"amount"),...rows.flatMap((r,j)=>{const kk=r[3]||k;return[B(610,94+36*j,60,r[0],kk==="u"?"u":"r",30),B(680,94+36*j,90,r[1],kk,30),B(780,94+36*j,90,r[2],kk,30)];})];
+const scan=(lab,k)=>B(250,300,330,lab,k,40);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. SQLite has no LATERAL, so <code>handbook/code/07-lateral-join/main.py</code> does what LATERAL does by hand: it runs the same subquery once per pool, prints the rows and SQLite's query plan quoted here (<code>python3 main.py</code>). The PostgreSQL view is the LATERAL query itself, in <code>lateral.sql</code>, not run here.";
+const PG=["-- PostgreSQL: each pool with its 3 newest swaps", "CREATE INDEX swaps_pool_ts ON swaps (pool, ts DESC);", "", "SELECT p.pool, x.ts, x.amount", "FROM pools p", "LEFT JOIN LATERAL (", "  SELECT ts, amount FROM swaps s", "  WHERE s.pool = p.pool ORDER BY ts DESC LIMIT 3", ") x ON true;", "", "-- PostgreSQL without LATERAL, or a warehouse: ROW_NUMBER, one pass", "WITH r AS (", "  SELECT pool, ts, amount,", "         ROW_NUMBER() OVER (PARTITION BY pool ORDER BY ts DESC) AS rn", "  FROM swaps", ")", "SELECT p.pool, r.ts, r.amount", "FROM pools p LEFT JOIN r ON r.pool = p.pool AND r.rn <= 3;"];
+const CODE={
+lat:{pc:["for pool in pools:                     # the left side",
+"  rows = newest_3(pool)                # the subquery sees this pool",
+"  newest_3: swaps WHERE pool = this pool ORDER BY ts DESC LIMIT 3",
+"  if rows is empty:",
+"    JOIN drops the pool, LEFT JOIN keeps it with NULLs",
+"  emit (pool, row) for each row",
+"index (pool, ts DESC): each run reads at most 3 entries"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- the left side: one row per pool", "SELECT pool FROM pools ORDER BY pool;"],[""],["-- the subquery, run once per pool with that pool's id", "SELECT ts, amount FROM swaps", "WHERE pool = ? ORDER BY ts DESC LIMIT 3;"],[""],["-- the index the subquery needs: its filter, then its sort", "CREATE INDEX swaps_pool_ts ON swaps (pool, ts DESC);"],[""],["def lateral(db, keep_empty):", "    \"\"\"JOIN LATERAL by hand. keep_empty=True is LEFT JOIN LATERAL ... ON true.\"\"\"", "    out = []", "    for (pool,) in db.execute(POOLS).fetchall():", "        rows = db.execute(NEWEST_3, (pool,)).fetchall()", "        if not rows and keep_empty:", "            out.append((pool, None, None))", "        for ts, amount in rows:", "            out.append((pool, ts, amount))", "    return out"]),
+  map:[["for pool in pools","the left side: one row per pool..;","=for (pool,) in db.execute(POOLS).fetchall():"],["rows = newest_3","rows = db.execute(NEWEST_3, (pool,)).fetchall()"],
+   ["newest_3: swaps","the subquery, run once per pool..;"],["if rows is empty","if not rows and keep_empty"],
+   ["JOIN drops","JOIN LATERAL by hand","if not rows and keep_empty..out.append((pool, None, None))"],["emit (pool","for ts, amount in rows..out.append((pool, ts, amount))"],
+   ["index (pool","the index the subquery needs..;"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:PG,
+  map:[["for pool in pools","=FROM pools p"],["rows = newest_3","LEFT JOIN LATERAL (..) x ON true;"],["newest_3: swaps","SELECT ts, amount FROM swaps s","WHERE s.pool = p.pool"],
+   ["if rows is empty","=) x ON true;"],["JOIN drops","=LEFT JOIN LATERAL (","=) x ON true;"],["emit (pool","=SELECT p.pool, x.ts, x.amount"],["index (pool","CREATE INDEX"]]}]},
+noidx:{pc:["swaps: 1,000 pools x 50 = 50,000 rows, no index on (pool, ts)",
+"for pool in pools:",
+"  newest_3(pool): read every swap, keep this pool's, sort   # full scan",
+"rows read = 1,000 runs x 50,000 = 50,000,000",
+"fix: index (pool, ts DESC): jump to the pool, read 3 entries",
+"or: one pass, ROW_NUMBER() per pool newest first, keep rn <= 3"],
+ views:[{v:"real",label:"Python",lines:[].concat(["-- the subquery, run once per pool with that pool's id", "SELECT ts, amount FROM swaps", "WHERE pool = ? ORDER BY ts DESC LIMIT 3;"],[""],["-- the index the subquery needs: its filter, then its sort", "CREATE INDEX swaps_pool_ts ON swaps (pool, ts DESC);"],[""],["-- no LATERAL: number each pool's swaps newest first, keep 3", "WITH r AS (", "  SELECT pool, ts, amount,", "         ROW_NUMBER() OVER (PARTITION BY pool ORDER BY ts DESC) AS rn", "  FROM swaps", ")", "SELECT p.pool, r.ts, r.amount", "FROM pools p LEFT JOIN r ON r.pool = p.pool AND r.rn <= 3", "ORDER BY p.pool, r.ts DESC;"],[""],["    n_pools, per_pool = 1000, 50", "    big.executemany(\"INSERT INTO pools VALUES (?)\", [(f\"p{k}\",) for k in range(n_pools)])", "    big.executemany(\"INSERT INTO swaps VALUES (?, ?, ?)\",", "                    [(f\"p{k}\", f\"{m:04d}\", m) for k in range(n_pools) for m in range(per_pool)])", "    n_swaps = big.execute(\"SELECT COUNT(*) FROM swaps\").fetchone()[0]", "    print(f\"{n_pools:,} pools, {n_swaps:,} swaps\")", "    print(f\"plan, no index: {plan(big)}\")", "    print(f\"rows read, no index: {n_pools:,} runs x {n_swaps:,} = {n_pools * n_swaps:,}\")", "    big.executescript(INDEX)", "    print(f\"plan, with index: {plan(big)}\")", "    rows = lateral(big, keep_empty=True)", "    print(f\"index entries read, with index: {len(rows):,} (3 per pool)\")"]),
+  map:[["swaps: 1,000","n_pools, per_pool = 1000, 50","INSERT INTO swaps VALUES (?, ?, ?)..range(per_pool)])"],["for pool in pools","the subquery, run once per pool..;"],
+   ["newest_3(pool): read","plan, no index:"],["rows read =","rows read, no index:"],
+   ["fix: index","the index the subquery needs..;","big.executescript(INDEX)","plan, with index:","index entries read"],["or: one pass","no LATERAL: number each..;"]]},
+  {v:"pg",label:"PostgreSQL, not run here",lines:PG,
+  map:[["swaps: 1,000","SELECT ts, amount FROM swaps s"],["for pool in pools","=FROM pools p"],["newest_3(pool): read","SELECT ts, amount FROM swaps s","WHERE s.pool = p.pool"],["rows read =","LEFT JOIN LATERAL (..) x ON true;"],["fix: index","CREATE INDEX"],["or: one pass","without LATERAL, or a warehouse..r.rn <= 3;"]]}]}};
+// CODE PANEL END
+const S={
+lat:{name:"pools with their 3 newest swaps",st:[
+ {t:"Start: one row per pool",pc:["for pool in pools"],b:"The query reads pools: p1, p2 and p3. p3 has never had a swap. For each pool we want its three newest swaps.",w:"A plain join returns every swap of every pool. It cannot stop at three per pool.",d:pools([]).concat(res([]),[T(250,330,"index on swaps (pool, ts)","c","start",15)])},
+ {t:"p1: the subquery runs with p.pool = p1",pc:["rows = newest_3", "newest_3: swaps", "emit (pool"],b:"JOIN LATERAL (SELECT ... WHERE s.pool = p.pool ORDER BY ts DESC LIMIT 3). For p1 it reads the index from p1's newest end and stops after three entries. p1 has four swaps, and the program prints the newest three: 10:05, 10:02, 09:58.",w:"The subquery can see the left row. That is the one thing LATERAL adds.",d:pools(["r"]).concat(sub("for p1: newest 3 swaps","w",0),res(R1,"c"),[T(250,330,"index on swaps (pool, ts)","c","start",15)])},
+ {t:"p2: runs again, for p2",pc:["newest_3: swaps", "emit (pool"],b:"The same subquery runs with p.pool = p2. p2 has only two swaps, so the program prints two: 10:01 and 09:40.",w:"LIMIT 3 is an upper bound per pool, not an exact count.",d:pools(["n","r"]).concat(sub("for p2: newest 3 swaps","w",1),res(R1.concat(R2),"c"),[T(250,330,"index on swaps (pool, ts)","c","start",15)])},
+ {t:"p3: nothing, so JOIN drops it",pc:["if rows is empty", "JOIN drops"],b:"For p3 the subquery returns no rows. With JOIN ... ON true, a pool with no partner rows disappears. The program prints JOIN LATERAL: 5 rows, none for p3.",w:"Same rule as any inner join: no partner, no row.",d:pools(["n","n","g"]).concat(sub("for p3: no swaps","g",2),res(R1.concat(R2),"c"),[T(250,330,"p3 missing from the dashboard","w","start",15)])},
+ {t:"LEFT JOIN LATERAL keeps p3",pc:["JOIN drops"],b:"Write LEFT JOIN LATERAL (...) x ON true. p3 now appears once, with NULL in the swap columns. The program prints 6 rows, the last one p3 NULL NULL.",w:"The dashboard can show 'no swaps yet' instead of hiding the pool.",d:pools(["n","n","r"]).concat(sub("for p3: no swaps, keep p3","u",2),res(R1.concat(R2,[["p3","NULL","NULL","u"]]),"c"))},
+ {t:"Why it is fast: three short index reads",pc:["index (pool"],b:"Each run reads a handful of index entries for one pool, newest first, and stops. Three pools, three short reads.",w:"LATERAL is cheap exactly when the inner query has an index on its filter and sort.",d:pools(["c","c","c"]).concat(res(R1.concat(R2,[["p3","NULL","NULL","u"]]),"c"),[B(250,94,320,"p1: 3 index entries","c",40),B(250,150,320,"p2: 2 index entries","c",40),B(250,206,320,"p3: 0 index entries","c",40),T(250,330,"3 runs, a few entries each","c","start",15)])}
+]},
+noidx:{name:"same query, no index on (pool, ts)",st:[
+ {t:"Same query, no index",pc:["swaps: 1,000"],b:"The program builds 1,000 pools with 50 swaps each: 50,000 rows, and no index on (pool, ts). The LATERAL subquery still runs once per pool.",w:"Without the index, 'newest three swaps of p1' has no short path.",d:pools([]).concat(res([]),[scan("swaps: 50,000 rows, no index","n")])},
+ {t:"p1: a full scan and a sort",pc:["for pool in pools", "newest_3(pool): read"],b:"SQLite's plan for the subquery prints SCAN swaps, then USE TEMP B-TREE FOR ORDER BY. To find p1's three newest swaps it reads all 50,000 rows, keeps p1's, and sorts them.",w:"One run, one full table scan.",d:pools(["r"]).concat(sub("for p1: scan everything, sort","w",0),res(R1,"c"),[scan("swaps: full scan 1","x")])},
+ {t:"p2: the whole scan again",pc:["newest_3(pool): read"],b:"For p2 the subquery reads all 50,000 rows again.",w:"Nothing is shared between runs. Each pool pays the full price.",d:pools(["n","r"]).concat(sub("for p2: scan everything, sort","w",1),res(R1.concat(R2),"c"),[scan("swaps: full scan 2","x")])},
+ {t:"The failure: a thousand pools, a thousand scans",pc:["rows read ="],b:"The dashboard has 1,000 pools. That is 1,000 full scans of 50,000 rows: the program prints 50,000,000 rows read for one page load.",w:"LATERAL without a matching index is a correlated subquery at its worst.",d:pools(["x","x","x"]).concat(res(R1.concat(R2),"c"),[scan("1,000 pools: 1,000 full scans","x"),T(250,260,"50,000,000 rows read","x","start",16)])},
+ {t:"Fix: the index",pc:["fix: index"],b:"CREATE INDEX ON swaps (pool, ts DESC). The plan now prints SEARCH swaps USING INDEX swaps_pool_ts (pool=?). Each run jumps to its pool and reads three entries: 3,000 for all 1,000 pools.",w:"Same query, same result. One index turns a thousand scans into a thousand short reads.",d:pools(["c","c","c"]).concat(res(R1.concat(R2),"c"),[scan("index (pool, ts DESC): few entries","c")])},
+ {t:"Or: ROW_NUMBER, one scan for all pools",pc:["or: one pass"],b:"When you need every pool anyway, or the engine has no LATERAL: number each pool's swaps newest first in a CTE, then keep rn <= 3. On the small tables the program prints the same 6 rows as LEFT JOIN LATERAL.",w:"One scan and one sort per pool for the whole table. This is how StarRocks writes top N per group.",d:pools(["c","c","c"]).concat(res(R1.concat(R2),"c"),[B(250,94,320,"WITH r AS (... ROW_NUMBER ...)","o",40),B(250,150,320,"WHERE rn <= 3","o",40),scan("swaps: 1 scan for all pools","c")])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

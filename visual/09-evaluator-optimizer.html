@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evaluator-optimizer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Evaluator-optimizer: write, grade, fix, repeat</h1>
+  <p class="lede">A producer writes a Chain Insights answer. An evaluator grades it against a rubric and sends back specific feedback. The producer fixes it. The loop ends when the evaluator passes or a round cap hits. Watch it pass in round 2. Then switch tabs to see vague feedback make the answer worse each round.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Specific feedback, round cap</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Vague feedback, no cap</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A producer, an evaluator with a rubric, a feedback path, a round counter and the output</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="e1" class="edge" d="M230 110 L326 110" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="e2" class="edge" d="M570 110 L676 110" fill="none" stroke="var(--line)" stroke-width="3" marker-end="url(#arr)"/>
+      <path id="fb" class="edge" d="M450 140 L450 190 L120 190 L120 144" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="7 5" marker-end="url(#arr)"/>
+      <text x="285" y="210" text-anchor="middle" font-size="12" font-weight="400" fill="var(--muted)">feedback</text>
+      <text id="round" x="450" y="40" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fg)"></text>
+      <g><rect id="prod" class="box" x="10" y="80" width="220" height="60" rx="10" fill="var(--line)"/><text id="prod-l" x="120.0" y="114.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Producer</text></g>
+      <g><rect id="eval" class="box" x="330" y="80" width="240" height="60" rx="10" fill="var(--line)"/><text id="eval-l" x="450.0" y="114.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Evaluator + rubric</text></g>
+      <g><rect id="out" class="box" x="680" y="80" width="210" height="60" rx="10" fill="var(--line)"/><text id="out-l" x="785.0" y="114.9" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Output</text></g>
+      <text x="10" y="226" font-size="14" font-weight="700" fill="var(--fg)">Round log</text>
+      <rect x="10" y="236" width="880" height="156" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-evaluator-optimizer/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">writing or grading</span>
+    <span style="--c:var(--wait)">feedback sent</span>
+    <span style="--c:var(--ok)">pass</span>
+    <span style="--c:var(--fail)">vague feedback, or a worse version</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A skill improvement loop: run real conversations, grade each against the rules, fix the skill, run again. Code generation with a test suite as the evaluator. Writing tasks with a style rubric. Anthropic lists it among its workflow patterns.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Make the evaluator's feedback specific and checkable: which rubric item failed and where. Cap the rounds at two or three. Keep the best-scoring version, not the last one. Use a different prompt or model for the evaluator.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Evaluator-optimizer</th><th>Single shot</th></tr>
+      <tr><td>Calls</td><td>Two per round, a few rounds</td><td>One</td></tr>
+      <tr><td>Quality</td><td>Rises while feedback is specific</td><td>Whatever the first draft is</td></tr>
+      <tr><td>Needs</td><td>A rubric the evaluator can check</td><td>Nothing</td></tr>
+      <tr><td>Main failure</td><td>Vague feedback, no cap, keeping the last version</td><td>No second look</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Evaluator-optimizer loops a producer and a critic until the rubric passes or a round cap hits, so the feedback must be specific and I keep the best version."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"t": "Round 1: a draft", "b": "The producer writes an answer about where one wallet's money went.", "w": "The first draft is rarely the best. The loop exists to improve it.", "box": {"prod": "coord"}, "txt": {"round": "round 1 of 3"}, "pc": [2]},
+{"t": "The evaluator grades it", "b": "evaluate() runs each rubric check on the draft. Every address is 42 characters: pass. Plain amounts (no 'wei'): pass. Exchange A and Exchange B both named? Only A: fail. Score 2 of 3.", "w": "A rubric makes the grade checkable, item by item.", "box": {"eval": "coord"}, "ed": {"e1": "coord"}, "rows": [["round 1: addresses ok, exchanges: 1 of 2 named, amounts ok", "wait"]], "pc": [1, 4, 5]},
+{"t": "Specific feedback", "b": "evaluate() names the failed item and where: 'failed: every exchange named (the exchange reached through Funder B is missing)'.", "w": "Specific feedback gives the producer one thing to fix.", "box": {"eval": "wait"}, "ed": {"fb": "wait"}, "rows": [["feedback: add the exchange reached through Funder B", "wait"]], "pc": [7]},
+{"t": "Round 2: the fix", "b": "Round 2 of 3. The producer appends Funder B and Exchange B to the draft and changes nothing else. The draft grows from 98 to 197 characters.", "w": "A targeted fix keeps what already passed.", "box": {"prod": "coord"}, "ed": {"e1": "coord"}, "txt": {"round": "round 2 of 3"}, "pc": [3, 8]},
+{"t": "Pass", "b": "evaluate() finds no failed item: 3 of 3. Line 6 returns the draft. Two rounds, four calls.", "w": "Two rounds, four calls, one better answer.", "box": {"eval": "ok", "out": "ok"}, "ed": {"e2": "ok"}, "rows": [["round 2: all items pass", "ok"]], "pc": [4, 6]}],
+"bad":[
+{"t": "Vague feedback", "b": "Suppose line 7 is off and the evaluator says only 'could be better, improve clarity'. No item, no place.", "w": "Feedback with no target gives the producer nothing to aim at.", "box": {"eval": "fail"}, "ed": {"e1": "coord", "fb": "fail"}, "txt": {"round": "round 1, no cap"}, "rows": [["feedback: 'could be better'", "fail"]], "pc": [7]},
+{"t": "The producer rewrites everything", "b": "With no item named, the producer rewrites and pads the whole answer. In round 3 it shortens Funder A's address: 1 of 3 items pass.", "w": "A rewrite can break what already passed.", "box": {"prod": "fail"}, "txt": {"round": "round 3, no cap"}, "rows": [["round 3: an address shortened, 1 of 3 pass", "fail"]], "pc": [8]},
+{"t": "Longer and worse", "b": "Suppose the cap on line 3 is gone. By round 6 the answer is 335 characters, more than three times round 1's 98, amounts are in wei, and 0 of 3 items pass. The feedback is still 'could be better'.", "w": "The loop is moving, but not toward anything.", "box": {"prod": "fail", "eval": "fail"}, "ed": {"e1": "fail", "fb": "fail"}, "txt": {"round": "round 6, no cap"}, "rows": [["round 6: 335 characters, 0 of 3, still 'could be better'", "fail"]], "pc": [3]},
+{"t": "The last version ships", "b": "Suppose line 9 returns the last draft, not the best. The loop is stopped at round 6 and that draft ships: 335 characters, 0 of 3. Round 1's draft scored 2 of 3.", "w": "The last version is not the best version.", "box": {"out": "fail"}, "ed": {"e2": "fail"}, "rows": [["shipped: the round 6 draft, 0 of 3", "fail"]], "pc": [9]},
+{"t": "The fix", "b": "Feedback names the failed item, the cap is 3 rounds, and the best-scoring draft is kept. This run passes 3 of 3 in round 2.", "w": "Specific feedback, a cap, and keep the best.", "box": {"eval": "ok", "out": "ok"}, "ed": {"e2": "ok"}, "txt": {"round": "best of 3 rounds kept"}, "rows": ["clear", ["feedback names the item, cap 3, best kept", "ok"]], "pc": [3, 7, 9]}]},
+"T0":{"round": ""},"panel":{"x": 10, "y": 236, "w": 880, "h": 156, "title": "Round log", "rh": 30, "fs": 12},"code":{"_": {"label": "Python", "pc": ["RUBRIC = addresses in full, every exchange named, amounts in plain words", "draft = producer(task)", "for round in 1 .. 3:                          # the round cap", "  failed = rubric items the draft does not pass", "  score = items passed; keep the draft if it is the best so far", "  if nothing failed: return draft", "  feedback = the failed item and where       # specific, checkable", "  draft = producer(task, draft, feedback)    # fix that item, keep the rest", "return the best draft                        # the best, not the last"], "real": ["RUBRIC = {", "    \"addresses in full\": lambda d: all(len(a) == 42 for a in re.findall(r\"0x[0-9a-fA-F]+(?:\\.\\.\\.[0-9a-fA-F]+)?\", d)),", "    \"every exchange named\": lambda d: \"Exchange A\" in d and \"Exchange B\" in d,", "    \"amounts in plain words\": lambda d: \"wei\" not in d,", "}", "", "", "def evaluate(draft, specific=True):", "    failed = [name for name, ok in RUBRIC.items() if not ok(draft)]", "    if not failed:", "        return failed, \"\"", "    if specific:  # name the failed item and where", "        return failed, f\"failed: {failed[0]} (the exchange reached through Funder B is missing)\"", "    return failed, \"could be better, improve clarity\"", "", "", "def optimise(task, cap=3, specific=True, keep_best=True, log=print):", "    draft = fake_producer(task)", "    best, best_score = draft, -1", "    for round_no in range(1, cap + 1):  # the round cap", "        failed, feedback = evaluate(draft, specific)", "        score = len(RUBRIC) - len(failed)", "        if score > best_score:  # keep the best so far", "            best, best_score = draft, score", "        log(f\"round {round_no}: {score} of {len(RUBRIC)} items pass, {len(draft)} characters\")", "        if not failed:", "            return draft  # every item passes", "        if round_no < cap:  # no new draft after the last round", "            draft = fake_producer(task, draft, feedback, round_no + 1)  # fix that item, keep the rest", "    return best if keep_best else draft  # the best, not the last"], "map": {"1": [1, 2, 3, 4], "4": [9, 21], "7": [12, 13], "2": [18], "3": [20, 28], "5": [22, 23, 24], "6": [26, 27], "8": [29], "9": [30]}, "path": "handbook/code/09-evaluator-optimizer/main.py", "cmd": "python3 main.py", "note": ""}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

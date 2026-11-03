@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotent consumer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+/*code-panel*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{display:flex;gap:8px;flex-wrap:wrap}
+#codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+#codetabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*end-code-panel*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Idempotent consumer: twice has the same effect as once</h1>
+  <p class="lede">A top-up event renews a subscription by one month. Kafka and the outbox may deliver that event twice. Watch how the consumer makes the second delivery harmless. Press <b>Next</b>.</p>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" id="scene">
+      <title id="stage-title">Idempotent consumer</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+<rect x="10" y="60" width="180" height="80" rx="8" fill="var(--panel)" stroke="var(--undo)" stroke-width="3"/>
+        <text x="100" y="86" fill="var(--fg)">Kafka: wallet-events</text>
+        <text id="k-txt" x="100" y="110" fill="var(--muted)" font-weight="400">offset 41 committed</text>
+        <g id="g-ev" class="msg"><rect x="20" y="160" width="160" height="50" rx="6" fill="var(--undo)"/><text x="100" y="182" fill="#fff">WalletToppedUp</text><text id="ev-txt" x="100" y="200" fill="#fff" font-weight="400">event id e-81, 1st time</text>
+          <line x1="180" y1="185" x2="243" y2="110" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <!-- consumer -->
+        <rect x="230" y="25" width="300" height="300" rx="12" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="4 5" id="bx-tx" class="box"/>
+        <text id="tx-lbl" x="380" y="18" fill="var(--muted)">consumer transaction</text>
+        <rect id="bx-con" class="box" x="245" y="45" width="270" height="110" rx="8" fill="var(--svc)"/>
+        <text x="380" y="72" fill="#fff" font-size="15">Renewal consumer</text>
+        <text x="380" y="96" fill="#fff" font-weight="400">1. insert event id</text>
+        <text x="380" y="118" fill="#fff" font-weight="400">2. extend plan one month</text>
+        <text id="con-st" x="380" y="144" fill="#fff">waiting</text>
+        <rect id="bx-proc" class="box" x="245" y="175" width="270" height="135" rx="8" fill="var(--line)"/>
+        <text id="proc-lbl" x="380" y="199" fill="var(--fg)">processed_events (unique id)</text>
+        <g id="g-r1" class="msg"><rect id="bx-r1" class="box" x="260" y="212" width="240" height="34" rx="6" fill="var(--ok)"/><text x="380" y="234" fill="#fff" font-weight="400">e-80</text></g>
+        <g id="g-r2" class="msg"><rect id="bx-r2" class="box" x="260" y="256" width="240" height="34" rx="6" fill="var(--ok)"/><text id="r2-txt" x="380" y="278" fill="#fff" font-weight="400">e-81</text></g>
+        <!-- subscription -->
+        <rect id="bx-sub" class="box" x="590" y="60" width="290" height="90" rx="8" fill="var(--svc)"/>
+        <text x="735" y="88" fill="#fff" font-size="15">Subscription</text>
+        <text id="sub-txt" x="735" y="114" fill="#fff" font-weight="400">paid until: November</text>
+        <text id="sub-st" x="735" y="136" fill="#fff">one top-up received</text>
+        <g id="g-apply" class="msg"><line x1="515" y1="100" x2="588" y2="100" stroke="var(--ok)" stroke-width="2.5" marker-end="url(#arr)"/></g>
+        <g id="g-skip" class="msg"><text x="735" y="190" fill="var(--wait)">duplicate: skip, acknowledge</text><text x="735" y="212" fill="var(--muted)" font-weight="400">no change to the plan</text></g>
+        <g id="g-crash" class="msg"><text x="100" y="250" fill="var(--fail)" font-size="20">✕</text><text x="100" y="272" fill="var(--fail)">crash before the</text><text x="100" y="290" fill="var(--fail)">offset commit</text></g>
+        <g id="g-nat" class="msg"><rect x="590" y="175" width="290" height="110" rx="8" fill="var(--panel)" stroke="var(--ok)" stroke-width="2"/><text x="735" y="200" fill="var(--fg)">idempotent by nature</text><text x="735" y="226" fill="var(--ok)" font-weight="400">set paidFor = top-up e-81</text><text x="735" y="250" fill="var(--fail)" font-weight="400">not: add one month</text><text x="735" y="272" fill="var(--muted)" font-weight="400">set, do not add</text></g>
+        <g id="g-bar" class="msg"><rect id="bx-bar" x="10" y="340" width="880" height="44" rx="6" fill="var(--fail)"/><text id="bar-txt" x="450" y="367" fill="#fff">One payment of 20 USD, two months of plan</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--code-panel-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/01-idempotent-consumer/main.go</code> (<code>go run .</code>).</p>
+    <div id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <!--end-code-panel-->
+
+  <div class="legend">
+    <span style="--c:var(--undo)">event from the broker</span>
+    <span style="--c:var(--svc)">consumer and subscription</span>
+    <span style="--c:var(--ok)">applied once, recorded</span>
+    <span style="--c:var(--wait)">duplicate detected and skipped</span>
+    <span style="--c:var(--fail)">applied twice</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A Kafka consumer group after a rebalance. A webhook handler that the sender retries on timeout: Stripe sends an event id for exactly this. A StarRocks primary-key table, where loading the same block twice upserts the same rows. An HTTP API with an Idempotency-Key header for payments.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Give every event a unique id at birth. Store processed ids in the same transaction as the effect, with a unique key. Prefer effects that are idempotent by nature: set a value, upsert by a business key. Never rely on the broker for exactly-once effects.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Not idempotent</th><th>Processed-id table</th><th>Idempotent by nature</th></tr>
+      <tr><td>Effect</td><td>Add one month</td><td>Add one month, guarded</td><td>Set month paid by e-81</td></tr>
+      <tr><td>Second delivery</td><td>Applied again</td><td>Unique key hit, skipped</td><td>Same state written again</td></tr>
+      <tr><td>Cost</td><td>Silent wrong data</td><td>One table, one insert per event</td><td>Model the effect as a set</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Delivery is at least once, so the consumer must be idempotent. I store the event id in the same transaction as the effect, or I shape the effect as a set or upsert so doing it twice changes nothing."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps=[
+{t:"The same event can arrive twice",b:"The outbox relay and Kafka both deliver at least once, so one WalletToppedUp may arrive two times. Line 1: every event has a unique id. Line 2: the consumer keeps processed ids. The plan is paid until November.",w:"Idempotent means: running it twice has the same effect as running it once. Exactly-once delivery is not on offer. Exactly-once effect is something you build.",vis:["g-r1"]},
+ {t:"First delivery: record the id and apply",b:"Event e-81 arrives. Line 4 finds it is new. Line 6 inserts e-81 and line 7 extends the plan by one month, to December. Line 8 commits both together: either both are saved, or neither.",w:"The id and the effect commit together. Either both are saved, or neither.",vis:["g-r1","g-ev","g-r2","g-apply"],txt:{"con-st":"applied","sub-txt":"paid until: December","tx-lbl":"one transaction: COMMIT"},stroke:{"bx-tx":"var(--ok)"},fill:{"bx-sub":"var(--ok)"}},
+ {t:"A crash before the offset is committed",b:"The consumer crashes after that commit, but before line 9 tells Kafka it has read offset 42. Line 10: on restart Kafka sends offset 42 again, the same e-81. Deploys, rebalances and timeouts all cause this.",w:"This is normal, not rare: deploys, rebalances and timeouts all cause it.",vis:["g-r1","g-r2","g-crash"],txt:{"con-st":"restarting","sub-txt":"paid until: December","k-txt":"offset 41: resend 42"},fill:{"bx-sub":"var(--ok)"}},
+ {t:"Second delivery: the id is already there",b:"e-81 arrives again. Line 4 finds the id already there, so line 5 skips the work. Line 9 commits the offset. The plan stays at December.",w:"The plan stays at December. The check and the effect use one table and one transaction, so there is no gap between them.",vis:["g-r1","g-r2","g-ev","g-skip"],txt:{"ev-txt":"event id e-81, 2nd time","con-st":"duplicate: skipped","sub-txt":"paid until: December","r2-txt":"e-81 (already here)","k-txt":"offset 42 committed"},fill:{"bx-r2":"var(--wait)","bx-sub":"var(--ok)"}},
+ {t:"Better still: make the effect idempotent itself",b:"Better still, line 11 reshapes the effect. Add one month is not idempotent. Line 12, mark the month paid by top-up e-81, is: doing it twice leaves the same state.",w:"Prefer set over add, upsert over insert, keyed by a business id. Keep the processed table for effects you cannot reshape.",vis:["g-r1","g-r2","g-nat"],txt:{"con-st":"set, not add","sub-txt":"paid until: December"}},
+ {t:"The failure that matters: no de-duplication",b:"Line 13 has no processed_events table. e-81 arrives twice and the plan is extended twice, to January. The customer paid 20 USD once and got two months. Nothing crashed and no alert fired.",w:"The customer paid 20 USD once and got two months. Nothing crashed and no alert fired. Money bugs from duplicates are silent. Fix: a unique event id stored in the same transaction as the effect.",vis:["g-ev","g-apply","g-bar"],txt:{"ev-txt":"event id e-81, 2nd time","proc-lbl":"no processed_events table","con-st":"applied again","sub-txt":"paid until: January","sub-st":"20 USD paid, 2 months given"},fill:{"bx-sub":"var(--fail)","bx-con":"var(--fail)"}}
+];
+let i=0,timer=null,gen=0;
+const $=id=>document.getElementById(id);
+const base={};
+function set(id,kind,v){const e=$(id),k=id+"|"+kind;if(!(k in base))base[k]=kind==="t"?e.textContent:e.getAttribute(kind);
+  if(kind==="t")e.textContent=v;else if(v===null)e.removeAttribute(kind);else e.setAttribute(kind,v);}
+function render(){
+  const s=steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps.length}`;
+  for(const k in base){const [id,kind]=k.split("|");set(id,kind,base[k]);}
+  for(const [id,v] of Object.entries(s.txt||{}))set(id,"t",v);
+  for(const [id,v] of Object.entries(s.fill||{}))set(id,"fill",v);
+  for(const [id,v] of Object.entries(s.stroke||{}))set(id,"stroke",v);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("#scene .msg").forEach(e=>e.classList.remove("on"));
+  const g=++gen;
+  s.vis.forEach((id,k)=>{const show=()=>{if(g===gen)$(id).classList.add("on")};reduce?show():setTimeout(show,120*k+30)});
+  $("prev").disabled=i===0;$("next").disabled=i===steps.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps.length-1)return stop();go(i+1)},2600)};
+go(0);
+</script>
+<script id="code-panel">
+const CODE={"main": {"pc": ["event carries a unique id from birth       # e-81", "processed_events: unique key on the id", "handle(event):                             # one transaction", "  if id already in processed_events:", "    skip, acknowledge                       # second delivery", "  insert id", "  extend the plan by one month              # add: not idempotent", "  commit                                    # id and effect together", "kafka.commitOffset(42)                     # after the transaction", "# a crash before line 9: Kafka resends offset 42", "handleSet(event):                          # better: set, not add", "  mark the month paid by e-81", "# failure: no processed table: e-81 twice adds two months"], "real": ["var months = []string{\"November\", \"December\", \"January\"}", "", "// Plan is the subscription: an index into months, plus the months already paid.", "type Plan struct {", "\tUntil     int", "\tPaidBy    map[string]bool // the set form: month paid by this top-up", "\tProcessed map[string]bool // processed_events, with a unique key on the id", "}", "", "// Handle inserts the id and applies the effect in one transaction.", "func Handle(p *Plan, id string) string {", "\tif p.Processed[id] { // the insert hits the unique key", "\t\treturn \"duplicate: skipped\"", "\t}", "\tp.Processed[id] = true", "\tp.Until++ // add one month", "\treturn \"applied\"", "}", "", "// HandleNoDedup is the failure: every delivery adds a month.", "func HandleNoDedup(p *Plan, id string) string {", "\tp.Until++", "\treturn \"applied again\"", "}", "", "// HandleSet makes the effect idempotent itself: set, not add.", "func HandleSet(p *Plan, id string) {", "\tif !p.PaidBy[id] {", "\t\tp.PaidBy[id] = true", "\t\tp.Until = len(p.PaidBy)", "\t}", "}", "", "// Kafka resends from the last committed offset.", "type Kafka struct{ Committed int }", "", "func (k *Kafka) Commit(offset int) { k.Committed = offset }"], "map": {"1": [1], "2": [7], "3": [11], "4": [12], "5": [13], "6": [15], "7": [16], "8": [17], "9": [37], "10": [34], "11": [27], "12": [28, 29], "13": [21, 23]}, "label": "Go"}};
+const PCS={"main": [[1, 2], [3, 4, 6, 7, 8], [9, 10], [3, 4, 5, 9], [11, 12], [13]]};
+let view="pc";
+function codeMode(){return (typeof mode!=="undefined"&&CODE[mode])?mode:Object.keys(CODE)[0];}
+function escC(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function drawCode(){
+  const m=codeMode(),c=CODE[m],step=(PCS[m]||[])[i]||[];
+  const real=view==="real"&&c.real;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(step);
+  if(real){hl=new Set();step.forEach(n=>(c.map[n]||[]).forEach(x=>hl.add(x)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("realtab").disabled=!c.real;
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=escC(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`;}).join("");
+}
+const renderNoCode=render;
+render=function(){renderNoCode();drawCode();};
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode();});
+drawCode();
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

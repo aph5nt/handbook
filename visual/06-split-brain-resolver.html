@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split Brain Resolver</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Split brain resolver: which side lives</h1>
+  <p class="lede">A five-node IoT cluster splits in two. Each side sees the other as unreachable and cannot tell a dead node from a cut cable. Both sides run the same rule, without talking, and the losing side shuts itself down. Press <b>Next</b> for keep majority, then see how keep oldest and static quorum go wrong.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="maj">Keep majority</button>
+    <button role="tab" aria-selected="false" data-mode="old">Keep oldest, oldest cut off alone</button>
+    <button role="tab" aria-selected="false" data-mode="quo">Static quorum, cluster grew</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 300" aria-labelledby="stage-title">
+      <title id="stage-title">Five cluster nodes in a row, the network cut between them, the resolver rule, the stable timer and the outcome</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="c-rule" class="box" x="25" y="18" width="420" height="40" rx="20" fill="var(--coord)"/><text id="t-rule" x="235" y="43" fill="#fff" font-size="13">rule: keep majority</text>
+        <rect id="c-tm" class="box" x="465" y="18" width="420" height="40" rx="20" fill="var(--line)"/><text id="t-tm" x="675" y="43" fill="var(--fg)" font-size="13">network healthy</text>
+        <rect id="c-n1" class="box" x="25" y="90" width="150" height="80" rx="8" fill="var(--svc)"/><text id="t-n1" x="100" y="122" fill="#fff">node 1 (oldest)</text><text id="s-n1" x="100" y="148" fill="#fff" font-size="12">up, shards: 2</text>
+        <rect id="c-n2" class="box" x="200" y="90" width="150" height="80" rx="8" fill="var(--svc)"/><text id="t-n2" x="275" y="122" fill="#fff">node 2</text><text id="s-n2" x="275" y="148" fill="#fff" font-size="12">up, shards: 2</text>
+        <rect id="c-n3" class="box" x="375" y="90" width="150" height="80" rx="8" fill="var(--svc)"/><text id="t-n3" x="450" y="122" fill="#fff">node 3</text><text id="s-n3" x="450" y="148" fill="#fff" font-size="12">up, shards: 2</text>
+        <rect id="c-n4" class="box" x="560" y="90" width="150" height="80" rx="8" fill="var(--svc)"/><text id="t-n4" x="635" y="122" fill="#fff">node 4</text><text id="s-n4" x="635" y="148" fill="#fff" font-size="12">up, shards: 2</text>
+        <rect id="c-n5" class="box" x="735" y="90" width="150" height="80" rx="8" fill="var(--svc)"/><text id="t-n5" x="810" y="122" fill="#fff">node 5</text><text id="s-n5" x="810" y="148" fill="#fff" font-size="12">up, shards: 2</text>
+        <g id="g-cut" class="msg"><line x1="542" y1="78" x2="542" y2="190" stroke="var(--fail)" stroke-width="4" stroke-dasharray="8 6"/></g>
+        <g id="g-cut2" class="msg"><line x1="187" y1="78" x2="187" y2="190" stroke="var(--fail)" stroke-width="4" stroke-dasharray="8 6"/></g>
+        <text id="t-sa" x="260" y="205" fill="var(--muted)" font-size="13"></text><text id="t-sb" x="722" y="205" fill="var(--muted)" font-size="13"></text>
+        <rect id="c-out" class="box" x="25" y="235" width="860" height="44" rx="10" fill="var(--line)"/><text id="t-out" x="455" y="262" fill="var(--fg)" font-size="14">five nodes, ten shards, all reachable</text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code, the runnable Go program, and the C# shape where Akka.NET or Orleans matters. The full program replays this story: <code id="codepath"></code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="go" aria-pressed="false">Go</button>
+      <button data-v="cs" aria-pressed="false" id="cstab">C#</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--svc)">up and serving</span>
+    <span style="--c:var(--wait)">sees the other side as unreachable</span>
+    <span style="--c:var(--ok)">kept by the rule</span>
+    <span style="--c:var(--line)">downed itself</span>
+    <span style="--c:var(--fail)">wrong outcome</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a resolver</h2>
+      <p>Every production Akka or Akka.NET cluster with sharding or singletons. Akka's split brain resolver offers keep majority, keep oldest, static quorum, keep referee, down all and lease majority. On Kubernetes, lease majority holds its lock in the Kubernetes API.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Keep majority with an odd number of nodes is the default. Keep oldest suits a cluster singleton, always with down-if-alone. Static quorum only for a fixed cluster size, kept in step as it grows. Down all when being wrong costs more than being down.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Strategy</th><th>The side that lives</th><th>Watch out for</th></tr>
+      <tr><td>Keep majority</td><td>More than half the nodes</td><td>An even split. Use an odd node count</td></tr>
+      <tr><td>Keep oldest</td><td>The side with the oldest node</td><td>The oldest alone: use down-if-alone</td></tr>
+      <tr><td>Static quorum</td><td>Any side with at least N nodes</td><td>The cluster growing past twice N minus one</td></tr>
+      <tr><td>Keep referee</td><td>The side that reaches one named node</td><td>The referee itself is a single point of failure</td></tr>
+      <tr><td>Down all, lease majority</td><td>Nobody, or the side holding an outside lock</td><td>Full outage, or a dependency on the lock store</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Both sides run the same rule without talking, keep majority with an odd node count is my default, and the losing side downs itself so no entity runs twice."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const codePath="handbook/code/06-split-brain-resolver/main.go";
+const code={_:{pc:`
+every node runs the same rule on its own view     # no message crosses the cut
+wait until reachability has not changed for 20 s  # stable-after
+keep majority:
+  if 2 * side > all: keep
+  if 2 * side < all: down myself
+  if a tie: keep the side with the lowest address
+keep oldest:
+  oldest = the first member by age
+  if down-if-alone and I am the oldest and alone: down myself
+  if down-if-alone and the other side is the oldest alone: keep
+  else keep only the side that holds the oldest
+static quorum(size):
+  if side >= size: keep, else down myself        # a fixed number
+kept side: shards of the downed nodes restart here, recover from the journal
+rule: size must be more than half of the planned cluster
+cluster grows to 5 nodes, quorum size stays 2     # nobody changed it
+both sides keep: every moved entity runs twice   # two writers per journal`,go:`
+for _, side := range [][]int{a, b} { //@1
+	for _, n := range side {
+		mailbox := make(chan []int, 1)
+		mailbox <- side // the stable view, after stable-after = 20 s //@2
+		go func(n int) { out <- decision{n, rule(<-mailbox, all)} }(n) //@1
+	}
+}
+func keepMajority(side, all []int) bool { //@3
+	if 2*len(side) != len(all) {
+		return 2*len(side) > len(all) //@4,5
+	}
+	return has(side, lowest(all)) // an even split: the lowest address wins //@6
+}
+func keepOldest(downIfAlone bool) Rule { //@7
+	return func(side, all []int) bool {
+		oldest := all[0] //@8
+		if downIfAlone && len(side) == 1 && side[0] == oldest && len(all) > 2 { //@9
+			return false // down myself //@9
+		}
+		if downIfAlone && len(all)-len(side) == 1 && !has(side, oldest) { //@10
+			return true //@10
+		}
+		return has(side, oldest) //@11
+	}
+}
+func staticQuorum(size int) Rule { //@12
+	return func(side, all []int) bool { return len(side) >= size } //@13
+}
+fmt.Printf("  10 shards on %d node(s): %d per node at most\\n", survivors, (10+survivors-1)/survivors) //@14
+split("static quorum 2, three nodes", staticQuorum(2), []int{1, 2}, []int{3}) //@12
+split("static quorum 2, cluster grew to five", staticQuorum(2), []int{1, 2, 3}, []int{4, 5}) //@16
+fmt.Println("  both sides live: every moved entity runs twice, two writers per journal") //@17
+split("static quorum 3, five nodes", staticQuorum(3), []int{1, 2, 3}, []int{4, 5}) //@15`,cs:`
+// Akka.NET / Orleans shape, not compiled here
+# Akka.NET HOCON. Every node has the same block.
+akka.cluster.downing-provider-class = "Akka.Cluster.SBR.SplitBrainResolverProvider, Akka.Cluster" //@1
+akka.cluster.split-brain-resolver {
+  stable-after = 20s //@2
+  active-strategy = keep-majority # tab 2: keep-oldest, tab 3: static-quorum //@3,4,5,6,7,12
+  keep-oldest.down-if-alone = off # the failure tab //@8,11
+  keep-oldest.down-if-alone = on  # the fix //@9,10
+  static-quorum.quorum-size = 2   # set for 3 nodes //@12,16
+  static-quorum.quorum-size = 3   # the fix: more than half of 5 //@15
+}
+// C#: the shard region re-homes the downed nodes' shards on the survivors
+ClusterSharding.Get(system).Start("device", deviceProps, settings, extractor); //@14`}};
+const N=(ids,c,txt)=>{const f={},x={};ids.forEach(k=>{f["c-n"+k]=c;x["s-n"+k]=txt;});return {f,x};};
+const mg=(...a)=>a.reduce((o,b)=>({f:{...o.f,...(b.f||{})},x:{...o.x,...(b.x||{})},on:[...(o.on||[]),...(b.on||[])]}),{f:{},x:{},on:[]});
+const tabInit={old:{x:{"t-rule":"rule: keep oldest"}},quo:{x:{"t-rule":"rule: static quorum, size 2"}}};
+const steps={
+maj:[
+ {pc:[1],t:"Five nodes, one cluster",b:"Five nodes run the IoT cluster. Each hosts two shards of device actors. A split brain resolver runs on every node, with the rule keep majority.",w:"The rule must be the same on every node. Each side will apply it alone."},
+ {pc:[1],t:"The network splits",b:"A switch fails. Nodes 1, 2 and 3 can no longer reach nodes 4 and 5. Each side marks the other unreachable.",w:"Neither side knows whether the others died or the cable did. Both cases look the same.",...mg(mg(N([1,2,3],"wait","sees 4, 5 unreachable"),N([4,5],"wait","sees 1, 2, 3 unreachable"),{on:["g-cut"],x:{"t-sa":"side A: 3 of 5","t-sb":"side B: 2 of 5","t-out":"two sides, each thinks the other is gone"}}),{f:{"c-n1":"wait","c-n2":"wait","c-n3":"wait","c-n4":"wait","c-n5":"wait"}})},
+ {pc:[2],t:"Wait until it is stable",b:"The resolver checks: has anyone's reachability changed in the last 20 seconds? Each change restarts the wait. Only a quiet 20 s lets the rule run.",w:"A short network blip heals inside this window, and nobody is downed for it.",f:{"c-tm":"wait"},x:{"t-tm":"stable-after: waiting 20 s"}},
+ {pc:[3,4,5],t:"Each side applies the rule",b:"Each side checks: is 2 times my size more than 5? Side A: 2 times 3 is 6, so it keeps running. Side B: 2 times 2 is 4, so it downs itself. No message crosses the cut.",w:"Both sides compute the same answer from the same membership, so they agree without talking.",...mg(mg(N([1,2,3],"ok","kept, shards: 2"),N([4,5],"line","downed itself")),{x:{"t-tm":"stable: decision made","t-out":"side A keeps running, side B shuts down"}})},
+ {pc:[14],t:"The shards move",b:"The 4 shards from nodes 4 and 5 restart on nodes 1, 2 and 3. That makes 10 shards on 3 nodes, at most 4 per node. Their device actors recover from the journal.",w:"Exactly one copy of each device actor runs. The journal has one writer per entity.",...mg(N([1,2,3],"ok","kept, shards: 3 or 4"),{f:{"c-out":"ok","c-n1":"ok","c-n2":"ok","c-n3":"ok"},x:{"t-out":"10 shards on 3 nodes, one copy of each entity"}}),a:[[640,186,455,186,"shards move","undo"]]},
+ {pc:[6],t:"Why an odd number of nodes",b:"With four nodes a 2 and 2 split gives 2 times 2 equals 4: no majority. The tie-break keeps the side with the lowest address, nodes 1 and 2, which may be the weaker side.",w:"An odd node count makes a tie impossible.",band:[205,"even split: no majority, a tie-break decides"],x:{"t-sa":"","t-sb":""}}
+],
+old:[
+ {pc:[7,8],t:"Keep oldest",b:"Same cluster, rule keep oldest. Node 1 is the oldest member. A cluster singleton runs there.",w:"Keep oldest keeps the singleton where it is, which is why it suits singletons."},
+ {pc:[1,11],t:"The oldest node is cut off alone",b:"This time the cable to node 1 fails. Node 1 is on one side, alone. Nodes 2 to 5 are on the other.",w:"The rule cares about where the oldest node is, not how many nodes each side has.",...mg(N([1],"wait","sees 2 to 5 unreachable"),N([2,3,4,5],"wait","sees 1 unreachable"),{on:["g-cut2"],x:{"t-sa":"","t-sb":"","t-out":"one node on one side, four on the other"}})},
+ {pc:[2],t:"Wait until it is stable",b:"Both sides wait until reachability has not changed for 20 seconds.",w:"The split holds. A decision will be made.",f:{"c-tm":"wait"},x:{"t-tm":"stable-after: waiting 20 s"}},
+ {pc:[11],t:"The failure that matters: one node wins",b:"Each side checks: do I hold the oldest member, node 1? Node 1 does, so it keeps running, alone. Nodes 2 to 5 do not, so all four down themselves.",w:"Four healthy nodes shut down to save one that may be the broken one.",...mg(mg(N([1],"ok","kept, alone"),N([2,3,4,5],"line","downed itself")),{f:{"c-out":"fail"},x:{"t-tm":"stable: decision made","t-out":"four healthy nodes down, one node left"}})},
+ {pc:[14],t:"All the load on one node",b:"Every shard restarts on node 1. Ten shards of device actors now share one machine.",w:"The cluster survived as one overloaded node.",...N([1],"fail","shards: 10, overloaded"),a:[[460,130,180,130,"all shards to node 1","fail"]]},
+ {pc:[9,10],t:"The fix: down-if-alone",b:"With down-if-alone on, node 1 checks one more thing: am I the oldest and alone? Yes, so it downs itself. Nodes 2 to 5 see the oldest alone on the other side, so they keep running. Node 2 becomes the oldest.",w:"Keep oldest needs down-if-alone, or one cut cable can shut down the healthy majority.",...mg(mg(N([1],"line","downed: alone"),N([2,3,4,5],"ok","kept")),{f:{"c-out":"ok","c-rule":"coord"},x:{"t-rule":"rule: keep oldest, down-if-alone","t-n2":"node 2, oldest","t-out":"four nodes keep running, the singleton moves to node 2"}})}
+],
+quo:[
+ {pc:[12,13],t:"A quorum set for a small cluster",b:"When the cluster had three nodes, someone set static quorum to 2: a side lives if it has at least 2 nodes. For three nodes that is a majority.",w:"Static quorum is simple: a fixed number, no counting of the whole cluster.",...mg(mg(N([4,5],"line","not yet added")),{x:{"t-out":"three nodes, quorum 2"}})},
+ {pc:[16],t:"The cluster grows to five",b:"Traffic grows and two nodes are added. The quorum setting stays at 2.",w:"Five nodes need a quorum of 3 to be a majority. Nobody changed it.",...mg(N([4,5],"svc","up, shards: 2"),{x:{"t-out":"five nodes, quorum still 2"}})},
+ {pc:[1,2],t:"The network splits",b:"Nodes 1, 2 and 3 lose nodes 4 and 5, as in the first tab.",w:"Side A has 3 nodes. Side B has 2.",...mg(N([1,2,3],"wait","sees 4, 5 unreachable"),N([4,5],"wait","sees 1, 2, 3 unreachable"),{on:["g-cut"],x:{"t-sa":"side A: 3 nodes","t-sb":"side B: 2 nodes"}})},
+ {pc:[13,16,17],t:"The failure that matters: both sides live",b:"Each side checks: am I at least 2? Side A has 3, so yes, it lives. Side B has 2, so yes, it lives too. Both sides run device 42 and both write its journal.",w:"The cluster grew past twice the quorum minus one, so both sides reached the quorum.",...mg(mg(N([1,2,3],"fail","running device 42"),N([4,5],"fail","running device 42 too")),{f:{"c-out":"fail","c-tm":"wait"},x:{"t-out":"split brain: two copies of every moved entity","t-sa":"","t-sb":"","t-tm":"stable: decision made"}}),band:[205,"both sides reached quorum 2: entities run twice"]},
+ {pc:[15,13],t:"The fix: keep the quorum a majority",b:"Set the quorum to more than half the planned size: 3 for five nodes. Now side B checks: is 2 at least 3? No, so it downs itself. Change the number with every resize. Or use keep majority, which follows the size for you.",w:"A fixed number is only safe while the cluster size is fixed.",...mg(mg(N([1,2,3],"ok","kept"),N([4,5],"line","downed: below 3")),{f:{"c-out":"ok"},x:{"t-rule":"rule: static quorum, size 3","t-out":"side A keeps running, side B shuts down"}})}
+]};
+/* Engine: each step adds fills (f), texts (x), shown (on) and hidden (off) parts to the tab's start state.
+   Arrows (a) and a dashed band (band) belong to the current step only. */
+const COL={ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",undo:"var(--undo)",svc:"var(--svc)",coord:"var(--coord)",line:"var(--line)",fg:"var(--fg)",muted:"var(--muted)",none:"none"};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SVG=document.querySelector(".stage svg");const W=+SVG.getAttribute("viewBox").split(" ")[2];
+const base={f:{},x:{},on:{}};
+SVG.querySelectorAll("[id]").forEach(el=>{
+  if(el.hasAttribute("fill"))base.f[el.id]=el.getAttribute("fill");
+  if(el.tagName==="text")base.x[el.id]=el.textContent;
+  if(el.classList.contains("msg"))base.on[el.id]=el.classList.contains("on");
+});
+let mode=document.querySelector("[role=tab]").dataset.mode,i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+/* Code panel: code[mode] (or code._ for all tabs) = {pc:[...], go:[...], map:{pc line:[go lines]}, cs:[...], csmap:{...}}.
+   A step's pc:[n] lights pseudo lines n, and through the maps the matching Go and C# lines. */
+/* Lines may be given as one text block. A real-code line ending in //@3,4 implements pseudo lines 3 and 4: the tag builds the map and is not shown. */
+function prep(c){if(c._ready)return c;
+  const split=t=>typeof t==="string"?t.replace(/^\n/,"").replace(/\n\s*$/,"").split("\n"):t;
+  c.pc=split(c.pc);
+  for(const [k,mk] of [["go","map"],["cs","csmap"]]){if(!c[k])continue;c[k]=split(c[k]);if(c[mk])continue;const m={};
+    c[k]=c[k].map((l,j)=>{const t=l.match(/\s*\/\/@([\d,]+)\s*$/);if(!t)return l;t[1].split(",").forEach(n=>{(m[n]=m[n]||[]).push(j+1)});return l.slice(0,t.index);});c[mk]=m;}
+  c._ready=true;return c;}
+function drawCode(){
+  const card=$("codecard");if(typeof code==="undefined"){card.style.display="none";return;}
+  const c=prep(code[mode]||code._),s=steps[mode][i];
+  $("cstab").style.display=c.cs?"":"none";
+  if(view==="cs"&&!c.cs){view="go";document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v==="go"));}
+  $("codepath").textContent=typeof codePath==="undefined"?"":codePath;
+  const lines=c[view];let hl=new Set(s.pc||[]);
+  if(view!=="pc"){const m=view==="go"?c.map:c.csmap;hl=new Set();(s.pc||[]).forEach(n=>((m||{})[n]||[]).forEach(x=>hl.add(x)));}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  const f={...base.f},x={...base.x},on={...base.on},touched=new Set();
+  const apply=d=>{if(!d)return;
+    for(const k in d.f||{}){f[k]=COL[d.f[k]]||d.f[k];touched.add(k);}
+    Object.assign(x,d.x||{});(d.on||[]).forEach(k=>on[k]=true);(d.off||[]).forEach(k=>on[k]=false);};
+  apply((typeof tabInit!=="undefined")&&tabInit[mode]);for(let k=0;k<=i;k++)apply(list[k]);
+  for(const k in f)if($(k))$(k).setAttribute("fill",f[k]);
+  touched.forEach(k=>{if(k.startsWith("c-"))["t-","s-"].forEach(p=>{const t=$(p+k.slice(2));if(t){const v=f[k];
+    t.setAttribute("fill",v===COL.line||v==="none"?"var(--fg)":v===COL.wait?"#1f2320":"#fff");}});});
+  for(const k in x)if($(k))$(k).textContent=x[k];
+  for(const k in on)if($(k)){$(k).classList.toggle("on",on[k]);if(reduce)$(k).style.transition="none";}
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  const g=$("msgs");g.innerHTML="";
+  const parts=(s.a||[]).map(m=>{const [x1,y1,x2,y2,txt,c,dash,lp]=m;const col=COL[c]||"var(--fg)";
+    let lx=(x1+x2)/2,ly=(y1+y2)/2-7,an="middle";if(Math.abs(x2-x1)<40){lx+=8;ly+=7;an="start";}
+    if(lp){[lx,ly,an]=lp;}
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" ${dash?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/><text x="${lx}" y="${ly}" text-anchor="${an}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke" font-weight="700">${txt}</text>`;});
+  if(s.band)parts.push(`<rect x="12" y="${s.band[0]-17}" width="${W-24}" height="28" rx="4" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${W/2}" y="${s.band[0]+2}" text-anchor="middle" fill="var(--fail)" font-weight="700">${s.band[1]}</text>`);
+  parts.forEach((p,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=p;g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll("[role=tab]").forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll("[role=tab]").forEach(t=>t.setAttribute("aria-selected",t===b));go(0)});
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

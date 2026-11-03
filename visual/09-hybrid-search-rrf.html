@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hybrid search</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Hybrid search and reciprocal rank fusion</h1>
+  <p class="lede">An engineer asks: "How do I reset core_dex_swaps on lane B?" A keyword search (BM25) and a vector search each return a ranked list. Their scores are on different scales. Reciprocal rank fusion (RRF) merges the lists by rank position instead. Watch the fused list form. Then switch tabs to see a merge by raw score bury a good hit.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Merge by rank (RRF)</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Merge by raw score</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A keyword list, a vector list, and the fused list, with the fusion arithmetic below</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text x="145" y="36" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">BM25 (keywords)</text>
+      <text x="445" y="36" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Vector (meaning)</text>
+      <text x="755" y="36" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Fused list</text>
+      <g><rect id="b1" class="box" x="10" y="50" width="270" height="36" rx="6" fill="var(--line)"/><text id="b1-l" x="145.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="b2" class="box" x="10" y="94" width="270" height="36" rx="6" fill="var(--line)"/><text id="b2-l" x="145.0" y="116.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="b3" class="box" x="10" y="138" width="270" height="36" rx="6" fill="var(--line)"/><text id="b3-l" x="145.0" y="160.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="b4" class="box" x="10" y="182" width="270" height="36" rx="6" fill="var(--line)"/><text id="b4-l" x="145.0" y="204.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="v1" class="box" x="310" y="50" width="270" height="36" rx="6" fill="var(--line)"/><text id="v1-l" x="445.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="v2" class="box" x="310" y="94" width="270" height="36" rx="6" fill="var(--line)"/><text id="v2-l" x="445.0" y="116.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="v3" class="box" x="310" y="138" width="270" height="36" rx="6" fill="var(--line)"/><text id="v3-l" x="445.0" y="160.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="v4" class="box" x="310" y="182" width="270" height="36" rx="6" fill="var(--line)"/><text id="v4-l" x="445.0" y="204.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="f1" class="box" x="620" y="50" width="270" height="36" rx="6" fill="var(--line)"/><text id="f1-l" x="755.0" y="72.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="f2" class="box" x="620" y="94" width="270" height="36" rx="6" fill="var(--line)"/><text id="f2-l" x="755.0" y="116.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="f3" class="box" x="620" y="138" width="270" height="36" rx="6" fill="var(--line)"/><text id="f3-l" x="755.0" y="160.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <g><rect id="f4" class="box" x="620" y="182" width="270" height="36" rx="6" fill="var(--line)"/><text id="f4-l" x="755.0" y="204.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)"></text></g>
+      <text x="10" y="240" font-size="14" font-weight="700" fill="var(--fg)">Working</text>
+      <rect x="10" y="250" width="880" height="160" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-hybrid-search-rrf/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">keyword hit</span>
+    <span style="--c:var(--coord)">vector hit</span>
+    <span style="--c:var(--ok)">fused, kept</span>
+    <span style="--c:var(--wait)">scales that do not compare</span>
+    <span style="--c:var(--fail)">buried or wrongly kept</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>QMD over a harness knowledge base: BM25 finds core_dex_swaps exactly, vectors find 'where do swaps live'. Elasticsearch and OpenSearch hybrid queries. Postgres with a full-text index next to pgvector.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Run both searches, take the top 50 of each, and fuse with RRF using k = 60. RRF needs no tuning and ignores score scales. Send the fused top candidates to a re-ranker. Weight one side only if an eval shows it helps.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Reciprocal rank fusion</th><th>Merge by raw score</th></tr>
+      <tr><td>Uses</td><td>Rank positions only</td><td>Raw scores from each search</td></tr>
+      <tr><td>Scales</td><td>Do not matter</td><td>BM25 scores in the tens drown cosine scores below 1</td></tr>
+      <tr><td>Tuning</td><td>One constant, k = 60, rarely changed</td><td>Normalisation that breaks on outliers</td></tr>
+      <tr><td>Rewards</td><td>Items both searches rank high</td><td>Whatever the bigger scale says</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Hybrid search runs keywords and vectors side by side and fuses them by rank, because their raw scores are not comparable."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"pc": [1, 2], "t": "Two searches, one question", "b": "The question goes to a BM25 keyword index and to a vector index at the same time.", "w": "Keywords catch exact names. Vectors catch meaning. Each misses what the other finds.", "rows": [["question: how do I reset core_dex_swaps on lane B?", "muted"]]},
+{"pc": [1], "t": "The keyword list", "b": "BM25 ranks the core_dex_swaps table doc first: it contains the exact rare word core_dex_swaps. Its score is 12.4, the runbook 9.1. BM25 scores have no fixed top.", "w": "BM25 scores grow with how often rare words match. They have no fixed top.", "box": {"b1": "svc", "b2": "svc", "b3": "svc", "b4": "svc"}, "txt": {"b1-l": "1. core_dex_swaps doc (12.4)", "b2-l": "2. lane reset runbook (9.1)", "b3-l": "3. swap sync note (4.0)", "b4-l": "4. price oracle doc (1.2)"}},
+{"pc": [2], "t": "The vector list", "b": "The vector search ranks the lane reset runbook first, and an incident note about a lane B stall second. Scores are cosine values below 1.", "w": "The incident note never says core_dex_swaps. Only meaning found it.", "box": {"v1": "coord", "v2": "coord", "v3": "coord", "v4": "coord"}, "txt": {"v1-l": "1. lane reset runbook (0.83)", "v2-l": "2. incident: lane B stall (0.80)", "v3-l": "3. swap sync note (0.71)", "v4-l": "4. core_dex_swaps doc (0.62)"}},
+{"pc": [1, 2], "t": "The scores do not compare", "b": "The runbook has 9.1 from BM25 and 0.83 from vectors. Adding them gives 9.93, and the 0.83 hardly counts. Sorting all hits together puts every BM25 hit above every vector hit.", "w": "Merging two lists is the real problem of hybrid search.", "box": {"b1": "wait", "v1": "wait"}, "rows": [["BM25 12.4 and cosine 0.83: different scales", "wait"]]},
+{"pc": [3, 4, 5, 6], "t": "Fuse by rank", "b": "For each list, the rank r gives 1 / (60 + r). The runbook is rank 2 in BM25 and rank 1 in vectors: 1/62 + 1/61 = 0.0325. The doc: 1/61 + 1/64 = 0.0320. The sync note: 1/63 + 1/63 = 0.0317. The incident note is only in the vector list, at rank 2: 1/62 = 0.0161. The price doc only in BM25, at rank 4: 1/64 = 0.0156.", "w": "Only positions count. An item ranked high in both lists wins.", "rows": ["clear", ["RRF score = sum of 1 / (60 + rank)", "coord"], ["runbook: 1/62 + 1/61 = 0.0325", "ok"], ["core_dex_swaps doc: 1/61 + 1/64 = 0.0320", "ok"], ["swap sync note: 1/63 + 1/63 = 0.0317", "ok"]]},
+{"pc": [7], "t": "The fused list", "b": "Sort by the RRF score: 0.0325, 0.0320, 0.0317, 0.0161. The incident note (0.0161) beats the price doc (0.0156) for fourth place.", "w": "The incident note came from the vector side alone and still made the list.", "box": {"f1": "ok", "f2": "ok", "f3": "ok", "f4": "ok"}, "txt": {"f1-l": "1. lane reset runbook", "f2-l": "2. core_dex_swaps doc", "f3-l": "3. swap sync note", "f4-l": "4. incident: lane B stall"}},
+{"pc": [8], "t": "Ready for the re-ranker", "b": "Line 8 cuts the fused list at top=50. Here that keeps all 5 documents, and they go to a re-ranker, which keeps the best few for the prompt.", "w": "Fusion favours recall: get the right chunk into the candidates. The re-ranker sorts them.", "box": {"f1": "ok", "f2": "ok", "f3": "ok", "f4": "ok"}, "rows": [["fused top 50 goes to the re-ranker", "coord"]]}],
+"bad":[
+{"pc": [1, 2], "t": "The same two lists", "b": "The same question returns the same keyword list and vector list.", "w": "Both lists are good. The merge decides what survives.", "box": {"b1": "svc", "b2": "svc", "b3": "svc", "b4": "svc", "v1": "coord", "v2": "coord", "v3": "coord", "v4": "coord"}, "txt": {"b1-l": "1. core_dex_swaps doc (12.4)", "b2-l": "2. lane reset runbook (9.1)", "b3-l": "3. swap sync note (4.0)", "b4-l": "4. price oracle doc (1.2)", "v1-l": "1. lane reset runbook (0.83)", "v2-l": "2. incident: lane B stall (0.80)", "v3-l": "3. swap sync note (0.71)", "v4-l": "4. core_dex_swaps doc (0.62)"}},
+{"pc": [9], "t": "Merge by raw score", "b": "Someone keeps each document's best raw score and sorts: 12.4, 9.1, 4.0, 1.2, then the cosine values 0.83, 0.80. Every BM25 score is bigger than every cosine score.", "w": "The bigger scale wins every comparison.", "box": {"f1": "svc", "f2": "svc", "f3": "svc", "f4": "fail"}, "txt": {"f1-l": "1. core_dex_swaps doc (12.4)", "f2-l": "2. lane reset runbook (9.1)", "f3-l": "3. swap sync note (4.0)", "f4-l": "4. price oracle doc (1.2)"}, "rows": [["sorted by raw score: keyword hits fill the top", "fail"]]},
+{"pc": [9], "t": "A good hit is buried", "b": "The incident note's 0.80 sorts below the price oracle doc's 1.2. It lands at rank 5, outside the top 4, though the vector search ranked it second.", "w": "The vector search might as well not have run.", "box": {"v2": "fail", "f4": "fail"}, "rows": [["incident note: ranked below every keyword hit", "fail"]]},
+{"pc": [9], "t": "Normalising is fragile", "b": "Scaling each list to 0 to 1 is (score - min) / (max - min). If one doc had scored 40.0, the runbook would get (9.1 - 1.2) / (40.0 - 1.2) = 0.20 and sink.", "w": "Score arithmetic needs tuning per query type. Ranks need none.", "box": {"b1": "wait"}, "rows": [["min-max scaling: one outlier squashes the list", "wait"]]},
+{"pc": [3, 4, 5, 6, 7], "t": "The fix: RRF", "b": "Switch line 9 off and use lines 3 to 7 again: 1 / (60 + rank). The incident note gets 0.0161, beats the price doc's 0.0156, and returns to the top 4.", "w": "Rank fusion is the default for a reason: no scales, no tuning.", "box": {"f1": "ok", "f2": "ok", "f3": "ok", "f4": "ok", "v2": "coord"}, "txt": {"f1-l": "1. lane reset runbook", "f2-l": "2. core_dex_swaps doc", "f3-l": "3. swap sync note", "f4-l": "4. incident: lane B stall"}, "rows": ["clear", ["fused by rank: both kinds of hit survive", "ok"]]}]},
+"T0":{"b1-l": "", "b2-l": "", "b3-l": "", "b4-l": "", "v1-l": "", "v2-l": "", "v3-l": "", "v4-l": "", "f1-l": "", "f2-l": "", "f3-l": "", "f4-l": ""},"panel":{"x": 10, "y": 250, "w": 880, "h": 160, "title": "Working", "rh": 30, "fs": 13},"code":{"_": {"label": "Python", "pc": ["keyword = bm25.search(question, top=50)        # scores in the tens", "vector = vectors.search(embed(question), top=50)  # cosine, below 1", "score = {}                                      # one total per document", "for each list in [keyword, vector]:", "  for rank, doc in list, starting at rank 1:", "    score[doc] += 1 / (60 + rank)              # only the position counts", "fused = documents sorted by score, highest first", "return fused[:50]                              # to the re-ranker", "# wrong: sort every hit by its raw score       # 12.4 beats 0.83 every time"], "real": ["K = 60  # the RRF constant", "", "", "def rrf(*lists):", "    score = {}", "    for hits in lists:", "        for rank, (doc, _raw) in enumerate(hits, start=1):  # raw score ignored", "            score[doc] = score.get(doc, 0) + 1 / (K + rank)  # only the position counts", "    return sorted(score.items(), key=lambda kv: -kv[1])", "", "", "def raw_merge(*lists):  # the wrong merge", "    best = {}", "    for hits in lists:", "        for doc, raw in hits:", "            best[doc] = max(best.get(doc, 0), raw)  # 12.4 beats 0.83 every time", "    return sorted(best.items(), key=lambda kv: -kv[1])", "", "", "def hybrid_search(question, top=50):", "    keyword = bm25_search(question)[:top]", "    vector = vector_search(question)[:top]", "    return rrf(keyword, vector)[:top]  # fused list to the re-ranker"], "map": {"6": [1, 8], "3": [4, 5], "4": [6], "5": [7], "7": [9], "9": [12, 13, 14, 15, 16, 17], "1": [21], "2": [22], "8": [23]}, "path": "handbook/code/09-hybrid-search-rrf/main.py", "cmd": "python3 main.py", "note": ""}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

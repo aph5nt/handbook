@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2PC versus Saga</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Two-phase commit versus saga</h1>
+  <p class="lede">One order touches three services: payment, stock, shipping. Either all three change, or none. Two ways to get there. Press <b>Next</b> and watch what happens when one of them fails.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="2pc" id="tab-2pc">Two-phase commit (2PC)</button>
+    <button role="tab" aria-selected="false" data-mode="saga" id="tab-saga">Saga with compensation</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of the chosen protocol</title>
+      <!-- actors -->
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-c" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--coord)"/>
+        <text x="110" y="52" text-anchor="middle" fill="#fff" id="lbl-c">Coordinator</text>
+        <rect id="bx-p" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="340" y="52" text-anchor="middle" fill="#fff">Payment</text>
+        <rect id="bx-s" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="570" y="52" text-anchor="middle" fill="#fff">Stock</text>
+        <rect id="bx-h" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text x="800" y="52" text-anchor="middle" fill="#fff">Shipping</text>
+      </g>
+      <!-- lifelines -->
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="340"/><line x1="340" y1="72" x2="340" y2="340"/>
+        <line x1="570" y1="72" x2="570" y2="340"/><line x1="800" y1="72" x2="800" y2="340"/>
+      </g>
+      <!-- state chips under each service -->
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-p" class="box" x="285" y="300" width="110" height="28" rx="14" fill="var(--line)"/><text id="tx-p" x="340" y="319" fill="var(--fg)">idle</text>
+        <rect id="st-s" class="box" x="515" y="300" width="110" height="28" rx="14" fill="var(--line)"/><text id="tx-s" x="570" y="319" fill="var(--fg)">idle</text>
+        <rect id="st-h" class="box" x="745" y="300" width="110" height="28" rx="14" fill="var(--line)"/><text id="tx-h" x="800" y="319" fill="var(--fg)">idle</text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-2pc-vs-saga/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">waiting, holding a lock</span>
+    <span style="--c:var(--ok)">done</span>
+    <span style="--c:var(--fail)">failed</span>
+    <span style="--c:var(--undo)">undone by compensation</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet 2PC</h2>
+      <p>Inside one database cluster, or between a message broker and a database that both speak XA. The coordinator is usually hidden in the driver. You pay with locks held across the network, and a coordinator crash leaves every participant stuck.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet a saga</h2>
+      <p>Between independent services that own their own data: order, payment, stock, shipping. Each step commits locally at once. A failure later runs the undo steps backwards: refund, release stock. The system is briefly inconsistent and that is accepted.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>2PC</th><th>Saga</th></tr>
+      <tr><td>Consistency</td><td>Atomic. All or nothing at one instant</td><td>Eventual. Correct after compensation finishes</td></tr>
+      <tr><td>Locks</td><td>Held from prepare to commit, across the network</td><td>None across services. Each step commits alone</td></tr>
+      <tr><td>Coordinator dies</td><td>Participants block, holding locks</td><td>Orchestrator restarts and resumes from its log</td></tr>
+      <tr><td>Undo</td><td>Rollback by the database</td><td>You write a compensating action per step</td></tr>
+      <tr><td>Fits</td><td>One trust domain, short transactions</td><td>Microservices, long-running business flows</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"2PC buys atomicity with blocking. A saga buys availability with compensations. Across service boundaries I choose the saga and design the undo steps first."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const X={c:110,p:340,s:570,h:800};
+const steps={
+"2pc":[
+ {t:"Start",b:"A customer places an order. The coordinator must make payment, stock and shipping all change, or none of them. It holds one decision and starts with no votes.",w:"2PC is a vote. Phase one asks everyone if they can. Phase two tells everyone the result.",m:[],st:{p:"idle",s:"idle",h:"idle"},pc:[1]},
+ {t:"Phase 1: prepare",b:"Line 2 sends PREPARE to all three. Payment and stock pass line 8, so line 9 writes the change to their logs and locks the rows. Neither commits yet.",w:"From now on every service holds locks. Other requests for those rows wait.",m:[["c","p",100,"prepare"],["c","s",120,"prepare"],["c","h",140,"prepare"]],st:{p:"locked",s:"locked",h:"locked"},pc:[2, 7, 9]},
+ {t:"Phase 1: votes",b:"Payment and stock reach line 10 and answer yes. Shipping fails the check on line 8, because the address is outside the delivery area, and answers no. Line 3 asks: is every vote yes? Two yes and one no, so no.",w:"One NO is enough. The whole order is now going to roll back.",m:[["p","c",180,"yes"],["s","c",200,"yes"],["h","c",220,"NO",true]],st:{p:"locked",s:"locked",h:"refused"},pc:[8, 10, 3, 4]},
+ {t:"Phase 2: abort",b:"Line 4 sets the decision to abort. Line 5 writes it to the coordinator's durable log, and line 6 sends it to everyone. Line 12 rolls back the prepared changes on payment and stock and frees their locks.",w:"Nothing was ever visible to anyone else. That is the strength of 2PC: no half-state leaks out.",m:[["c","p",260,"abort"],["c","s",280,"abort"],["c","h",300,"abort"]],st:{p:"rolled back",s:"rolled back",h:"refused"},pc:[4, 5, 6, 11, 12]},
+ {t:"The failure that matters",b:"Replay it. Payment and stock vote yes, and the coordinator crashes in line 2, before it asks shipping. Line 5 never ran, so no decision exists. Lines 13 and 14 hold payment and stock: they voted yes, so they may not abort alone, and they cannot commit without shipping's vote.",w:"This is the blocking problem. Rows stay locked until the coordinator comes back. Across the internet, between teams, that is unacceptable, so services use sagas instead.",m:[["c","p",100,"prepare"],["c","s",135,"prepare"],["p","c",170,"yes"],["s","c",205,"yes"],["crash",0,250,"coordinator crashed"]],st:{p:"stuck locked",s:"stuck locked",h:"idle"},crash:true,pc:[2, 13, 14]},
+ {t:"The repair: restart and read the log",b:"The coordinator restarts and runs line 15. Its log holds no decision, because line 5 never ran. No decision means nothing was ever committed, so abort is safe. It sends abort, and payment and stock roll back and free their locks.",w:"The log makes the crash recoverable, but the locks stay held until the restart finishes. Real systems replicate the coordinator: Spanner runs each participant as a Paxos group.",m:[["c","p",120,"abort (log empty)"],["c","s",160,"abort (log empty)"]],st:{p:"rolled back",s:"rolled back",h:"idle"},pc:[5,15]}
+],
+"saga":[
+ {t:"Start",b:"Same order. Now line 2 walks a list of three steps. Each step is a normal local transaction in one service, committed at once. The orchestrator holds only its log.",w:"No step waits for another. No lock crosses a service boundary.",m:[],st:{p:"idle",s:"idle",h:"idle"},lbl:"Orchestrator",pc:[1, 2]},
+ {t:"Step 1: charge",b:"Line 3 logs charge as started. Line 4 calls Payment, which commits and answers yes. Line 5 sees no refusal, so line 6 logs charge as done. The money has really moved.",w:"This is visible to everyone right now. The customer sees the charge.",m:[["c","p",100,"charge"],["p","c",130,"done"]],st:{p:"charged",s:"idle",h:"idle"},lbl:"Orchestrator",pc:[3, 4, 6]},
+ {t:"Step 2: reserve stock",b:"The loop on line 2 moves on. Lines 3 and 4 run for reserve: Stock commits and answers yes. Line 6 logs reserve as done. The list of done steps is now charge and reserve.",w:"Two steps are committed. If anything fails now, both must be undone by hand-written steps.",m:[["c","s",170,"reserve"],["s","c",200,"done"]],st:{p:"charged",s:"reserved",h:"idle"},lbl:"Orchestrator",pc:[2, 3, 4, 6]},
+ {t:"Step 3: ship, and it fails",b:"Line 4 calls Shipping to book a courier. It answers no, because the address is outside the delivery area. Line 5 sees the no and jumps to compensate.",w:"The orchestrator writes the failure to its own log. Now it must walk the steps backwards.",m:[["c","h",240,"book"],["h","c",270,"NO",true]],st:{p:"charged",s:"reserved",h:"refused"},lbl:"Orchestrator",pc:[4, 5]},
+ {t:"Compensate backwards",b:"Line 9 walks the done list newest first: reserve, then charge. Line 10 sends RELEASE to Stock and REFUND to Payment, each its own committed transaction. Line 11 returns cancelled.",w:"A compensation is not a rollback. The charge and the refund both stay in history. For a few seconds the customer was charged for nothing. The business accepts that in exchange for no cross-service locks.",m:[["c","s",120,"release"],["s","c",145,"done"],["c","p",190,"refund"],["p","c",215,"done"]],st:{p:"refunded",s:"released",h:"refused"},lbl:"Orchestrator",undo:true,pc:[8, 9, 10, 11]},
+ {t:"The failure that matters",b:"The orchestrator crashes after book was started. On restart, line 13 reads the log: charge done, reserve done, book started. It skips the two done steps, and line 14 asks Shipping to book again. The order id is the key, so a repeat does no double work.",w:"The saga survives a crash because every step is already committed and the plan is written down. The price is the compensation you must design for every step before you ship.",m:[["c","s",100,"reserve"],["s","c",125,"done"],["crash",0,170,"orchestrator restarts, reads log"],["c","h",230,"book (retry)"],["h","c",260,"done"]],st:{p:"charged",s:"reserved",h:"booked"},lbl:"Orchestrator",ok:true,pc:[12, 13, 14]}
+]};
+const colorFor=(txt,undo,ok)=>{
+  if(/^(stuck|locked)/.test(txt))return"var(--wait)";
+  if(/refused|NO/.test(txt))return"var(--fail)";
+  if(/refunded|released/.test(txt))return"var(--undo)";
+  if(/rolled/.test(txt))return"var(--line)";
+  if(txt==="idle")return"var(--line)";
+  return"var(--ok)";
+};
+let mode="2pc",i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("lbl-c").textContent=s.lbl||"Coordinator";
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  for(const k of["p","s","h"]){const v=s.st[k];$("tx-"+k).textContent=v;$("st-"+k).setAttribute("fill",colorFor(v));
+    $("tx-"+k).setAttribute("fill",v==="idle"||/rolled/.test(v)?"var(--fg)":"#fff");}
+  $("bx-c").setAttribute("fill",s.crash?"var(--fail)":"var(--coord)");
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="crash"){
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="none" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fail)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,bad]=m;const x1=X[a],x2=X[b];const col=bad?"var(--fail)":(s.undo&&a==="c")?"var(--undo)":"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,120*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+const code={"2pc": {"label": "Go", "pc": ["coordinator, on an order:", "  for each participant p: vote[p] = p.prepare(order)", "  if every vote is yes: decision = commit", "  else: decision = abort                  # one no is enough", "  log.write(decision)                     # durable before anyone hears it", "  for each participant p: p.finish(decision)", "p.prepare(order):", "  if p cannot do it: return no", "  write the change to p's log; lock the rows", "  return yes", "p.finish(decision):", "  commit or roll back; release the locks", "p voted yes and heard no decision:", "  keep the locks; it may not decide alone  # the blocking problem", "coordinator restart: read log; no decision means abort; resend it"], "real": ["// Prepare writes the change to the service's log and locks the rows.", "func (p *Participant) Prepare() bool {", "\tif !p.canDo {", "\t\tp.state = \"refused\"", "\t\treturn false", "\t}", "\tp.state, p.locked = \"locked\", true // the rows wait for the decision", "\treturn true", "}", "", "// Finish applies the coordinator's decision and frees the locks.", "func (p *Participant) Finish(decision string) {", "\tif p.state == \"refused\" || p.state == \"idle\" {", "\t\treturn", "\t}", "\tp.locked = false", "\tif decision == \"commit\" {", "\t\tp.state = \"committed\"", "\t} else {", "\t\tp.state = \"rolled back\"", "\t}", "}", "", "// Run is 2PC. crashAfter > 0 stops the coordinator after that many votes.", "func (c *Coordinator) Run(crashAfter int) string {", "\tdecision := \"commit\"", "\tfor k, p := range c.parts {", "\t\tif crashAfter > 0 && k == crashAfter {", "\t\t\treturn \"crashed\" // no decision was written: everyone waits", "\t\t}", "\t\tif !p.Prepare() {", "\t\t\tdecision = \"abort\" // one no is enough", "\t\t}", "\t}", "\tc.log = decision // durable before anyone hears the result", "\tfor _, p := range c.parts {", "\t\tp.Finish(decision)", "\t}", "\treturn decision", "}", "", "// Recover runs when the coordinator restarts. No logged decision means abort.", "func (c *Coordinator) Recover() string {", "\tdecision := c.log", "\tif decision == \"\" {", "\t\tdecision = \"abort\"", "\t\tc.log = decision", "\t}", "\tfor _, p := range c.parts {", "\t\tp.Finish(decision)", "\t}", "\treturn decision", "}"], "map": {"1": [25], "2": [31], "3": [26], "4": [32], "5": [35], "6": [37], "7": [2], "8": [3], "9": [7], "10": [8], "11": [12], "12": [16], "13": [29], "14": [7], "15": [43, 44, 50]}}, "saga": {"label": "Go", "pc": ["orchestrator, on an order:", "  for each step s in charge, reserve, book:", "    log.write(s, started)", "    result = s.do(order)                  # commits at once, keyed by order id", "    if result is no: go to compensate", "    log.write(s, done)", "  return done", "compensate:", "  for each done step s, newest first:", "    s.undo(order)                         # a new committed transaction", "  return cancelled", "orchestrator restart:", "  read the log; skip every step marked done", "  s.do(order) for the rest                # safe: the key stops a second effect"], "real": ["// do runs one step. The service keys the work by order id, so a repeat is safe.", "func (s *Saga) do(st Step) bool {", "\ts.calls[st.name]++", "\tif st.ok {", "\t\tfmt.Printf(\"  %s commits at once\\n\", st.name)", "\t}", "\treturn st.ok", "}", "", "// Run walks the steps. On a refusal it compensates the done steps backwards.", "func (s *Saga) Run() string {", "\tvar done []Step", "\tfor _, st := range s.steps {", "\t\ts.log[st.name] = \"started\"", "\t\tif !s.do(st) {", "\t\t\tfmt.Printf(\"  %s refused\\n\", st.name)", "\t\t\tfor k := len(done) - 1; k >= 0; k-- {", "\t\t\t\tfmt.Printf(\"  compensate: %s\\n\", done[k].undo)", "\t\t\t}", "\t\t\treturn \"cancelled\"", "\t\t}", "\t\ts.log[st.name] = \"done\"", "\t\tdone = append(done, st)", "\t}", "\treturn \"done\"", "}", "", "// Resume runs after an orchestrator crash: it repeats what is not done.", "func (s *Saga) Resume() string {", "\tfor _, st := range s.steps {", "\t\tif s.log[st.name] == \"done\" {", "\t\t\tcontinue // already committed, never run twice", "\t\t}", "\t\ts.log[st.name] = \"started\"", "\t\ts.do(st)", "\t\ts.log[st.name] = \"done\"", "\t}", "\treturn \"done\"", "}"], "map": {"1": [11], "2": [13], "3": [14], "4": [15], "5": [16], "6": [22], "7": [25], "8": [15], "9": [17], "10": [18], "11": [20], "12": [29], "13": [31], "14": [35]}}};
+let view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aggregate design rules</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+/*code-panel*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{display:flex;gap:8px;flex-wrap:wrap}
+#codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+#codetabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*end-code-panel*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Aggregate design rules: small, by id, one per transaction</h1>
+  <p class="lede">A wallet touches a customer, a subscription and thousands of payments. Which of them belong inside the aggregate? Four rules shrink a giant first draft to the size the rule needs. Press <b>Next</b>.</p>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 395" aria-labelledby="stage-title" id="scene">
+      <title id="stage-title">Aggregate design rules</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+<g id="big" class="msg"><rect id="bx-big" class="box" x="260" y="30" width="380" height="300" rx="12" fill="none" stroke="var(--svc)" stroke-width="3" stroke-dasharray="10 6"/><text id="big-lbl" x="450" y="22" fill="var(--svc)">Wallet aggregate, first draft</text></g>
+        <g id="small" class="msg"><rect x="335" y="38" width="230" height="104" rx="12" fill="none" stroke="var(--svc)" stroke-width="3" stroke-dasharray="10 6"/><text x="450" y="22" fill="var(--svc)">Wallet aggregate: only what the rule needs</text></g>
+        <rect id="bx-root" class="box" x="350" y="50" width="200" height="80" rx="8" fill="var(--svc)"/>
+        <text x="450" y="76" fill="#fff" font-size="15">Wallet (root)</text>
+        <text id="root-txt" x="450" y="100" fill="#fff" font-weight="400">balance 20 USD, v7</text>
+        <text id="root-st" x="450" y="120" fill="#fff" font-size="13">rule: balance &gt;= 0</text>
+        <g id="in" class="msg">
+          <rect x="280" y="155" width="160" height="50" rx="6" fill="var(--line)"/><text x="360" y="185" fill="var(--fg)">Customer profile</text>
+          <rect x="460" y="155" width="160" height="50" rx="6" fill="var(--line)"/><text x="540" y="185" fill="var(--fg)">Subscription</text>
+          <rect id="bx-pay" class="box" x="280" y="220" width="340" height="100" rx="6" fill="var(--line)"/><text id="pay-txt" x="450" y="240" fill="var(--fg)">10,000 payments, all loaded</text><rect x="292" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="324" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="356" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="388" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="420" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="452" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="484" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="516" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="548" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="580" y="252" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="292" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="324" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="356" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="388" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="420" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="452" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="484" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="516" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="548" y="270" width="26" height="12" rx="2" fill="var(--muted)"/><rect x="580" y="270" width="26" height="12" rx="2" fill="var(--muted)"/>
+        </g>
+        <g id="out-ref" class="msg">
+          <rect x="20" y="60" width="200" height="60" rx="8" fill="var(--svc)"/><text x="120" y="86" fill="#fff">Customer</text><text x="120" y="106" fill="#fff" font-weight="400" font-size="13">its own aggregate</text>
+          <line x1="350" y1="90" x2="222" y2="90" stroke="var(--fg)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arr)"/><text x="286" y="82" fill="var(--fg)" font-size="12">customerId</text>
+          <rect x="680" y="60" width="200" height="60" rx="8" fill="var(--svc)"/><text x="780" y="86" fill="#fff">Subscription</text><text x="780" y="106" fill="#fff" font-weight="400" font-size="13">its own aggregate</text>
+          <line x1="550" y1="90" x2="678" y2="90" stroke="var(--fg)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arr)"/><text x="614" y="82" fill="var(--fg)" font-size="12">subscriptionId</text>
+        </g>
+        <g id="out-pay" class="msg">
+          <rect x="300" y="220" width="300" height="70" rx="8" fill="var(--panel)" stroke="var(--svc)" stroke-width="2"/><text x="450" y="248" fill="var(--fg)">Payments ledger</text><text x="450" y="270" fill="var(--fg)" font-weight="400">append only, never loaded whole</text>
+          <line x1="450" y1="132" x2="450" y2="218" stroke="var(--svc)" stroke-width="2.5" marker-end="url(#arr)"/><text x="510" y="180" fill="var(--svc)" font-size="13">append one row</text>
+        </g>
+        <g id="g-ev" class="msg"><path d="M550 120 C640 150 760 150 780 122" fill="none" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/><text x="690" y="165" fill="var(--undo)" font-size="13">WalletToppedUp, later</text></g>
+        <g id="g-tx" class="msg"><rect x="20" y="300" width="230" height="36" rx="6" fill="var(--ok)"/><text x="135" y="323" fill="#fff" font-size="13">1 transaction = 1 aggregate</text></g>
+        <g id="g-bar" class="msg"><rect x="20" y="345" width="860" height="44" rx="6" fill="var(--fail)"/><text x="450" y="372" fill="#fff">Each charge loads 10,000 payments, and a name change makes a charge fail</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--code-panel-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/01-aggregate-design-rules/main.go</code> (<code>go run .</code>).</p>
+    <div id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <!--end-code-panel-->
+
+  <div class="legend">
+    <span style="--c:var(--svc)">an aggregate</span>
+    <span style="--c:var(--undo)">domain event</span>
+    <span style="--c:var(--ok)">one transaction, one aggregate</span>
+    <span style="--c:var(--fail)">the giant aggregate under load</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Billing: a wallet with its balance, a ledger of payments beside it. An order with its lines inside, and the customer held by id. A Go indexer: a block aggregate holds its transactions, but the address history lives in the warehouse, never inside the block.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Start from the invariant and put only its data inside. Hold other aggregates by id. Keep unbounded collections outside. Change one aggregate per transaction, and let events carry the rest. If two things must change together at once, merge them on purpose.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Giant aggregate</th><th>Small aggregates</th></tr>
+      <tr><td>Load per command</td><td>Everything related, thousands of rows</td><td>The root and the data its rule needs</td></tr>
+      <tr><td>Conflicts</td><td>Unrelated edits fight over one version</td><td>Each edit touches its own aggregate</td></tr>
+      <tr><td>Other aggregates</td><td>Held as objects inside</td><td>Held by id</td></tr>
+      <tr><td>Consistency outside</td><td>Pretends to be immediate</td><td>Eventual, through events</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I design aggregates small: only the data the invariant needs, other aggregates by id, unbounded collections outside, one aggregate per transaction, and events for everything else."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps=[
+{t:"The first draft: everything the wallet touches",b:"Line 1: a first draft puts the customer profile, the subscription and every payment inside the Wallet aggregate. It feels tidy: one object, all the data.",w:"Big aggregates come from modelling what is related. Aggregates should model what must be consistent together.",vis:["big","in"]},
+ {t:"Rule 1: draw the border around the invariant",b:"Rule 1, line 3: the only rule that must hold at every instant is that the balance is never below zero. It reads the balance and nothing else. So line 4 shrinks the border to the wallet and its balance.",w:"Ask which data the invariant reads. That data, and only that, goes inside.",vis:["small"]},
+ {t:"Rule 2: hold other aggregates by id",b:"Rule 2, line 5: the customer and the subscription become aggregates of their own, line 6. The wallet keeps only customerId and subscriptionId. Editing a customer's name no longer touches any wallet.",w:"An id is a pointer that loads nothing and locks nothing. Editing a customer's name no longer touches any wallet.",vis:["small","out-ref"]},
+ {t:"Rule 3: big collections live outside",b:"Rule 3, line 7: payments go into an append-only ledger. A charge adds one row. Nobody loads 10,000 payments to add the next one.",w:"If a collection grows without limit, it is not part of the aggregate. Keep a running total in the root if the rule needs one.",vis:["small","out-ref","out-pay"]},
+ {t:"Rule 4: one transaction, one aggregate",b:"Rule 4, line 8: a charge changes the wallet in one transaction. Line 9 moves the balance and line 10 adds the ledger row. Line 11 publishes the event, and the subscription hears it and renews in its own transaction, a moment later.",w:"Everything outside the border is eventually consistent. If the business truly needs two things exact at the same instant, they are one aggregate. Redraw it.",vis:["small","out-ref","out-pay","g-ev","g-tx"]},
+ {t:"The failure that matters: the giant aggregate under load",b:"Back to the first draft in production. Line 2: every charge loads 10,003 items. A customer changes their name while a charge runs. Both loaded version 7. The name edit saves first, so line 13 fails the charge with a conflict. Unrelated edits fight over one version.",w:"A giant aggregate is slow to load and a magnet for conflicts: unrelated edits fight over one version and one lock. Small aggregates, held by id, make those edits independent.",vis:["big","in","g-bar"],txt:{"big-lbl":"Wallet aggregate, first draft, in production","root-st":"version conflict","pay-txt":"10,000 payments loaded per charge"},fill:{"bx-root":"var(--fail)","bx-pay":"var(--fail)","pay-txt":"#fff"},stroke:{"bx-big":"var(--fail)"}}
+];
+let i=0,timer=null,gen=0;
+const $=id=>document.getElementById(id);
+const base={};
+function set(id,kind,v){const e=$(id),k=id+"|"+kind;if(!(k in base))base[k]=kind==="t"?e.textContent:e.getAttribute(kind);
+  if(kind==="t")e.textContent=v;else if(v===null)e.removeAttribute(kind);else e.setAttribute(kind,v);}
+function render(){
+  const s=steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps.length}`;
+  for(const k in base){const [id,kind]=k.split("|");set(id,kind,base[k]);}
+  for(const [id,v] of Object.entries(s.txt||{}))set(id,"t",v);
+  for(const [id,v] of Object.entries(s.fill||{}))set(id,"fill",v);
+  for(const [id,v] of Object.entries(s.stroke||{}))set(id,"stroke",v);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("#scene .msg").forEach(e=>e.classList.remove("on"));
+  const g=++gen;
+  s.vis.forEach((id,k)=>{const show=()=>{if(g===gen)$(id).classList.add("on")};reduce?show():setTimeout(show,120*k+30)});
+  $("prev").disabled=i===0;$("next").disabled=i===steps.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps.length-1)return stop();go(i+1)},2600)};
+go(0);
+</script>
+<script id="code-panel">
+const CODE={"main": {"pc": ["first draft: wallet + profile + plan + every payment", "loadCost(big) = 3 + payments               # 10,003 items per charge", "rule 1: border = what the invariant reads  # only the balance", "wallet {version, balance, customerId, subscriptionId}", "rule 2: hold other aggregates by id        # loads and locks nothing", "customer {version, name}                   # its own version", "rule 3: ledger.add(row)                    # unbounded, append only", "rule 4: charge(wallet, ledger, n):         # one aggregate, one transaction", "  balance -= n", "  ledger.add(n)", "  publish WalletCharged                     # others react a moment later", "save(stored, loaded):                      # the version check", "  if stored != loaded: conflict             # a name edit and a charge fight"], "real": ["// BigWallet is the first draft: everything the wallet touches, one version.", "type BigWallet struct {", "\tVersion     int", "\tBalance     int", "\tProfileName string", "\tPlan        string", "\tPayments    []int", "}", "", "// LoadCost counts the items a charge must load.", "func (w BigWallet) LoadCost() int { return 3 + len(w.Payments) }", "", "// Wallet is the small aggregate: rule 1, only what the invariant reads.", "// Rule 2: other aggregates are held by id.", "type Wallet struct {", "\tVersion        int", "\tBalance        int", "\tCustomerID     string", "\tSubscriptionID string", "}", "", "// LoadCost: the balance and two ids. No payments.", "func (w Wallet) LoadCost() int { return 3 }", "", "// Customer is its own aggregate with its own version.", "type Customer struct {", "\tVersion int", "\tName    string", "}", "", "// Ledger is rule 3: an unbounded collection lives outside. Append only.", "type Ledger struct{ Rows []int }", "", "func (l *Ledger) Add(n int) { l.Rows = append(l.Rows, n) }", "", "// Charge is rule 4: one transaction changes one aggregate; others hear an event.", "func Charge(w *Wallet, l *Ledger, n int) []string {", "\tw.Balance -= n", "\tl.Add(n)", "\treturn []string{\"WalletCharged\"}", "}", "", "// save stores an edit only if nobody saved since this edit loaded.", "func save(stored *int, loaded int) bool {", "\tif *stored != loaded {", "\t\treturn false // a version conflict", "\t}", "\t*stored++", "\treturn true", "}"], "map": {"1": [2], "2": [11], "3": [13], "4": [15], "5": [14], "6": [26], "7": [32, 34], "8": [37], "9": [38], "10": [39], "11": [40], "12": [44], "13": [45, 46]}, "label": "Go"}};
+const PCS={"main": [[1], [3, 4], [4, 5, 6], [7], [8, 9, 10, 11], [1, 2, 12, 13]]};
+let view="pc";
+function codeMode(){return (typeof mode!=="undefined"&&CODE[mode])?mode:Object.keys(CODE)[0];}
+function escC(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function drawCode(){
+  const m=codeMode(),c=CODE[m],step=(PCS[m]||[])[i]||[];
+  const real=view==="real"&&c.real;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(step);
+  if(real){hl=new Set();step.forEach(n=>(c.map[n]||[]).forEach(x=>hl.add(x)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("realtab").disabled=!c.real;
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=escC(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`;}).join("");
+}
+const renderNoCode=render;
+render=function(){renderNoCode();drawCode();};
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode();});
+drawCode();
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

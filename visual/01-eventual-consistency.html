@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eventual consistency</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+/*code-panel*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{display:flex;gap:8px;flex-wrap:wrap}
+#codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+#codetabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*end-code-panel*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Eventual consistency: the parts agree a little later</h1>
+  <p class="lede">A customer tops up their wallet, and their subscription renews through an event. For a short window the two disagree. Watch the window open, close, and what goes wrong inside it. Press <b>Next</b>.</p>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title" id="scene">
+      <title id="stage-title">Eventual consistency</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+<rect id="bx-w" class="box" x="20" y="30" width="250" height="80" rx="8" fill="var(--svc)"/>
+        <text x="145" y="58" fill="#fff" font-size="15">Wallet</text>
+        <text id="w-txt" x="145" y="84" fill="#fff" font-weight="400">balance 0 USD</text>
+        <rect id="bx-s" class="box" x="325" y="30" width="250" height="80" rx="8" fill="var(--svc)"/>
+        <text x="450" y="58" fill="#fff" font-size="15">Subscription</text>
+        <text id="s-txt" x="450" y="84" fill="#fff" font-weight="400">unpaid</text>
+        <rect id="bx-p" class="box" x="630" y="30" width="250" height="80" rx="8" fill="var(--coord)"/>
+        <text x="755" y="58" fill="#fff" font-size="15">Account page</text>
+        <text id="p-txt" x="755" y="84" fill="#fff" font-weight="400">0 USD, unpaid</text>
+        <g id="g-ev" class="msg"><line x1="270" y1="70" x2="323" y2="70" stroke="var(--undo)" stroke-width="2.5" marker-end="url(#arr)"/><text x="297" y="134" fill="var(--undo)" font-size="13">WalletToppedUp</text><text x="297" y="152" fill="var(--undo)" font-size="13" font-weight="400">on its way</text></g>
+        <!-- time axis -->
+        <line x1="40" y1="240" x2="870" y2="240" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/>
+        <text x="860" y="262" fill="var(--muted)" font-weight="400" font-size="12">time</text>
+        <line x1="200" y1="230" x2="200" y2="250" stroke="var(--muted)" stroke-width="2"/><text x="200" y="272" fill="var(--muted)" font-size="13">t0: top-up commits</text>
+        <g id="g-t1"><line x1="520" y1="230" x2="520" y2="250" stroke="var(--muted)" stroke-width="2"/><text x="520" y="272" fill="var(--muted)" font-size="13">t1: subscription renews</text></g>
+        <g id="w1" class="msg"><rect x="200" y="205" width="140" height="22" rx="4" fill="var(--wait)"/><text x="270" y="198" fill="var(--wait)" font-size="13">window open</text></g>
+        <g id="w2" class="msg"><rect x="200" y="205" width="320" height="22" rx="4" fill="var(--ok)"/><text x="360" y="198" fill="var(--ok)" font-size="13">the window: milliseconds to seconds, then closed</text></g>
+        <g id="w3" class="msg"><rect x="200" y="205" width="670" height="22" rx="4" fill="var(--fail)"/><text x="535" y="198" fill="var(--fail)" font-size="13">the window never closes: the consumer is stopped</text></g>
+        <g id="g-job" class="msg"><line x1="322" y1="229" x2="322" y2="296" stroke="var(--fail)" stroke-width="2.5" marker-end="url(#arr)"/><rect x="40" y="298" width="420" height="44" rx="6" fill="var(--fail)"/><text x="250" y="325" fill="#fff">Reminder job reads "unpaid", emails "plan cancelled"</text></g>
+        <g id="g-lag" class="msg"><rect x="480" y="298" width="390" height="44" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-width="2"/><text x="675" y="325" fill="var(--fail)">no lag metric, no alert: nobody knows</text></g>
+        <g id="g-ok" class="msg"><rect x="40" y="298" width="830" height="44" rx="6" fill="var(--ok)"/><text id="ok-txt" x="455" y="325" fill="#fff">Everyone agrees again. Nothing was wrong, only late</text></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--code-panel-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/01-eventual-consistency/main.go</code> (<code>go run .</code>).</p>
+    <div id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <!--end-code-panel-->
+
+  <div class="legend">
+    <span style="--c:var(--svc)">an aggregate</span>
+    <span style="--c:var(--coord)">a page that reads both</span>
+    <span style="--c:var(--wait)">inside the window: disagreeing</span>
+    <span style="--c:var(--ok)">consistent again</span>
+    <span style="--c:var(--undo)">the event</span>
+    <span style="--c:var(--fail)">a wrong decision, or a window that never closes</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>An indexer and a graph: the warehouse has a swap at block N, the graph shows it a minute later. A search index behind a database. DNS, where a change spreads over minutes. Read replicas in Postgres, where a read right after a write can miss it.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Ask the business how long a window is acceptable, then measure it. Show pending states and freshness in the interface. Return the command result to the caller so they read their own write. Never trigger an irreversible action from a read that may be stale.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Strong consistency</th><th>Eventual consistency</th></tr>
+      <tr><td>Agreement</td><td>At the same instant</td><td>A little later, certainly</td></tr>
+      <tr><td>Cost</td><td>One transaction across both, locks, slower</td><td>A window to design for, lag to watch</td></tr>
+      <tr><td>Fits</td><td>Inside one aggregate</td><td>Between aggregates and contexts</td></tr>
+      <tr><td>Breaks when</td><td>Load grows and locks collide</td><td>A decision is made on a stale read, or nobody watches the lag</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Inside an aggregate I want strong consistency. Between aggregates I accept a short, measured window, show it as freshness, and never take an irreversible action on a read that may be stale."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const steps=[
+{t:"Everyone agrees",b:"Line 1: the wallet has 0 USD and the subscription is unpaid. Line 8 reads both for the account page, and line 11 shows the same picture: 0 USD, unpaid.",w:"Two aggregates, each exact inside its own border. Between them, agreement is allowed to arrive late.",vis:[]},
+ {t:"t0: the wallet commits",b:"t0: the customer tops up 20 USD. Line 2 commits the wallet at once, and line 3 sends one event on its way. The page now shows 20 USD and unpaid at the same time. The window is open.",w:"The window is open. For a short time two true facts disagree. That is eventual consistency: the parts agree a little later, not at once.",vis:["w1"],txt:{"w-txt":"balance 20 USD","p-txt":"20 USD, unpaid"},fill:{"bx-w":"var(--ok)","bx-s":"var(--wait)","bx-p":"var(--wait)"}},
+ {t:"The event is on its way",b:"WalletToppedUp travels through the outbox, the relay and the broker. Line 7 counts it: lag 1. The delay is the price of independence: the wallet never waited for the subscription.",w:"The delay is the price of independence: the wallet never waited for the subscription, and never locked it.",vis:["w1","g-ev"],txt:{"w-txt":"balance 20 USD","p-txt":"20 USD, unpaid"},fill:{"bx-w":"var(--ok)","bx-s":"var(--wait)","bx-p":"var(--wait)"}},
+ {t:"t1: the subscription renews",b:"t1: line 4 delivers. Line 6 renews in the subscription's own transaction. Line 9 now shows 20 USD, renewed. The window closed. Eventual does not mean maybe. It means soon, and certainly.",w:"The window closed. Normally it lasts milliseconds to seconds. Eventual does not mean maybe. It means soon, and certainly.",vis:["w2","g-ok"],txt:{"w-txt":"balance 20 USD","s-txt":"renewed","p-txt":"20 USD, renewed"},fill:{"bx-w":"var(--ok)","bx-s":"var(--ok)","bx-p":"var(--ok)"}},
+ {t:"Design for the window",b:"The page knows a top-up just happened, because the command's reply said so. During the window line 10 shows renewal in progress instead of unpaid. Show the lag honestly.",w:"Show the lag honestly instead of hiding it. The indexer does the same with \"graph is 1,200 blocks behind\".",vis:["w1"],txt:{"w-txt":"balance 20 USD","p-txt":"20 USD, renewal in progress","ok-txt":""},fill:{"bx-w":"var(--ok)","bx-s":"var(--wait)","bx-p":"var(--ok)"}},
+ {t:"The failure that matters: a decision on a stale read",b:"A reminder job runs inside the window. Line 12 reads the subscription, and line 13 sees unpaid and emails that the plan is cancelled. A second later the plan renews, but the email is already sent. Line 14 is the fix: while lag is above 0, wait.",w:"The data healed, but the email is already sent. Never take an irreversible action on a read that may be stale. Let the job react to the event instead, or wait for the window to close.",vis:["w1","g-job"],txt:{"w-txt":"balance 20 USD","p-txt":"20 USD, unpaid"},fill:{"bx-w":"var(--ok)","bx-s":"var(--fail)","bx-p":"var(--wait)"}},
+ {t:"The second failure: the window never closes",b:"The subscription consumer stopped after a bad deploy. Line 5 returns, and events pile up in the broker. The page shows 20 USD and unpaid for hours. Line 7 is the promise about eventual: measure the lag and alert when it grows.",w:"Eventual consistency needs a promise about \"eventual\". Measure the lag, alert when it grows, and show freshness to the user.",vis:["w3","g-lag"],txt:{"w-txt":"balance 20 USD","s-txt":"unpaid (consumer stopped)","p-txt":"20 USD, unpaid"},fill:{"bx-w":"var(--ok)","bx-s":"var(--fail)","bx-p":"var(--fail)"}}
+];
+let i=0,timer=null,gen=0;
+const $=id=>document.getElementById(id);
+const base={};
+function set(id,kind,v){const e=$(id),k=id+"|"+kind;if(!(k in base))base[k]=kind==="t"?e.textContent:e.getAttribute(kind);
+  if(kind==="t")e.textContent=v;else if(v===null)e.removeAttribute(kind);else e.setAttribute(kind,v);}
+function render(){
+  const s=steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps.length}`;
+  for(const k in base){const [id,kind]=k.split("|");set(id,kind,base[k]);}
+  for(const [id,v] of Object.entries(s.txt||{}))set(id,"t",v);
+  for(const [id,v] of Object.entries(s.fill||{}))set(id,"fill",v);
+  for(const [id,v] of Object.entries(s.stroke||{}))set(id,"stroke",v);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("#scene .msg").forEach(e=>e.classList.remove("on"));
+  const g=++gen;
+  s.vis.forEach((id,k)=>{const show=()=>{if(g===gen)$(id).classList.add("on")};reduce?show():setTimeout(show,120*k+30)});
+  $("prev").disabled=i===0;$("next").disabled=i===steps.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps.length-1)return stop();go(i+1)},2600)};
+go(0);
+</script>
+<script id="code-panel">
+const CODE={"main": {"pc": ["wallet and subscription: two aggregates", "topUp(n):                                  # t0: the window opens", "  balance += n; events in flight += 1", "deliver:                                   # t1: the window closes", "  if consumer is stopped: events pile up", "  subscription renews, in its own transaction", "lag() = events in flight                   # measure, alert", "page(justToppedUp):", "  renewed: show 'renewed'", "  justToppedUp: show 'renewal in progress'  # from the command's reply", "  else: show 'unpaid'", "reminder on a read:                        # the failure", "  if not renewed: email 'plan cancelled'    # cannot be undone", "reminder on the lag: if lag > 0: wait       # the fix"], "real": ["// TopUp is t0: the wallet commits alone and the window opens.", "func (w *World) TopUp(n int) {", "\tw.Balance += n", "\tw.InFlight = append(w.InFlight, \"WalletToppedUp\")", "}", "", "// Deliver is t1: the subscription handles the event in its own transaction.", "func (w *World) Deliver() {", "\tif w.Stopped {", "\t\treturn // events pile up in the broker", "\t}", "\tfor range w.InFlight {", "\t\tw.Renewed = true", "\t}", "\tw.InFlight = nil", "}", "", "// Lag is what you measure and alert on.", "func (w *World) Lag() int { return len(w.InFlight) }", "", "// Page shows the account. justToppedUp comes from the command's reply.", "func (w *World) Page(justToppedUp bool) string {", "\tswitch {", "\tcase w.Renewed:", "\t\treturn fmt.Sprintf(\"%d USD, renewed\", w.Balance)", "\tcase justToppedUp:", "\t\treturn fmt.Sprintf(\"%d USD, renewal in progress\", w.Balance)", "\t}", "\treturn fmt.Sprintf(\"%d USD, unpaid\", w.Balance)", "}", "", "// ReminderOnRead is the failure: an irreversible act on a stale read.", "func (w *World) ReminderOnRead() string {", "\tif !w.Renewed {", "\t\treturn \"email sent: plan cancelled\"", "\t}", "\treturn \"no email\"", "}", "", "// ReminderOnLag is the fix: never act while events are still travelling.", "func (w *World) ReminderOnLag() string {", "\tif w.Lag() > 0 {", "\t\treturn \"wait: the window is open\"", "\t}", "\treturn w.ReminderOnRead()", "}"], "map": {"1": [1], "2": [2], "3": [3, 4], "4": [8], "5": [9, 10], "6": [12, 13], "7": [19], "8": [22], "9": [24, 25], "10": [26, 27], "11": [29], "12": [33], "13": [34, 35], "14": [41, 42]}, "label": "Go"}};
+const PCS={"main": [[1, 8, 11], [2, 3, 8, 11], [3, 7], [4, 6, 8, 9], [8, 10], [12, 13, 14], [4, 5, 7]]};
+let view="pc";
+function codeMode(){return (typeof mode!=="undefined"&&CODE[mode])?mode:Object.keys(CODE)[0];}
+function escC(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;");}
+function drawCode(){
+  const m=codeMode(),c=CODE[m],step=(PCS[m]||[])[i]||[];
+  const real=view==="real"&&c.real;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(step);
+  if(real){hl=new Set();step.forEach(n=>(c.map[n]||[]).forEach(x=>hl.add(x)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("realtab").disabled=!c.real;
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=escC(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`;}).join("");
+}
+const renderNoCode=render;
+render=function(){renderNoCode();drawCode();};
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll("#codetabs button").forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode();});
+drawCode();
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

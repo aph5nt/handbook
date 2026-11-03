@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write amplification</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Write amplification: one write, many disk writes</h1>
+  <p class="lede">One small update by the <b>app</b>, and every place storage writes because of it. Watch the storage bar grow against the tiny app bar.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="btree">B-tree with indexes</button>
+    <button role="tab" aria-selected="false" data-mode="lsm">LSM compaction</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">An app write fanning out to the log, the table page, index pages and later rewrites, with two byte bars</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<rect id="app" class="box" data-f="var(--line)" x="30" y="140" width="170" height="64" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="app-t" data-t="app" x="115" y="167" text-anchor="middle" font-size="13" fill="var(--fg)">app</text>
+<text id="app-u" data-t="writes 1 row" x="115" y="187" text-anchor="middle" font-size="12" font-weight="400" fill="var(--fg)">writes 1 row</text>
+<rect id="t0" class="box" data-f="var(--line)" x="290" y="26" width="230" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="t0-t" data-t="write-ahead log" x="405" y="51" text-anchor="middle" font-size="13" fill="var(--fg)">write-ahead log</text>
+<path id="w0" class="msg" d="M200 172 L286 46" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect id="t1" class="box" data-f="var(--line)" x="290" y="76" width="230" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="t1-t" data-t="table page rewritten" x="405" y="101" text-anchor="middle" font-size="13" fill="var(--fg)">table page rewritten</text>
+<path id="w1" class="msg" d="M200 172 L286 96" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect id="t2" class="box" data-f="var(--line)" x="290" y="126" width="230" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="t2-t" data-t="index 1 page" x="405" y="151" text-anchor="middle" font-size="13" fill="var(--fg)">index 1 page</text>
+<path id="w2" class="msg" d="M200 172 L286 146" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect id="t3" class="box" data-f="var(--line)" x="290" y="176" width="230" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="t3-t" data-t="index 2 page" x="405" y="201" text-anchor="middle" font-size="13" fill="var(--fg)">index 2 page</text>
+<path id="w3" class="msg" d="M200 172 L286 196" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect id="t4" class="box" data-f="var(--line)" x="290" y="226" width="230" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="t4-t" data-t="index 3 page" x="405" y="251" text-anchor="middle" font-size="13" fill="var(--fg)">index 3 page</text>
+<path id="w4" class="msg" d="M200 172 L286 246" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<rect id="t5" class="box" data-f="var(--line)" x="290" y="276" width="230" height="40" rx="6" fill="var(--line)" stroke="var(--line)" stroke-width="1.5"/>
+<text id="t5-t" data-t="compaction or vacuum, later" x="405" y="301" text-anchor="middle" font-size="13" fill="var(--fg)">compaction or vacuum, later</text>
+<path id="w5" class="msg" d="M200 172 L286 296" stroke="var(--coord)" stroke-width="2.5" fill="none" marker-end="url(#arr)"/>
+<text x="580" y="60" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">bytes the app wrote</text>
+<rect x="580" y="68" width="16" height="24" rx="3" fill="var(--coord)"/>
+<text x="580" y="130" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">bytes storage wrote</text>
+<rect x="580" y="138" width="290" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>
+<rect id="sb" class="box" data-f="var(--wait)" data-a='{"width":"0"}' x="580" y="138" width="0" height="24" rx="4" fill="var(--wait)"/>
+<text id="ratio" data-t="" x="580" y="196" text-anchor="start" font-size="15" font-weight="700" fill="var(--fg)"></text>
+<text id="note" data-t="" x="580" y="224" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)"></text>
+<rect x="20" y="330" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="356" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="355" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-write-amplification/main.go</code> (<code>go run .</code>). The program is a byte counter with stated assumptions, not a storage engine. The B-tree numbers are the worst case: each change flushed alone.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">written</span>
+    <span style="--c:var(--undo)">rewritten by compaction</span>
+    <span style="--c:var(--fail)">cost with no benefit</span>
+    <span style="--c:var(--ok)">after the fix</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL hot tables with many indexes: HOT updates skip index writes when no indexed column changes. RocksDB tuning: levelled compaction for reads, tiered for writes. StarRocks: one big load per page instead of many small ones.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Drop indexes nobody reads. Batch writes. Pick the compaction style by the workload. Measure the ratio of disk write bytes to ingest bytes.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>B-tree</th><th>LSM tree</th></tr>
+      <tr><td>Main multiplier</td><td>page rewrite plus every index</td><td>one rewrite per level merge</td></tr>
+      <tr><td>Made worse by</td><td>unused indexes</td><td>tiny batches</td></tr>
+      <tr><td>Lowered by</td><td>fewer indexes, HOT updates</td><td>batching, tiered compaction</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"Write amplification is bytes the storage writes per byte you wrote, and every index, version and compaction pass multiplies it."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+btree:[
+ {"t": "The app writes one small row", "b": "A service updates one row of balances: 100 bytes. The ratio is storage bytes written ÷ 100.", "w": "Write amplification is the bytes storage writes divided by the bytes the app wrote.", "f": {"app": "c"}, "x": {"ratio": "ratio: not started", "big": "app wrote: 1 small row"}, "pc": [1]},
+ {"t": "The write-ahead log", "b": "First the change goes to the write-ahead log, so it survives a crash. The record is 150 bytes in the program, so the ratio starts at 1.5×.", "w": "Every write is written at least twice: log, then data.", "f": {"app": "c", "t0": "c"}, "on": ["w0"], "a": {"sb": {"width": "30"}}, "x": {"ratio": "ratio: 1.5×", "big": "log written"}, "pc": [2]},
+ {"t": "A whole page for a small change", "b": "The unit of writing is the page, so the 8,192-byte page that holds the row is written back in full. If it is flushed alone, that is 8,342 bytes for 100: 83×.", "w": "A B-tree writes pages, not rows.", "f": {"app": "c", "t0": "c", "t1": "c"}, "on": ["w0", "w1"], "a": {"sb": {"width": "110"}}, "x": {"ratio": "ratio: 83×", "big": "page rewritten"}, "pc": [3]},
+ {"t": "Every index page too", "b": "The table has five indexes, three drawn. The check per index is: did this update change its key, or move the row? If yes, its page is rewritten too. All five: 49,302 bytes, 493×.", "w": "Each index multiplies every write.", "f": {"app": "c", "t0": "c", "t1": "c", "t2": "c", "t3": "c", "t4": "c"}, "on": ["w0", "w1", "w2", "w3", "w4"], "a": {"sb": {"width": "230"}}, "x": {"ratio": "ratio: 493×", "big": "table + every index"}, "pc": [4, 5], "rl": [2]},
+ {"t": "Indexes nobody reads", "b": "Two of those indexes were added \"just in case\". No query uses them, yet the check above never asks about reads, so every update pays 8,192 bytes for each.", "w": "The disk saturates, SSDs wear, and replicas lag behind.", "f": {"t3": "f", "t4": "f", "t0": "c", "t1": "c", "t2": "c", "sb": "f"}, "on": ["w0", "w1", "w2", "w3", "w4"], "a": {"sb": {"width": "290"}}, "x": {"ratio": "ratio: 493×", "note": "two indexes add cost, no reads", "big": "unused indexes multiply writes"}, "pc": [4, 5], "rl": [8, 9, 10, 11]},
+ {"t": "Fix: drop them, skip them", "b": "Drop the two unused indexes: 329×. In PostgreSQL an update that touches no indexed column and fits in the same page skips index writes: a HOT (heap-only tuple) update, back to 83×.", "w": "Measure it: disk write bytes against the bytes your service sent.", "f": {"t0": "c", "t1": "c", "t2": "c", "t3": "n", "t4": "n", "sb": "ok"}, "on": ["w0", "w1", "w2"], "a": {"sb": {"width": "140"}}, "x": {"ratio": "ratio: 329×, 83× if HOT", "t3-t": "index 2: dropped", "t4-t": "index 3: dropped", "big": "fewer pages per write"}, "pc": [6, 7]}
+],
+lsm:[
+ {"t": "An LSM store: log and flush", "b": "In an LSM store the row goes to the log and the memtable, then is flushed once into a level 0 file. Each byte is written twice.", "w": "So far two writes, like the B-tree's log and page.", "f": {"app": "c", "t0": "c", "t1": "c"}, "on": ["w0", "w1"], "a": {"sb": {"width": "40"}}, "x": {"t0-t": "log", "t1-t": "flush to level 0", "t2-t": "compaction into level 1", "t3-t": "compaction into level 2", "t4-t": "compaction into level 3", "t5-t": "tiny batches: more flushes", "ratio": "ratio: 2×", "big": "log + flush"}, "pc": [8]},
+ {"t": "Compaction rewrites it", "b": "Compaction merges level 0 into level 1. The row is written again, together with its neighbours.", "w": "Every merge rewrites data that did not change.", "f": {"app": "c", "t0": "c", "t1": "c", "t2": "u"}, "on": ["w0", "w1", "w2"], "a": {"sb": {"width": "100"}}, "x": {"t0-t": "log", "t1-t": "flush to level 0", "t2-t": "compaction into level 1", "t3-t": "compaction into level 2", "t4-t": "compaction into level 3", "t5-t": "tiny batches: more flushes", "ratio": "ratio: growing, about 10× per level", "big": "rewritten at level 1"}, "pc": [9]},
+ {"t": "And again at each level", "b": "As data moves down, each level merge rewrites it again. In levelled compaction a byte can be rewritten about ten times per level. The program takes 3 levels: 2 + 3 × 10 = 32×.", "w": "Deep stores pay many rewrites per byte.", "f": {"app": "c", "t0": "c", "t1": "c", "t2": "u", "t3": "u", "t4": "u"}, "on": ["w0", "w1", "w2", "w3", "w4"], "a": {"sb": {"width": "220"}}, "x": {"t0-t": "log", "t1-t": "flush to level 0", "t2-t": "compaction into level 1", "t3-t": "compaction into level 2", "t4-t": "compaction into level 3", "t5-t": "tiny batches: more flushes", "ratio": "ratio: 32×", "big": "rewritten at every level"}, "pc": [9, 10]},
+ {"t": "Tiny batches make it worse", "b": "Writing one row per load makes many tiny files. 1,000 of them, merged four at a time, take about five rounds before they reach a level: 37×.", "w": "Small writes raise both the file count and the rewrite count.", "f": {"t2": "u", "t3": "u", "t4": "u", "t5": "f", "sb": "f"}, "on": ["w0", "w1", "w2", "w3", "w4", "w5"], "a": {"sb": {"width": "290"}}, "x": {"t0-t": "log", "t1-t": "flush to level 0", "t2-t": "compaction into level 1", "t3-t": "compaction into level 2", "t4-t": "compaction into level 3", "t5-t": "tiny batches: more flushes", "ratio": "ratio: 37×", "big": "many small writes, many rewrites"}, "pc": [11]},
+ {"t": "Fix: batch, and pick the compaction style", "b": "Write in big batches. Tiered compaction rewrites a byte about once per level: 2 + 3 = 5×, at the cost of reads merging more files. Levelled compaction does the opposite.", "w": "Write amplification and read cost trade against each other. Choose by the workload.", "f": {"t0": "c", "t1": "c", "t2": "u", "t3": "u", "sb": "ok"}, "on": ["w0", "w1", "w2", "w3"], "a": {"sb": {"width": "130"}}, "x": {"t0-t": "log", "t1-t": "flush to level 0", "t2-t": "compaction into level 1", "t3-t": "compaction into level 2", "t4-t": "compaction into level 3", "t5-t": "big batches: few flushes", "ratio": "ratio: 5×", "big": "batch + tiered compaction"}, "pc": [12, 13]}
+]
+};
+const base={};
+const code={
+"btree":{
+ label:"SQL",
+ pc:["update(row):                          # 100 bytes change", "  append a record to the log           # 150 bytes", "  write the whole table page           # 8,192 bytes", "  for each index on the table:", "    if the update changed its key: write that index page", "drop indexes no query reads", "if no indexed column changed and the row fits: HOT, no index writes", "lsm_write(row):", "  append to the log; flush to level 0  # 2 writes per byte", "  for each level: compaction rewrites the byte about 10 times", "  tiny files: more merge rounds first", "fix: batch the writes", "  tiered: about 1 rewrite per level, reads merge more files"],
+ real:["-- one small update", "UPDATE balances SET balance = 12 WHERE address = :a;", "", "-- bytes the engine wrote to the log for that statement", "EXPLAIN (ANALYZE, WAL) UPDATE balances SET balance = 12 WHERE address = :a;", "-- WAL: records=3  fpi=1  bytes=8342", "", "-- indexes no query has read since the last reset", "SELECT indexrelname, idx_scan", "FROM   pg_stat_user_indexes", "WHERE  relname = 'balances' AND idx_scan = 0;", "", "DROP INDEX balances_unused_1;", "DROP INDEX balances_unused_2;", "", "-- share of updates that skipped the indexes", "SELECT n_tup_hot_upd, n_tup_upd FROM pg_stat_user_tables WHERE relname = 'balances';"],
+ map:{"1": [2], "2": [5, 6], "3": [5, 6], "4": [9, 10, 11], "5": [9, 10, 11], "6": [13, 14], "7": [16, 17]}},
+"lsm":{
+ label:"SQL",
+ pc:["update(row):                          # 100 bytes change", "  append a record to the log           # 150 bytes", "  write the whole table page           # 8,192 bytes", "  for each index on the table:", "    if the update changed its key: write that index page", "drop indexes no query reads", "if no indexed column changed and the row fits: HOT, no index writes", "lsm_write(row):", "  append to the log; flush to level 0  # 2 writes per byte", "  for each level: compaction rewrites the byte about 10 times", "  tiny files: more merge rounds first", "fix: batch the writes", "  tiered: about 1 rewrite per level, reads merge more files"],
+ real:["-- the row goes in as part of one load", "-- curl -T page.csv -H 'label: swaps-page-81200' http://fe:8030/api/db/swaps/_stream_load", "", "-- how much compaction is behind, per tablet", "SHOW PROC '/compactions';", "", "-- bad: one row per load", "INSERT INTO swaps VALUES (431, 21400120, 12.5);", "", "-- good: one batched load per table per page", "-- 10,000 rows in one Stream Load, one segment"],
+ map:{"8": [1, 2], "9": [2], "10": [4, 5], "11": [7, 8], "12": [10, 11], "13": [5, 11]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Keys and mTLS</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Machine identity: API keys and mTLS</h1>
+  <p class="lede">A data vendor gives a customer a read-only API key, shown once. Inside the vendor's own cluster, a service mesh gives every pod a certificate. Press <b>Next</b> to see each one prove a program's identity, and how each one fails.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="key">API key</button>
+    <button role="tab" aria-selected="false" data-mode="mtls">Mutual TLS</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of an API key check and a mutual TLS handshake</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-api-keys-mtls/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">held, or still being checked</span>
+    <span style="--c:var(--ok)">checked and allowed, or a defence that held</span>
+    <span style="--c:var(--fail)">attacker, refused, or a hole</span>
+    <span style="--c:var(--undo)">rotated, revoked or replaced</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet an API key</h2>
+      <p>Third-party programs with no authorization server: a data feed, a webhook sender, a customer's script. Hashed, scoped, expiring, with two live keys for rotation.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet mTLS</h2>
+      <p>Pod to pod inside a cluster, issued by a service mesh such as Istio or Linkerd, or by cert-manager. Across organisations, OAuth client credentials instead.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>API key</th><th>Mutual TLS</th><th>OAuth client credentials</th></tr>
+      <tr><td>Proves</td><td>Which program, by a shared secret</td><td>Which workload, by a certificate</td><td>Which service, by a short-lived token</td></tr>
+      <tr><td>Stored as</td><td>A hash on the server</td><td>A private key in the pod</td><td>A client secret or key, swapped for tokens</td></tr>
+      <tr><td>Rotation</td><td>Two live keys, swap, retire</td><td>Automatic, by the mesh</td><td>Tokens expire in minutes</td></tr>
+      <tr><td>Fits</td><td>Third-party clients</td><td>Inside one cluster</td><td>Across organisations</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"An API key names a program, so it is hashed, scoped and rotated, and inside a cluster the mesh gives every pod a certificate instead."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"key":[["c", "Customer script", "coord"], ["a", "Vendor API", "svc"], ["k", "Key store", "svc"], ["d", "Price data", "svc"]],
+"mtls":[["p", "Pricing pod", "coord"], ["ca", "Mesh CA", "svc"], ["w", "Warehouse pod", "svc"], ["x", "Web pod", "svc"]]
+};
+const code={
+"key": {
+"label": "Go",
+"pc": [
+"on create(key, owner, scope, expires):",
+"  store[sha256(key)] = {owner, scope, expires}  # the key itself is never kept",
+"  show the key once",
+"on each call with header X-API-Key: k, action a:",
+"  rec = store[sha256(k)]",
+"  if no rec or rec.revoked: return 401",
+"  if rec.expires is set and today > rec.expires: return 401",
+"  if rec.scope != '*' and rec.scope != a: return 403",
+"  return 200",
+"rotate: create key B, both live, then set A.revoked",
+"# old key: scope '*', expires 0 = never: lines 7 and 8 never refuse"
+],
+"real": [
+"type keyRecord struct {",
+"\towner, scope string",
+"\texpires      int // day number; 0 means never (the old, bad kind)",
+"\trevoked      bool",
+"}",
+"",
+"var keyStore = map[string]*keyRecord{} // sha256(key) -> record; the key itself is never stored",
+"",
+"// createKey shows the key once and keeps only its hash.",
+"func createKey(key, owner, scope string, expires int) string {",
+"\tkeyStore[hash(key)] = &keyRecord{owner: owner, scope: scope, expires: expires}",
+"\treturn key",
+"}",
+"",
+"// checkKey: find the record by hash, then expiry, revocation and scope.",
+"func checkKey(key, action string, today int) int {",
+"\trec, ok := keyStore[hash(key)]",
+"\tif !ok || rec.revoked || (rec.expires != 0 && today > rec.expires) {",
+"\t\treturn http.StatusUnauthorized",
+"\t}",
+"\tif rec.scope != \"*\" && rec.scope != action {",
+"\t\treturn http.StatusForbidden",
+"\t}",
+"\treturn http.StatusOK",
+"}"
+],
+"map": {
+"1": [
+10
+],
+"2": [
+7,
+11
+],
+"3": [
+12
+],
+"4": [
+16
+],
+"5": [
+17
+],
+"6": [
+18,
+19
+],
+"7": [
+18,
+19
+],
+"8": [
+21,
+22
+],
+"9": [
+24
+],
+"10": [
+4,
+11
+],
+"11": [
+2,
+3
+]
+}
+},
+"mtls": {
+"label": "Go",
+"pc": [
+"mesh CA: cert(name) = sign(CA key, {CN: name, notAfter})",
+"warehouse server setup:",
+"  present its own cert 'warehouse'",
+"  require a client cert, checked against the mesh CA",
+"on handshake, caller shows cert c:",
+"  if c is not signed by the mesh CA: handshake fails",
+"  if now > c.notAfter: handshake fails       # expired",
+"on each request:",
+"  caller = c.CommonName                      # from the cert, not the IP",
+"  if caller not in policy: return 403",
+"  return 200 rows",
+"renew: the mesh calls cert(name) again before notAfter"
+],
+"real": [
+"// issue makes a workload certificate signed by the mesh CA.",
+"func issue(name string, notAfter time.Time) tls.Certificate {",
+"\tk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)",
+"\tt := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: name},",
+"\t\tDNSNames: []string{name}, NotBefore: notAfter.Add(-48 * time.Hour), NotAfter: notAfter,",
+"\t\tExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}",
+"\tder, _ := x509.CreateCertificate(rand.Reader, t, caCert, &k.PublicKey, caKey)",
+"\treturn tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k}",
+"}",
+"",
+"// policy: which caller identities may call the warehouse.",
+"var policy = map[string]bool{\"pricing\": true}",
+"",
+"// warehouse demands a client certificate signed by the mesh CA, then",
+"// applies the policy to the name inside it.",
+"func warehouse(cert tls.Certificate, pool *x509.CertPool) *httptest.Server {",
+"\ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {",
+"\t\tcaller := r.TLS.PeerCertificates[0].Subject.CommonName",
+"\t\tif !policy[caller] {",
+"\t\t\thttp.Error(w, \"denied by policy: \"+caller, http.StatusForbidden)",
+"\t\t\treturn",
+"\t\t}",
+"\t\tfmt.Fprint(w, \"rows for \"+caller)",
+"\t}))",
+"\ts.Config.ErrorLog = log.New(io.Discard, \"\", 0) // the refused handshake is the expected result",
+"\t// RequireAndVerifyClientCert: the caller must show a certificate signed by a",
+"\t// CA in ClientCAs and inside its NotBefore..NotAfter, or the handshake fails.",
+"\ts.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, ClientCAs: pool,",
+"\t\tClientAuth: tls.RequireAndVerifyClientCert}",
+"\ts.StartTLS()",
+"\treturn s",
+"}"
+],
+"map": {
+"1": [
+2,
+5,
+7
+],
+"2": [
+16
+],
+"3": [
+28
+],
+"4": [
+28,
+29
+],
+"5": [
+26,
+29
+],
+"6": [
+26,
+28
+],
+"7": [
+27,
+29
+],
+"8": [
+17
+],
+"9": [
+18
+],
+"10": [
+12,
+19,
+20
+],
+"11": [
+23
+],
+"12": [
+2,
+5
+]
+}
+}
+};
+const steps={
+"key":[
+ {"t": "Create the key, show it once", "b": "The vendor makes the key ck_live_7f3a and shows it once. It stores only sha256 of the key, with owner customer script, scope read and expiry day 365.", "w": "An API key names a program, not a person. Like a password, the server keeps only its hash.", "m": [["a", "c", 120, "key shown once"], ["a", "k", 160, "hash only, scope: read"]], "st": {"c": ["key saved", "wait"], "k": ["hash, read, owner", "ok"]}, "pc": [1, 2, 3]},
+ {"t": "Call with the key", "b": "The script sends the key in the X-API-Key header. The API hashes it with SHA-256 and looks the hash up. It finds the record: not revoked, and day 10 is before day 365.", "w": "A stolen copy of the key store holds no usable keys, only hashes.", "m": [["c", "a", 120, "X-API-Key: key A"], ["a", "k", 155, "look up hash(key A)"], ["k", "a", 185, "owner, scope: read"]], "st": {"c": ["key saved", "wait"], "a": ["owner known", "ok"], "k": ["hash matched", "ok"]}, "pc": [4, 5]},
+ {"t": "Read is allowed", "b": "The action is read. The rule is: the scope must be * or equal the action. The scope is read, so the API answers 200 with the prices.", "w": "The key proves which program it is. The scope says what it may do.", "m": [["a", "d", 120, "read prices"], ["d", "a", 150, "rows"], ["a", "c", 185, "200, prices"]], "st": {"c": ["got prices", "ok"], "a": ["scope: read", "ok"], "d": ["read", "ok"]}, "pc": [8, 9]},
+ {"t": "Write is refused", "b": "The action is delete. The scope is read, which is not * and not delete. The key is known, so this is not 401. The API answers 403.", "w": "A scoped key limits what a leak can do.", "m": [["c", "a", 120, "DELETE /prices + key A", "fail"], ["a", "c", 155, "403: scope is read", "fail"]], "st": {"c": ["refused", "fail"], "a": ["scope: read", "ok"], "d": ["untouched", "ok"]}, "pc": [8]},
+ {"t": "Rotate with two live keys", "b": "The vendor creates key B, expiring day 375. Both hashes are in the store, so both keys answer 200 on day 11. Then the vendor sets key A to revoked, and key A gets 401 on day 12.", "w": "Two live keys per client make rotation a non-event: no downtime, no midnight switch.", "m": [["a", "c", 120, "new key B"], ["c", "a", 155, "X-API-Key: key B"], ["a", "k", 190, "retire key A", "undo"]], "st": {"c": ["using key B", "ok"], "k": ["A retired, B live", "undo"]}, "pc": [10]},
+ {"t": "The failure: a key for everything", "b": "The old key has scope * and expiry 0, which the code reads as never. On day 1,200 the expiry check is skipped and * matches delete. The API answers 200 to whoever found the key.", "w": "The leaked key can do everything, and nothing ever made it stop.", "m": [["band", 0, 120, "old key: no scope, no expiry, found in a public script", "fail"], ["c", "a", 160, "DELETE /prices + old key", "fail"], ["a", "c", 190, "200: no scope to check", "fail"]], "st": {"c": ["attacker holds it", "fail"], "a": ["no scope", "fail"], "d": ["deleted", "fail"]}, "ac": {"c": "fail"}, "pc": [11, 7, 8, 9]},
+ {"t": "The fix: scope, expiry, rotation", "b": "The vendor sets the old key to revoked. The first check now fails, so the API answers 401 before it even looks at the scope.", "w": "A leak of a scoped, expiring key is a small, short problem.", "m": [["a", "k", 120, "revoke old key", "undo"], ["c", "a", 160, "DELETE /prices + old key", "fail"], ["a", "c", 190, "401: key revoked"]], "st": {"c": ["attacker out", "ok"], "a": ["key revoked", "ok"], "k": ["scoped, expiring", "undo"]}, "pc": [10, 6]}
+],
+"mtls":[
+ {"t": "The mesh hands out certificates", "b": "The mesh CA (Certificate Authority) signs one certificate per pod. The common name inside says pricing, warehouse or web, and each has an end date, NotAfter.", "w": "Nobody writes these by hand. The mesh issues them and renews them.", "m": [["ca", "p", 120, "cert: pricing"], ["ca", "w", 150, "cert: warehouse"], ["ca", "x", 180, "cert: web"]], "st": {"p": ["cert: pricing", "ok"], "w": ["cert: warehouse", "ok"], "x": ["cert: web", "ok"]}, "pc": [1]},
+ {"t": "Both ends show a certificate", "b": "The warehouse server is set to RequireAndVerifyClientCert. So during the TLS handshake it shows its own certificate and asks the caller for one. That is mTLS (mutual Transport Layer Security).", "w": "Normal TLS proves only the server. Mutual TLS proves the caller too.", "m": [["p", "w", 120, "my cert: pricing"], ["w", "p", 150, "my cert: warehouse"]], "st": {"p": ["handshake", "wait"], "w": ["handshake", "wait"]}, "pc": [2, 3, 4]},
+ {"t": "Check the signer", "b": "The warehouse checks pricing's certificate: signed by the mesh CA in its trust pool, and now is before NotAfter. Both pass, so the handshake completes and the caller is pricing.", "w": "The identity comes from the certificate, not from an IP address that a pod might share or reuse.", "m": [["band", 0, 130, "signed by the mesh CA, not expired: caller is pricing", "ok"]], "st": {"p": ["handshake", "wait"], "ca": ["trusted signer", "ok"], "w": ["caller: pricing", "ok"]}, "pc": [5, 6, 7]},
+ {"t": "Policy: may pricing call the warehouse", "b": "The handler reads the common name, pricing, from the certificate. The policy map holds pricing: true, so it answers 200 with the rows.", "w": "Identity first, then policy. The same two questions as for a person.", "m": [["band", 0, 120, "policy: pricing may call warehouse", "ok"], ["p", "w", 160, "query"], ["w", "p", 190, "rows"]], "st": {"p": ["got rows", "ok"], "w": ["policy: allow", "ok"]}, "pc": [8, 9, 10, 11]},
+ {"t": "Web is refused", "b": "Web's certificate is valid, so the handshake passes. The common name is web, and the policy map has no web entry. The handler answers 403 denied by policy.", "w": "A valid identity is not permission. The warehouse refuses.", "m": [["x", "w", 130, "my cert: web", "fail"], ["w", "x", 165, "denied by policy", "fail"]], "st": {"p": ["got rows", "ok"], "w": ["policy: deny web", "ok"], "x": ["refused", "fail"]}, "pc": [9, 10]},
+ {"t": "The failure: a hand-run CA", "b": "A certificate whose NotAfter is one minute ago reaches the handshake. The time check fails, so the handshake fails and no request is ever made. Every pod with a hand-made certificate fails the same way at the same minute.", "w": "Certificates always expire. If renewing them is a person's job, it will be forgotten.", "m": [["band", 0, 120, "hand-made certificates expired on Friday night", "fail"], ["p", "w", 160, "expired cert", "fail"], ["w", "p", 190, "handshake fails", "fail"]], "st": {"p": ["cert expired", "fail"], "ca": ["run by hand", "fail"], "w": ["cert expired", "fail"]}, "ac": {"ca": "fail"}, "pc": [7]},
+ {"t": "The fix: automatic rotation", "b": "The mesh issues a new certificate for pricing before the old one ends. The same call now completes the handshake and gets 200 rows for pricing. No person had to remember the date.", "w": "Short-lived certificates renewed by a machine: a leak is short, and an expiry is a non-event.", "m": [["ca", "p", 120, "new cert, automatic", "undo"], ["ca", "w", 150, "new cert, automatic", "undo"], ["p", "w", 190, "query"], ["w", "p", 220, "rows"]], "st": {"p": ["fresh cert", "undo"], "ca": ["auto-rotates", "ok"], "w": ["fresh cert", "undo"]}, "pc": [12, 1]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

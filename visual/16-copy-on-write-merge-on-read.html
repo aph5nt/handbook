@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Copy-on-write and merge-on-read</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Copy-on-write versus merge-on-read</h1>
+  <p class="lede">One swap row in an Iceberg table has the wrong label. The row sits in a Parquet file that cannot be changed in place. Press <b>Next</b> to compare rewriting the file now with writing a small delete file and merging later.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="cow" id="tab-cow">Copy-on-write</button>
+    <button role="tab" aria-selected="false" data-mode="mor" id="tab-mor">Merge-on-read</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Data files of a table, small delete files, and how much work writers and readers do</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-copy-on-write-merge-on-read/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">current data file</span>
+    <span style="--c:var(--wait)">rewritten file, or work</span>
+    <span style="--c:var(--coord)">being read</span>
+    <span style="--c:var(--undo)">fixed row, or a delete file</span>
+    <span style="--c:var(--line)">kept only by an old snapshot</span>
+    <span style="--c:var(--fail)">wrong row, or too much work</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet copy-on-write</h2>
+      <p>Daily batch facts in Iceberg or Delta that are rarely corrected. A correction rewrites a few files and every read stays plain.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet merge-on-read</h2>
+      <p>Tables fed by change data capture, with updates all day. Hudi, Delta and Iceberg write delete or log files and compact them on a schedule.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Copy-on-write</th><th>Merge-on-read</th></tr>
+      <tr><td>An update writes</td><td>A full copy of every touched file</td><td>A small delete or change file</td></tr>
+      <tr><td>Write cost</td><td>High</td><td>Low</td></tr>
+      <tr><td>Read cost</td><td>Plain, nothing to merge</td><td>Merge deltas at query time</td></tr>
+      <tr><td>Needs</td><td>Few updates</td><td>Scheduled compaction</td></tr>
+      <tr><td>Fits</td><td>Batch tables, rare corrections</td><td>Streaming upserts, frequent changes</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Copy-on-write pays at write time by rewriting files, merge-on-read pays at read time by merging deltas, and compaction settles the bill."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"cow": {"label": "Go", "pc": ["update(row id, label), copy-on-write:", "  f = the data file holding id", "  nf = new file                          # f is immutable", "  for each row x in f: copy x into nf, fixing id", "  commit a snapshot that lists nf instead of f", "read():", "  for each data file: read its rows as they are", "# missing for busy tables: every change rewrites the whole file again"], "real": ["type Table struct {", "\tSnapshot int", "\tData     []File", "\tDeletes  map[int]bool // merge-on-read: row ids a delete file removed", "\tChanges  map[int]Row  // merge-on-read: corrected rows in small files, newest wins", "\tDeltas   int          // count of small delete and change files", "}", "", "// UpdateCOW copies every row of the file holding id into a new file.", "func (t *Table) UpdateCOW(id int, label string) (rowsWritten int) {", "\tfor k, f := range t.Data {", "\t\tfor _, r := range f.Rows {", "\t\t\tif r.ID != id {", "\t\t\t\tcontinue", "\t\t\t}", "\t\t\tnf := File{Name: f.Name + \"'\"} // a new file: the old one is immutable", "\t\t\tfor _, x := range f.Rows {     // copy every row, fix the one", "\t\t\t\tif x.ID == id {", "\t\t\t\t\tx.Label = label", "\t\t\t\t}", "\t\t\t\tnf.Rows = append(nf.Rows, x)", "\t\t\t}", "\t\t\tt.Data[k] = nf // the new snapshot lists the new file", "\t\t\tt.Snapshot++", "\t\t\treturn len(nf.Rows)", "\t\t}", "\t}", "\treturn 0", "}", "", "func (t *Table) Read() (rows []Row, filesOpened int) {", "\tfor _, f := range t.Data {", "\t\tfilesOpened++", "\t\tfor _, r := range f.Rows {", "\t\t\tif t.Deletes[r.ID] {", "\t\t\t\tcontinue // named by a delete file", "\t\t\t}", "\t\t\trows = append(rows, r)", "\t\t}", "\t}"], "map": {"1": [10], "2": [11, 12, 13], "3": [16], "4": [17, 18, 19, 20, 21], "5": [23, 24], "6": [31], "7": [32, 33, 34, 38], "8": [25]}}, "mor": {"label": "Go", "pc": ["update(row id, label), merge-on-read:", "  write a delete file: \"row id is gone\"   # f stays untouched", "  write a change file: the fixed row", "  commit a snapshot that lists f and both small files", "read():", "  for each data file: skip the rows a delete file names", "  add every corrected row from the change files", "  # every read also opens every small file", "# missing: a scheduled compaction", "compact(): fold the deltas into clean files, clear the deltas"], "real": ["func (t *Table) UpdateMOR(id int, label string) (rowsWritten int) {", "\tt.Deletes[id] = true                      // delete file: \"row id is gone\"", "\tt.Changes[id] = Row{ID: id, Label: label} // change file: the fixed row", "\tt.Deltas += 2", "\tt.Snapshot++", "\treturn 2", "}", "", "// Read returns the current rows. Merge-on-read skips deleted ids and adds", "// the corrected rows: every read pays for the merge.", "func (t *Table) Read() (rows []Row, filesOpened int) {", "\tfor _, f := range t.Data {", "\t\tfilesOpened++", "\t\tfor _, r := range f.Rows {", "\t\t\tif t.Deletes[r.ID] {", "\t\t\t\tcontinue // named by a delete file", "\t\t\t}", "\t\t\trows = append(rows, r)", "\t\t}", "\t}", "\tfilesOpened += t.Deltas", "\tfor id := 0; id < 16; id++ { // add each corrected row once", "\t\tif r, ok := t.Changes[id]; ok {", "\t\t\trows = append(rows, r)", "\t\t}", "\t}", "\treturn rows, filesOpened", "}", "", "// Compact folds every delta into clean data files and clears the deltas.", "func (t *Table) Compact() {", "\trows, _ := t.Read()", "\tt.Data = []File{{Name: \"A2\", Rows: rows[:8]}, {Name: \"B2\", Rows: rows[8:]}}", "\tt.Deletes, t.Changes, t.Deltas = map[int]bool{}, map[int]Row{}, 0", "\tt.Snapshot++", "}"], "map": {"1": [1], "2": [2], "3": [3], "4": [4, 5], "5": [11], "6": [12, 13, 14, 15, 16, 18], "7": [22, 23, 24], "8": [21], "10": [31, 32, 33, 34, 35]}}};
+
+const fA=(n,st,row)=>({n,st,row,mark:/^file A$/.test(n)?"bad":"fix"});
+const steps={
+"cow":[
+ {pc:[1, 2],t:"One wrong row in a big file",b:"A swap row has the wrong label. It sits in data file A of an Iceberg table, among many other rows. File B holds other swaps.",w:"Parquet files are immutable. An update is always a new file. The question is which new file.",files:[fA("file A","ok",3),fA("file B","ok")],snap:"s1",wr:0,rd:1},
+ {pc:[3, 4],t:"Rewrite the whole file",b:"The writer finds the file that holds the row: file A. File A cannot be changed, so it copies all 8 of its rows into a new file A2, fixing row 3 on the way. 8 rows written to change 1.",w:"To change one row, the writer rewrote the whole file. The write is slow and heavy.",files:[fA("file A","old",3),fA("file B","ok"),fA("file A2","new",3)],snap:"s1",wr:6,rd:1},
+ {pc:[5],t:"Commit a new snapshot",b:"The commit writes snapshot s2, which lists A2 and B instead of A and B. File A is now kept only by the old snapshot s1.",w:"Readers switch from s1 to s2 in one step. They never see half an update.",files:[fA("file A","old",3),fA("file B","ok"),fA("file A2","ok",3)],snap:"s2",wr:6,rd:1},
+ {pc:[6, 7],t:"Reads stay plain",b:"A reader opens the 2 files snapshot s2 lists, A2 and B, and reads every row as it is. There are no small files to check, so nothing to merge.",w:"Copy-on-write pays at write time, so reads stay as fast as before.",files:[fA("file B","ok"),fA("file A2","read",3)],snap:"s2",wr:0,rd:1},
+ {pc:[8, 4],t:"The failure that matters",b:"Now the table is fed by changes every minute, each touching a row in file A. Each change copies all 8 rows again: A3, A4, A5. 3 changes, 24 rows written.",w:"The writer copies the same big file all day. Copy-on-write fits tables that change rarely.",files:[fA("file B","ok"),fA("file A3","new",1),fA("file A4","new",5),fA("file A5","new",2)],snap:"s5",wr:10,rd:1,fail:true}
+],
+"mor":[
+ {pc:[1],t:"Same wrong row",b:"The same swap row in file A has the wrong label.",w:"This time the table uses merge-on-read.",files:[fA("file A","ok",3),fA("file B","ok")],snap:"s1",wr:0,rd:1},
+ {pc:[2, 3],t:"Write a small delete file",b:"The writer leaves file A alone. It writes 2 tiny files: a delete file saying row 3 is gone, and a change file holding the corrected row. 2 rows written to change 1.",w:"The write is fast and small. The work has moved to the readers.",files:[fA("file A","ok",3),fA("file B","ok")],deltas:2,snap:"s1",wr:1,rd:1},
+ {pc:[4],t:"Commit a new snapshot",b:"The commit writes snapshot s2. It lists 4 files: A, B, the delete file and the change file.",w:"Still atomic: readers see the whole update or none of it.",files:[fA("file A","ok",3),fA("file B","ok")],deltas:2,snap:"s2",wr:1,rd:1},
+ {pc:[5, 6, 7, 8],t:"Readers merge at query time",b:"A reader opens all 4 files. For each row of A and B it asks: does a delete file name this row? Row 3 is named, so it is skipped. Then the corrected row from the change file is added. Still 16 rows.",w:"Every read now does a little merge work.",files:[fA("file A","read",3),fA("file B","read")],deltas:2,snap:"s2",wr:1,rd:3},
+ {pc:[8, 9],t:"The failure that matters",b:"Weeks of changes, and nobody runs compaction. 48 updates added 2 small files each: 96 small files. Each query now opens 98 files and checks every row against every delete file.",w:"Reads get slower every day while writes stay fast. Merge-on-read needs compaction.",files:[fA("file A","read",3),fA("file B","read")],deltas:96,snap:"s900",wr:1,rd:10,fail:true},
+ {pc:[10],t:"Compaction settles the bill",b:"A compaction job reads the table once, merged, and writes the 16 current rows into clean files A2 and B2. It clears the deltas and commits a new snapshot. A read opens 2 files again.",w:"Merge-on-read for frequent changes, plus scheduled compaction, gives fast writes and fast reads.",files:[fA("file A2","ok"),fA("file B2","ok")],snap:"s901",wr:1,rd:1}
+]};
+const FILL={ok:"var(--ok)",old:"var(--line)",new:"var(--wait)",read:"var(--coord)"};
+function meter(y,lab,v,bad){return T(30,y+14,lab,{a:"start"})+B(230,y,560,18,"var(--line)",9)+(v?B(230,y,Math.round(560*v/10),18,bad?"var(--fail)":"var(--wait)",9):"");}
+function draw(s){
+  let o=T(30,30,"Iceberg table",{a:"start"})+chip(720,10,150,32,"var(--svc)","snapshot "+s.snap);
+  s.files.forEach((f,k)=>{const x=30+k*210;const c=FILL[f.st];
+    o+=B(x,60,190,156,"var(--panel)",8,`stroke="${c}" stroke-width="3"`)+T(x+95,82,f.n,{c:f.st==="old"?"var(--muted)":"var(--fg)"});
+    for(let r=0;r<8;r++){const fix=f.row!==undefined&&r===f.row;const rc=fix?(f.mark==="bad"?"var(--fail)":"var(--undo)"):c;
+      o+=B(x+12,92+r*15,166,11,rc,2);}
+  });
+  if(s.deltas){const n=s.deltas;o+=T(30,244,n>2?"small delete and change files: "+n:"delete file and change file",{a:"start"});
+    for(let k=0;k<n;k++)o+=B(30+(k%48)*17,254+Math.floor(k/48)*16,12,12,s.fail?"var(--fail)":"var(--undo)",2);}
+  o+=meter(300,"writer work",s.wr,s.fail&&s.wr>5)+meter(330,"reader work",s.rd,s.fail&&s.rd>5);
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

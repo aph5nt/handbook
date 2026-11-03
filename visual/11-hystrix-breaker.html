@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hystrix circuit breaker</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Hystrix: trip the breaker, serve a fallback</h1>
+  <p class="lede">The Playback API calls Recommendations and Profile for every home screen. Tonight one Recommendations node answers in five seconds. Watch the bulkhead, the breaker and the fallback protect the home screen, then see why hand-set thresholds made Netflix retire Hystrix. Press <b>Next</b>.</p>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="sc" class="box" x="40" y="20" width="240" height="44" rx="22"/><text id="sc-t" x="160" y="48">closed</text>
+        <rect id="so" class="box" x="330" y="20" width="240" height="44" rx="22"/><text id="so-t" x="450" y="48">open</text>
+        <rect id="sh" class="box" x="620" y="20" width="240" height="44" rx="22"/><text id="sh-t" x="740" y="48">half-open</text>
+        <rect id="api" class="box" x="20" y="150" width="200" height="100" rx="10"/><text id="api-t" x="120" y="190">Playback API</text><text id="api-c" x="120" y="218" class="sm" fill="#fff"></text>
+        <rect id="pr" class="box" x="300" y="110" width="260" height="44" rx="6"/><text id="pr-t" x="430" y="138" class="sm">pool for Recommendations: 2 of 10</text>
+        <rect id="pp" class="box" x="300" y="250" width="260" height="44" rx="6"/><text id="pp-t" x="430" y="278" class="sm">pool for Profile: 1 of 10</text>
+        <rect id="rc" class="box" x="640" y="110" width="240" height="52" rx="8"/><text id="rc-t" x="760" y="141">Recommendations</text>
+        <rect id="pf" class="box" x="640" y="250" width="240" height="52" rx="8"/><text id="pf-t" x="760" y="281">Profile</text>
+        <rect id="fb" class="box" x="300" y="180" width="260" height="44" rx="6"/><text id="fb-t" x="430" y="208" class="sm">fallback: popular titles</text>
+        <text id="win" x="450" y="350" fill="var(--fg)"></text>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">calling, or the current state</span>
+    <span style="--c:var(--ok)">healthy answer</span>
+    <span style="--c:var(--wait)">slow, or a fallback in use</span>
+    <span style="--c:var(--fail)">failing, or a wrong trip</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>resilience4j on the JVM (Java Virtual Machine), Polly in .NET, and Envoy's outlier detection in a service mesh. Netflix's concurrency-limits library adjusts the number of calls in flight from measured latency, with no hand-set threshold.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Wrap every remote call: timeout, then breaker, then fallback. Keep the fallback cheap and local: a cached answer or a default. Prefer limits that adapt to latency over numbers set once by hand.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Hystrix</th><th>Adaptive concurrency limits</th></tr>
+      <tr><td>When it acts</td><td>Error share passes a set threshold</td><td>Latency rises above its own baseline</td></tr>
+      <tr><td>Settings</td><td>Pool size, timeout, error percent, by hand</td><td>Learned from measurements</td></tr>
+      <tr><td>On a normal busy evening</td><td>Can trip a healthy service</td><td>Lowers the limit a little, keeps serving</td></tr>
+      <tr><td>Status at Netflix</td><td>Maintenance mode since 2018</td><td>In use</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Hystrix wrapped each call with a timeout, a bulkhead and a circuit breaker so a sick dependency fails fast, and Netflix retired it because hand-set thresholds aged, in favour of limits that adapt to latency."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const D={main:{f:{sc:C,so:N,sh:N,api:N,pr:N,pp:N,rc:N,pf:N,fb:N},x:{"pr-t":"pool for Recommendations: 2 of 10","pp-t":"pool for Profile: 1 of 10","rc-t":"Recommendations","api-c":"",win:"","fb-t":"fallback: popular titles"}}};
+const calls=[[220,180,298,132,"",C],[220,220,298,272,"",C],[560,132,638,136,"",C],[560,272,638,276,"",C]];
+const steps={main:[
+ {t:"Closed: calls flow normally",b:"The breaker for Recommendations is closed. Each call takes a thread from Recommendations' own pool of 10 and runs with a 300 ms timeout. Calls answer in 50 ms, so the check 'latency ≤ 300 ms' passes and each result goes into a rolling window of the last 20 calls.",w:"After 20 calls the window holds 0 failures of 20. Closed means 'let calls through'.",f:{api:C,pr:C,pp:C,rc:G,pf:G},x:{"api-c":"home screen: ok",win:"failures in window: 0 of 20"},m:calls,pc:[1,7,8,14]},
+ {t:"Recommendations gets slow",b:"A bad node makes Recommendations answer in 5 s. The check '5 s ≤ 300 ms' fails, so each call is cut at 300 ms and recorded as a failure. After 6 such calls the window holds 6 failures of 20, which is 30%.",w:"The trip rule needs at least 20 calls and at least 50% failures. 30% is below 50%, so the breaker stays closed. Without the timeout, nothing would ever count as a failure.",f:{api:C,pr:Y,pp:C,rc:Y,pf:G},x:{"rc-t":"Recommendations: 5 s",win:"failures in window: 6 of 20 (30%)"},m:calls,pc:[7,8,12]},
+ {t:"The bulkhead holds",b:"Slow calls hold their threads, and all 10 of Recommendations' threads are now busy. The check 'pool in use == 10' is true, so new calls are refused at once and recorded as failures. Profile has its own pool, which still has room.",w:"A bulkhead, like the walls in a ship: one flooded pool does not sink the rest. Each refusal pushes an old success out of the window.",f:{api:C,pr:R,pp:G,rc:Y,pf:G},x:{"rc-t":"Recommendations: 5 s","pr-t":"pool for Recommendations: 10 of 10",win:"failures in window: 9 of 20 (45%)"},m:[[220,220,298,272,"",C],[560,272,638,276,"",C]],pc:[6,8]},
+ {t:"10 of 20 failed: the breaker opens",b:"The fourth refusal makes it 10 failures of 20, which is 50%. The trip check 'window size ≥ 20 and failure rate ≥ 50%' is now true, so the state becomes OPEN and the time is saved as openedAt. A call 1 s later checks 'now − openedAt < 5 s', which is true, and gets the fallback with no network call.",w:"Ola gets a home screen with popular titles instead of personal ones. Most viewers never notice.",f:{sc:N,so:R,api:G,pr:N,pp:G,rc:Y,pf:G,fb:Y},x:{"rc-t":"Recommendations: 5 s","api-c":"home screen: fallback row",win:"open: 10 of 20 failed (50%)"},m:[[220,200,298,202,"",Y],[220,220,298,272,"",C]],pc:[12,13,2,3]},
+ {t:"Half-open: one test call",b:"5 s after openedAt, the check 'now − openedAt < 5 s' is false. The breaker moves to HALF_OPEN and lets this one call through as a test. Any other call that arrives while the test runs sees HALF_OPEN and gets the fallback.",w:"Only one call risks the slow path. Everyone else keeps getting the fallback.",f:{sc:N,so:N,sh:Y,api:G,pr:C,rc:C,fb:Y},x:{"api-c":"home screen: fallback row",win:"half-open: 1 test call"},m:[[220,180,298,132,"test",C],[560,132,638,136,"",C]],pc:[2,4,5]},
+ {t:"The test works: closed again",b:"The bad node was replaced. The test call answers in 50 ms, so '50 ms ≤ 300 ms' passes. Because the state is HALF_OPEN and the call was ok, the state becomes CLOSED and the window is cleared.",w:"Recovery needs no human. If the test had failed, the state would go back to OPEN with a new openedAt, and wait another 5 s.",f:{sc:C,api:C,pr:C,pp:C,rc:G,pf:G},x:{"api-c":"home screen: ok",win:"closed, window cleared"},m:calls,pc:[7,9,10,11]},
+ {t:"The failure that matters: a threshold that aged",b:"A year later, a busy Friday makes a healthy Recommendations answer in 350 ms. The timeout is still the 300 ms someone set by hand. Every call fails '350 ms ≤ 300 ms'. After 20 calls the window holds 20 failures of 20, and the breaker opens on a healthy service.",w:"Every number in Hystrix was set by a person, and traffic changed every week. Too tight trips healthy services. Too loose trips too late.",f:{sc:N,so:R,api:Y,rc:G,pf:G,fb:Y},x:{"rc-t":"Recommendations: healthy, 350 ms","api-c":"fallback for no reason",win:"wrong trip: 20 of 20 'failed'"},pc:[7,12,13]},
+ {t:"Netflix's answer: limits that adapt",b:"In 2018 Netflix put Hystrix in maintenance mode. An adaptive concurrency limit has no fixed timeout. It compares the best latency seen (50 ms) with the latest sample (62.5 ms) and scales the number of calls in flight: 40 × 50 / 62.5 = 32.",w:"When latency rises, fewer calls go out at once. When it falls, the limit grows again. No hand-set threshold to age.",f:{sc:C,api:G,pr:G,pp:G,rc:G,pf:G},x:{"api-c":"home screen: ok","pr-t":"limit learned: 40 → 32 in flight",win:"adaptive limit, no fixed threshold"},m:calls,pc:[16,17]}
+]};
+const code={main:{"label": "Go", "dir": "11-hystrix-breaker", "pc": ["on call(req) at time now:", "  if state == OPEN:", "    if now - openedAt < 5s: return fallback()   # fail fast, no network call", "    state = HALF_OPEN                           # sleep window over: test once", "  else if state == HALF_OPEN: return fallback() # test already in flight", "  if pool.inUse == 10: ok = false               # bulkhead full: refuse at once", "  else: ok = run(req) with timeout 300 ms       # slower counts as a failure", "  record(ok)                                    # rolling window, last 20 calls", "  if state == HALF_OPEN:", "    if ok: state = CLOSED; window.clear()       # healed", "    else: state = OPEN; openedAt = now          # still sick: sleep again", "  else if window.size >= 20 and window.failRate >= 50%:", "    state = OPEN; openedAt = now                # trip", "  return ok ? answer : fallback()", "", "adaptive limit, what replaced the fixed numbers:", "  limit = limit * minRTT / sampleRTT            # 40 * 50/62.5 = 32"], "real": ["// Call runs one request that takes latency, at simulated time now.", "func (b *Breaker) Call(now, latency time.Duration) (ok bool, path string) {", "\tswitch b.State {", "\tcase Open:", "\t\tif now-b.OpenedAt < sleepWindow {", "\t\t\treturn false, \"fallback (open, fail fast)\"", "\t\t}", "\t\tb.State = HalfOpen", "\tcase HalfOpen:", "\t\treturn false, \"fallback (test in flight)\"", "\t}", "\tif b.InUse == poolSize {", "\t\tok, path = false, \"fallback (bulkhead full)\"", "\t} else {", "\t\tok, path = latency <= b.Timeout, \"answer\"", "\t}", "\tb.Window = append(b.Window, ok)", "\tif len(b.Window) > windowSize {", "\t\tb.Window = b.Window[1:]", "\t}", "\tif b.State == HalfOpen {", "\t\tif ok {", "\t\t\tb.State, b.Window = Closed, nil", "\t\t} else {", "\t\t\tb.State, b.OpenedAt = Open, now", "\t\t}", "\t} else if len(b.Window) >= windowSize && b.failRate() >= 0.5 {", "\t\tb.State, b.OpenedAt = Open, now", "\t}", "\tif !ok && path == \"answer\" {", "\t\tpath = \"fallback (timeout)\"", "\t}", "\treturn ok, path", "}", "", "// AdaptiveLimit is the gradient rule from Netflix concurrency-limits.", "func AdaptiveLimit(limit float64, minRTT, sampleRTT time.Duration) float64 {", "\treturn limit * float64(minRTT) / float64(sampleRTT)", "}", ""], "map": {"1": [2], "2": [5], "3": [5, 6], "4": [8], "5": [10], "6": [12, 13], "7": [15], "8": [17, 18, 19], "9": [21], "10": [23], "11": [25], "12": [27], "13": [28], "14": [31, 33], "16": [37], "17": [38]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

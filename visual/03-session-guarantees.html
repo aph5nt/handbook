@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Session guarantees</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Session guarantees: read-your-writes and monotonic reads</h1>
+  <p class="lede">A customer sees five orders, refreshes, and sees four. The load balancer sent the second read to a replica one second behind. Press <b>Next</b> to watch time go backwards, then the two fixes.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="broken" id="tab-broken">Monotonic reads broken</button>
+    <button role="tab" aria-selected="false" data-mode="fix" id="tab-fix">Sticky session versus position token</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 440" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">A customer, a load balancer and two replicas, one of them behind</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-session-guarantees/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">up to date</span>
+    <span style="--c:var(--wait)">behind the leader</span>
+    <span style="--c:var(--ok)">correct answer</span>
+    <span style="--c:var(--fail)">order vanished, or replica dead</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>MongoDB causal consistency sessions carry an operation time. A page that reads from Postgres replicas stores the leader's log position (LSN, Log Sequence Number) in the user's session after a write. A block explorer remembers the highest block the user has seen.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Sticky sessions are simple but break when that replica dies. The robust fix is a position token: the client carries 'I have seen position 41' with every read, and any replica can check itself.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Sticky session</th><th>Position token</th></tr>
+      <tr><td>How</td><td>Keep the client on one replica</td><td>Client sends the highest log position it has seen</td></tr>
+      <tr><td>Replica dies</td><td>Client lands on a stale replica, time goes backwards</td><td>Any replica checks the token, waits or refuses</td></tr>
+      <tr><td>Load spread</td><td>Uneven, clients pinned</td><td>Even</td></tr>
+      <tr><td>Gives</td><td>Monotonic reads, while it lasts</td><td>Read-your-writes and monotonic reads</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Session guarantees are cheap promises to one user: see your own writes, and never see time go backwards. A log position carried by the client gives both."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const A={c2lb:[170,170,280,170,225,160],lb2c:[280,198,170,198,225,222],lb2r1:[420,165,620,90,500,112],r12lb:[620,110,420,180,560,160],lb2r2:[420,195,620,280,540,210],r22lb:[620,322,420,212,470,300]};
+const G=["Read-your-writes","Monotonic reads","Monotonic writes","Writes-follow-reads"];
+function scene(s){
+  let b="";
+  b+=BOX(20,150,150,70,"var(--svc)","Customer","order page");
+  b+=CHIP(95,232,170,s.page,s.bad?"var(--fail)":s.good?"var(--ok)":"var(--line)");
+  if(s.tok)b+=CHIP(95,264,170,s.tok,"var(--coord)");
+  b+=BOX(280,150,140,70,"var(--undo)","Load balancer",s.sticky?"sticky: replica 1":"picks any");
+  b+=BOX(620,40,250,80,s.r1dead?"var(--fail)":"var(--coord)","Replica 1",s.r1dead?"crashed":"up to date, pos 41");
+  const r2=s.r2||40;b+=BOX(620,260,250,80,r2<41?"var(--wait)":"var(--coord)","Replica 2",`pos ${r2}, ${r2<41?"one second behind":"caught up"}`);
+  G.forEach((g,k)=>{const on=s.g&&s.g.includes(k);b+=CHIP(120+k*220,362,200,g,on?"var(--coord)":"var(--line)")});
+  const msgs=(s.m||[]).map(([k,l,kd])=>{const a=A[k];return ARROW(a[0],a[1],a[2],a[3],l,KC[kd||"n"],{lx:a[4],ly:a[5],dash:kd==="wait"})});
+  if(s.ban)msgs.push(BANNER(422,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+broken:[
+ {t:"The customer sees five orders",b:"No replica is pinned, so line 4 picks the next replica in turn: replica 1, at log position 41. Line 10 reads the orders up to 41: five orders, including order 5.",w:"This page never keeps the position (line 11 is off), so client.seen stays 0.",page:"5 orders",good:true,m:[["c2lb","read orders"],["lb2r1","read"],["r12lb","5 orders","ok"],["lb2c","5 orders","ok"]],pc:[4,6,10,12]},
+ {t:"The customer refreshes",b:"Line 4 again picks the next replica in turn. That is replica 2, one second behind at position 40.",w:"Nothing in the request says what the customer has already seen.",page:"5 orders",m:[["c2lb","refresh"],["lb2r2","read"]],pc:[4,6]},
+ {t:"The failure: order 5 vanishes",b:"Line 8 compares replica 2's position 40 with client.seen. client.seen is 0, because line 11 never stored 41. 40 < 0 is false, so line 10 answers from position 40: four orders.",w:"The check on line 8 is there, but it has nothing to compare against. Without line 11 the customer sees time go backwards. That breaks monotonic reads.",page:"4 orders",bad:true,g:[1],m:[["r22lb","4 orders","fail"],["lb2c","4 orders","fail"]],ban:"Order 5 was on screen a second ago. Now it is gone.",pc:[8,10]},
+ {t:"A second later it is back",b:"Replica 2 applies position 41. The next refresh reads orders up to 41 on line 10: five orders again.",w:"Appear, vanish, appear. To a customer that looks like a bug, and they call support.",page:"5 orders",good:true,r2:41,m:[["c2lb","refresh"],["lb2r2","read"],["r22lb","5 orders","ok"],["lb2c","5 orders","ok"]],pc:[10]},
+ {t:"Four promises to one client",b:"Read-your-writes: you see your own change. Monotonic reads: never an older version after a newer one. Lines 8 and 11 give both, with the position of a read or of your own write. Monotonic writes and writes-follow-reads order your writes the same way.",w:"These are session guarantees. They are promises to one client, kept with one number per client, so they are cheap.",page:"5 orders",r2:41,g:[0,1,2,3],pc:[8,11]}
+],
+fix:[
+ {t:"Fix 1: a sticky session",b:"Replica 1 is pinned to this customer, so line 2 is true and line 3 returns replica 1 on every refresh.",w:"One replica never goes backwards, so monotonic reads hold, without any position check.",page:"5 orders",good:true,sticky:true,g:[1],m:[["c2lb","refresh"],["lb2r1","read"],["r12lb","5 orders","ok"],["lb2c","5 orders","ok"]],pc:[2,3,10]},
+ {t:"The failure: the sticky replica dies",b:"Replica 1 crashes. Line 7 sees it is dead and falls back to replica 2 at position 40. client.seen is still 0, so line 8 passes and line 10 answers four orders.",w:"Sticky sessions break exactly when a replica fails, and the stale one is all that is left. The missing piece is line 11.",page:"4 orders",bad:true,r1dead:true,m:[["c2lb","refresh"],["lb2r2","read"],["r22lb","4 orders","fail"],["lb2c","4 orders","fail"]],ban:"The pinned replica died. The customer landed on a stale one.",pc:[7,8,10]},
+ {t:"Fix 2: the client carries its position",b:"Turn line 11 on. After the first read from position 41, the page stores client.seen = max(0, 41) = 41 and sends it with every read.",w:"Now the request itself says what the customer has already seen.",page:"5 orders",tok:"has seen pos 41",g:[0,1],m:[["c2lb","read, seen pos 41"]],pc:[11]},
+ {t:"Replica 2 checks itself",b:"Replica 1 is dead, so line 7 sends the read to replica 2. Line 8 compares: replica 2 is at 40, client.seen is 41, and 40 < 41 is true. Line 9 waits instead of answering.",w:"Any replica can run this check. No pinning is needed, so the load stays even.",page:"5 orders",tok:"has seen pos 41",r1dead:true,g:[0,1],m:[["lb2r2","read, need pos 41"],["r22lb","wait: I am at 40","wait"]],pc:[7,8,9]},
+ {t:"Replica 2 reaches 41 and answers",b:"Position 41 arrives. The wait on line 9 ends because 41 >= 41. Line 10 reads orders up to 41: five orders.",w:"The customer never sees time go backwards, even with a dead replica. One log position per client gives read-your-writes and monotonic reads together.",page:"5 orders",good:true,tok:"has seen pos 41",r2:41,r1dead:true,g:[0,1],m:[["r22lb","5 orders","ok"],["lb2c","5 orders","ok"]],pc:[9,10,12]}
+]};
+const code={"*": {"label": "Go", "pc": ["lb.pick():", "  if a replica is pinned to this client:", "    return it                              # sticky session", "  return the next replica in turn          # knows nothing about the client", "on read(client):", "  r = lb.pick()", "  if r is dead: r = another replica        # the pinned one crashed", "  if r.pos < client.seen:                  # the session check", "    wait until r.pos >= client.seen        # never answer from the past", "  rows = orders up to r.pos                # pos 40: 4 orders, 41: 5", "  if client keeps it: client.seen = max(client.seen, r.pos)", "  return rows"], "real": ["func (lb *Balancer) Pick() *Replica {", "\tif lb.sticky != nil {", "\t\treturn lb.sticky // the replica pinned to this client", "\t}", "\tr := lb.replicas[lb.next%len(lb.replicas)]", "\tlb.next++ // round robin: knows nothing about the client", "\treturn r", "}", "", "// Read runs one page load. catchUp lets a lagging replica apply the log.", "func Read(lb *Balancer, c *Client, catchUp func(*Replica)) (int, string) {", "\tr := lb.Pick()", "\tif r.dead {", "\t\tr = lb.replicas[1] // the sticky replica died: fall back", "\t}", "\tif r.pos < c.seen {", "\t\tcatchUp(r) // wait until the replica has reached what we saw", "\t}", "\trows := ordersAt(r.pos)", "\tif c.keep && r.pos > c.seen {", "\t\tc.seen = r.pos // remember the newest position seen", "\t}", "\treturn rows, r.name", "}"], "map": {"1": [1], "2": [2], "3": [3], "4": [5, 6], "5": [11], "6": [12], "7": [13, 14], "8": [16], "9": [17], "10": [19], "11": [20, 21], "12": [23]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

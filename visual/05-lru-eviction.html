@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LRU and LFU Eviction</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>LRU and LFU: who gets thrown out</h1>
+  <p class="lede">A cache has room for four keys. Key A is the most popular page on the site. The same list of reads runs under two rules for eviction. Press <b>Next</b> and watch which key each rule throws out, and when each rule goes wrong.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="lru">LRU: least recently used</button>
+    <button role="tab" aria-selected="false" data-mode="lfu">LFU: least frequently used</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A list of reads, four cache slots and the evicted key</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)" font-weight="700">
+        <text x="40" y="24">Reads, in order</text>
+        <text x="60" y="122">Cache, 4 slots</text>
+        <text x="815" y="122" text-anchor="middle">Thrown out</text>
+      </g>
+      <g id="seq" font-family="Atkinson Hyperlegible,system-ui" font-size="18" font-weight="700"></g>
+      <g id="slots" font-family="Atkinson Hyperlegible,system-ui" font-weight="700"></g>
+      <rect class="box" id="ev-box" x="760" y="134" width="110" height="110" rx="8" fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="6 4"/>
+      <text id="ev-txt" x="815" y="200" text-anchor="middle" font-family="Atkinson Hyperlegible,system-ui" font-size="30" font-weight="700" fill="var(--fail)"></text>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" fill="var(--fg)">
+        <text id="order" x="60" y="288" font-weight="700"></text>
+        <text id="stats" x="60" y="322" fill="var(--muted)"></text>
+        <text id="last" x="60" y="350" fill="var(--muted)"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-lru-eviction/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">reads in this step</span>
+    <span style="--c:var(--ok)">hit: key was in the cache</span>
+    <span style="--c:var(--undo)">miss: key just loaded</span>
+    <span style="--c:var(--fail)">thrown out to make room</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet LRU</h2>
+      <p>Redis with <code>maxmemory-policy allkeys-lru</code> (it samples a few keys and drops the oldest of those). Database page caches, often as a cheaper "clock" version. Process caches like Caffeine in Java or ristretto in Go start from it. LRU is the default because it is cheap and most reads favour recent data.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet LFU</h2>
+      <p>Redis with <code>allkeys-lfu</code>, which keeps a small counter per key that slowly decays. Use it when a backfill or a report scans many keys once and would flush the hot set. Adaptive replacement cache (ARC) keeps both lists and moves room to whichever one is winning.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>LRU</th><th>LFU</th></tr>
+      <tr><td>Throws out</td><td>The key read longest ago</td><td>The key read the fewest times</td></tr>
+      <tr><td>Keeps track of</td><td>Order of last reads</td><td>A read count per key</td></tr>
+      <tr><td>Good at</td><td>Recent reads, cheap to run</td><td>Stable popular keys</td></tr>
+      <tr><td>Breaks on</td><td>One-time scans: the hot set is flushed</td><td>Changing popularity: old favourites never leave</td></tr>
+      <tr><td>Common fix</td><td>A separate reader for scans, or ARC</td><td>Counters that decay over time</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"LRU by default because it is cheap and fits recent reads. LFU or ARC when one-time scans would flush the hot set, with decay so old favourites can leave."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const plan={
+"lru":[
+ {ops:[],pc:[12],t:"Start: an empty cache",b:"Four empty slots. Below the slots, LRU keeps one list: the keys from least recently read to most recently read.",w:"When the cache is full, LRU throws out the first key in that list."},
+ {ops:["A","A","A"],pc:[3, 4, 6],t:"A is read three times",b:"The first read of A is a miss: A is loaded into a slot. The next two reads are hits.",w:"A is the popular key. LRU does not count that. It only remembers when A was last read."},
+ {ops:["B","C","D"],pc:[6, 10],t:"B, C and D fill the cache",b:"Three more keys are read once each. All four slots are now full.",w:"A was read three times, but its last read is now the oldest. It sits at the front of the list."},
+ {ops:["E"],pc:[8, 9, 12],t:"E arrives: LRU throws out A",b:"A new key needs a slot. Line 6 finds no empty slot. Line 12 picks the lowest last read: A at t3, against B at t4. So A, the key read longest ago, goes.",w:"The most popular key just left the cache, because it was quiet for a moment."},
+ {ops:["A"],pc:[3, 8, 9, 12],t:"A is read again: a miss",b:"A popular key is asked for again. The check on line 3 does not find it, so this is a miss and a trip to the database. To make room, LRU throws out B.",w:"LRU paid a miss on the one key that mattered most. LFU keeps A on this same list."},
+ {ops:["F","G","H","I"],pc:[8, 9, 12, 14],t:"The failure that matters: a one-time scan",b:"A nightly backfill reads four old keys once each. Each one throws out the oldest key. After four reads, every slot holds a key nobody will read again.",w:"One scan flushed the whole hot set. Tomorrow's first readers all miss. Fix: give the scan its own reader, or use a policy that resists scans, such as LFU or ARC."}
+],
+"lfu":[
+ {ops:[],pc:[13],t:"Start: an empty cache",b:"Four empty slots. LFU keeps a read count for every key in the cache.",w:"When the cache is full, LFU throws out the key with the lowest count. On a tie, the one read longest ago."},
+ {ops:["A","A","A"],pc:[3, 4, 6],t:"A is read three times",b:"A misses once and is loaded, then hits twice. Its count is 3.",w:"LFU remembers that A is popular, not only when it was last read."},
+ {ops:["B","C","D"],pc:[6, 10],t:"B, C and D fill the cache",b:"Three more keys, read once each. Each has a count of 1. The cache is full.",w:"Same reads as the LRU tab, same full cache. The difference is in the next step."},
+ {ops:["E"],pc:[8, 9, 13],t:"E arrives: LFU throws out B",b:"Line 13 looks for the lowest count. B, C and D all have 1. The tie goes to the lowest last read, t4, so B goes. A, with a count of 3, stays.",w:"A different victim from LRU on the same reads. The popular key survived a quiet moment."},
+ {ops:["A"],pc:[3, 4],t:"A is read again: a hit",b:"A is still in the cache. This read is a hit, and A's count rises to 4.",w:"On this list LFU saved a database trip that LRU paid. That is why LFU wins when popular keys stay popular."},
+ {ops:["F","G","H"],pc:[8, 9, 13, 15],t:"The failure that matters: popularity changes",b:"An hour later, A is old news. New pages F, G and H are read. F throws out C, G throws out D and H throws out E: each has the lowest count and the oldest read. From now on every new key, with a count of 1, only throws out another new key. A, with its count of 4, holds its slot.",w:"Nobody reads A any more, yet it keeps a quarter of the cache. Fix: let counts decay over time, as Redis LFU does, so an old favourite can leave."}
+]};
+function simulate(mode,upto){
+  let slots=[null,null,null,null],t=0,hits=0,miss=0,stepRes=[],victims=[];
+  for(let s=0;s<=upto;s++){
+    for(const k of plan[mode][s].ops){
+      t++;const at=slots.findIndex(x=>x&&x.k===k);
+      if(at>=0){slots[at].n++;slots[at].last=t;hits++;if(s===upto)stepRes.push([k,"hit",at]);continue;}
+      miss++;let idx=slots.indexOf(null),victim=null;
+      if(idx<0){
+        const live=slots.map((x,j)=>[x,j]);
+        live.sort((p,q)=>mode==="lru"?p[0].last-q[0].last:(p[0].n-q[0].n)||(p[0].last-q[0].last));
+        idx=live[0][1];victim=slots[idx].k;if(s===upto)victims.push(victim);
+      }
+      slots[idx]={k,n:1,last:t};if(s===upto)stepRes.push([k,victim?"miss, threw out "+victim:"miss",idx]);
+    }
+  }
+  return {slots,hits,miss,stepRes,victims};
+}
+let mode="lru",i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const p=plan[mode],s=p[i],r=simulate(mode,i);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${p.length}`;
+  let html="",x=40,done=0;for(let j=0;j<i;j++)done+=p[j].ops.length;
+  let n=0;p.forEach((st,j)=>st.ops.forEach(k=>{const now=j===i,past=j<i;
+    html+=`<rect class="box" x="${x}" y="36" width="48" height="44" rx="8" fill="${now?"var(--wait)":past?"var(--line)":"none"}" stroke="var(--line)" stroke-width="2"/><text x="${x+24}" y="65" text-anchor="middle" fill="${now?"#fff":past?"var(--fg)":"var(--muted)"}">${k}</text>`;x+=56;n++;}));
+  $("seq").innerHTML=html;
+  const hitIdx=new Set(r.stepRes.filter(e=>e[1]==="hit").map(e=>e[2]));
+  const newIdx=new Set(r.stepRes.filter(e=>e[1]!=="hit").map(e=>e[2]));
+  let sh="";r.slots.forEach((sl,j)=>{const x0=60+j*170;const col=!sl?"none":newIdx.has(j)?"var(--undo)":hitIdx.has(j)?"var(--ok)":"var(--svc)";
+    sh+=`<rect class="box" x="${x0}" y="134" width="150" height="110" rx="10" fill="${col}" stroke="var(--line)" stroke-width="2"/>`;
+    if(sl){sh+=`<text x="${x0+75}" y="196" text-anchor="middle" font-size="40" fill="#fff">${sl.k}</text><text x="${x0+75}" y="230" text-anchor="middle" font-size="14" fill="#fff">${mode==="lru"?"last read at t"+sl.last:"reads: "+sl.n}</text>`;}
+    else sh+=`<text x="${x0+75}" y="196" text-anchor="middle" font-size="16" fill="var(--muted)">empty</text>`;});
+  $("slots").innerHTML=sh;
+  $("ev-txt").textContent=r.victims.join(" ");
+  $("ev-box").setAttribute("stroke",r.victims.length?"var(--fail)":"var(--line)");
+  const live=r.slots.filter(Boolean).slice().sort((a,b)=>mode==="lru"?a.last-b.last:(a.n-b.n)||(a.last-b.last));
+  $("order").textContent=live.length?(mode==="lru"?"Least recently read first: ":"Fewest reads first: ")+live.map(x=>mode==="lru"?x.k:`${x.k} (${x.n})`).join(", ")+"   ← next to go is the first one":"";
+  $("stats").textContent=`Hits so far: ${r.hits}    Misses so far: ${r.miss}`;
+  $("last").textContent=r.stepRes.length?"This step: "+r.stepRes.map(e=>`${e[0]} ${e[1]}`).join(" · "):"";
+  $("prev").disabled=i===0;$("next").disabled=i===p.length-1;
+  drawCode();
+}
+const code={
+"lru": {
+"label": "Go",
+"pc": [
+"function read(key):",
+"  t = t + 1",
+"  if key in slots:                       # hit",
+"    slot.count += 1; slot.last = t",
+"    return",
+"  if a slot is empty: use it             # miss, room left",
+"  else:",
+"    v = victim()",
+"    throw out v, the new key takes its slot",
+"  slot = key, count 1, last t",
+"",
+"LRU victim(): lowest last                # read longest ago",
+"LFU victim(): lowest count, then lowest last   # read least often",
+"fix for a scan: a separate read path, or a scan-resistant policy",
+"fix for LFU: let the counts decay over time"
+],
+"real": [
+"func (c *Cache) victim() int {",
+"\tbest := 0",
+"\tfor i, s := range c.slots {",
+"\t\tb := c.slots[best]",
+"\t\tif c.lfu { // lowest count, then read longest ago",
+"\t\t\tif s.count < b.count || (s.count == b.count && s.last < b.last) {",
+"\t\t\t\tbest = i",
+"\t\t\t}",
+"\t\t} else if s.last < b.last { // LRU: read longest ago",
+"\t\t\tbest = i",
+"\t\t}",
+"\t}",
+"\treturn best",
+"}",
+"",
+"func (c *Cache) Read(key string) string {",
+"\tc.t++",
+"\tfor _, s := range c.slots {",
+"\t\tif s.key == key {",
+"\t\t\ts.count++",
+"\t\t\ts.last = c.t",
+"\t\t\treturn \"hit\"",
+"\t\t}",
+"\t}",
+"\tif len(c.slots) < 4 {",
+"\t\tc.slots = append(c.slots, &slot{key, 1, c.t})",
+"\t\treturn \"miss\"",
+"\t}",
+"\tv := c.victim()",
+"\tout := c.slots[v].key",
+"\tc.slots[v] = &slot{key, 1, c.t}",
+"\treturn \"miss, threw out \" + out",
+"}",
+"",
+"// no decay and no scan path here: the lesson's failures stay visible"
+],
+"map": {
+"1": [
+16
+],
+"2": [
+17
+],
+"3": [
+18,
+19
+],
+"4": [
+20,
+21
+],
+"5": [
+22
+],
+"6": [
+25,
+26,
+27
+],
+"8": [
+29
+],
+"9": [
+30,
+31
+],
+"10": [
+31
+],
+"12": [
+9,
+10
+],
+"13": [
+5,
+6,
+7
+],
+"14": [
+35
+],
+"15": [
+35
+]
+}
+},
+"lfu": {
+"label": "Go",
+"pc": [
+"function read(key):",
+"  t = t + 1",
+"  if key in slots:                       # hit",
+"    slot.count += 1; slot.last = t",
+"    return",
+"  if a slot is empty: use it             # miss, room left",
+"  else:",
+"    v = victim()",
+"    throw out v, the new key takes its slot",
+"  slot = key, count 1, last t",
+"",
+"LRU victim(): lowest last                # read longest ago",
+"LFU victim(): lowest count, then lowest last   # read least often",
+"fix for a scan: a separate read path, or a scan-resistant policy",
+"fix for LFU: let the counts decay over time"
+],
+"real": [
+"func (c *Cache) victim() int {",
+"\tbest := 0",
+"\tfor i, s := range c.slots {",
+"\t\tb := c.slots[best]",
+"\t\tif c.lfu { // lowest count, then read longest ago",
+"\t\t\tif s.count < b.count || (s.count == b.count && s.last < b.last) {",
+"\t\t\t\tbest = i",
+"\t\t\t}",
+"\t\t} else if s.last < b.last { // LRU: read longest ago",
+"\t\t\tbest = i",
+"\t\t}",
+"\t}",
+"\treturn best",
+"}",
+"",
+"func (c *Cache) Read(key string) string {",
+"\tc.t++",
+"\tfor _, s := range c.slots {",
+"\t\tif s.key == key {",
+"\t\t\ts.count++",
+"\t\t\ts.last = c.t",
+"\t\t\treturn \"hit\"",
+"\t\t}",
+"\t}",
+"\tif len(c.slots) < 4 {",
+"\t\tc.slots = append(c.slots, &slot{key, 1, c.t})",
+"\t\treturn \"miss\"",
+"\t}",
+"\tv := c.victim()",
+"\tout := c.slots[v].key",
+"\tc.slots[v] = &slot{key, 1, c.t}",
+"\treturn \"miss, threw out \" + out",
+"}",
+"",
+"// no decay and no scan path here: the lesson's failures stay visible"
+],
+"map": {
+"1": [
+16
+],
+"2": [
+17
+],
+"3": [
+18,
+19
+],
+"4": [
+20,
+21
+],
+"5": [
+22
+],
+"6": [
+25,
+26,
+27
+],
+"8": [
+29
+],
+"9": [
+30,
+31
+],
+"10": [
+31
+],
+"12": [
+9,
+10
+],
+"13": [
+5,
+6,
+7
+],
+"14": [
+35
+],
+"15": [
+35
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=plan[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(plan[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=plan[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

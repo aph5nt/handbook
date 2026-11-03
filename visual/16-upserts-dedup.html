@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upserts and dedup</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.cell{transition:fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.cell{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Upserts and deduplication</h1>
+  <p class="lede">The indexer writes swap 9507 log 1 three times: once with a bug, once fixed, and once more from a late replay. Press <b>Next</b> to see a primary-key table keep one correct row, and an append-only table count it three times.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pk" id="tab-pk">Primary-key table with version</button>
+    <button role="tab" aria-selected="false" data-mode="append" id="tab-append">Append-only table (the trap)</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Three writes of one swap on the left, the table on the right</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this exact story, is in <code>handbook/code/16-upserts-dedup/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="pconly" style="display:none"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">write arriving</span>
+    <span style="--c:var(--svc)">row stored</span>
+    <span style="--c:var(--ok)">the correct row</span>
+    <span style="--c:var(--undo)">older write ignored</span>
+    <span style="--c:var(--line)">done or ignored</span>
+    <span style="--c:var(--fail)">wrong or duplicated</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: a chain warehouse</h2>
+      <p>Swap and transfer facts in StarRocks primary-key tables, keyed by block height and log index. A re-index or a replay overwrites, never duplicates.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: change data capture and queues</h2>
+      <p>Debezium rows from Postgres are upserted by primary key with the log position as the version. A Kafka consumer deduplicates by event id before it sends an email.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Upsert with version</th><th>Last write wins</th><th>Append only</th></tr>
+      <tr><td>One swap written three times</td><td>One correct row</td><td>One row, maybe the old one</td><td>Three rows</td></tr>
+      <tr><td>A late replay of old data</td><td>Ignored</td><td>Overwrites the fix</td><td>Adds a row</td></tr>
+      <tr><td>Read side</td><td>Plain reads</td><td>Plain reads</td><td>Every reader must deduplicate</td></tr>
+      <tr><td>Write cost</td><td>Key lookup per row</td><td>Key lookup per row</td><td>Cheapest</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Key every row by the event and upsert with a version, so a replay or a fix leaves exactly one correct row."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const F='font-family="Atkinson Hyperlegible,system-ui"';
+const ink=c=>c==="var(--line)"||c==="var(--panel)"?"var(--fg)":"#fff";
+function B(x,y,w,h,c,rx=8,extra=""){return `<rect class="cell" x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" fill="${c}" ${extra}/>`;}
+function T(x,y,t,o={}){return `<text x="${x}" y="${y}" ${F} font-size="${o.s||14}" font-weight="${o.w||700}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}">${t}</text>`;}
+function L(x1,y1,x2,y2,c="var(--fg)",lab="",dash=false){return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':""} marker-end="url(#arr)"/>${lab?T((x1+x2)/2,(y1+y2)/2-7,lab,{c}):""}</g>`;}
+function M(inner){return `<g class="msg">${inner}</g>`;}
+function chip(x,y,w,h,c,a,b){return B(x,y,w,h,c,h/2)+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:ink(c)})+(b?T(x+w/2,y+h/2+13,b,{c:ink(c),w:400,s:12}):"");}
+const code={"pk": {"label": "Go", "pc": ["key = (block height, log index)            # names the event", "upsert(row):", "  old = table[row.key]", "  if no old: insert row", "  else if row.version < old.version: ignore  # an older write never wins", "  else: update row", "# without the version check: the last arrival always wins", "version = decoder version, or a change-log position"], "real": ["// Key names the event: block height plus log index.", "type Key struct {", "\tBlock, Log int", "}", "", "type Row struct {", "\tKey     Key", "\tVersion int", "\tAmount  float64", "}", "", "// Upsert updates the row if the key exists, inserts it if not. With a", "// version, an older write never beats a newer one.", "func (t *Table) Upsert(r Row) string {", "\told, ok := t.rows[r.Key]", "\tif !ok {", "\t\tt.rows[r.Key] = r", "\t\treturn \"insert\"", "\t}", "\tif t.useVersion && r.Version < old.Version {", "\t\treturn fmt.Sprintf(\"ignored: version %d < %d\", r.Version, old.Version) // version 1 < 2", "\t}", "\tt.rows[r.Key] = r", "\treturn \"update\"", "}"], "map": {"1": [1, 2, 3, 4], "2": [14], "3": [15], "4": [16, 17, 18], "5": [20, 21], "6": [23, 24], "7": [20], "8": [8]}}, "append": {"label": "SQL", "pc": ["on each write: INSERT a new row            # no key, no check", "daily volume = SUM(amount) over all rows   # one swap counted 3 times", "# missing: a key per event, so a replay overwrites", "if the table cannot upsert, dedup at read:", "  keep one row per (block, log), the highest version"], "real": ["-- append only: every write adds a row", "INSERT INTO swaps_append (block_height, log_index, version, amount)", "VALUES (9507, 1, 1, 125), (9507, 1, 2, 12.5), (9507, 1, 1, 125);", "", "-- 262.5, the truth is 12.5", "SELECT sum(amount) FROM swaps_append;", "", "-- the fix at write time: a primary-key table keyed by the event", "CREATE TABLE swaps (block_height BIGINT, log_index INT,", "                    version INT, amount DECIMAL(38, 9))", "PRIMARY KEY (block_height, log_index);", "", "-- or deduplicate at read: one row per key, highest version", "SELECT * FROM (", "  SELECT *, ROW_NUMBER() OVER (PARTITION BY block_height, log_index", "                               ORDER BY version DESC) AS rn", "  FROM swaps_append) t", "WHERE rn = 1;"], "map": {"1": [1, 2, 3], "2": [5, 6], "4": [13, 14, 17, 18], "5": [15, 16]}}};
+
+const W=(c1,c2,c3)=>[[40,50,250,56,c1,"write 1: version 1","amount 125 (bug)"],[40,130,250,56,c2,"write 2: version 2","amount 12.5 (fixed)"],[40,210,250,56,c3,"write 3: version 1","replay after a crash"]];
+const ROW=(y,c,a,b,d)=>[400,y,460,56,c,a,b,d];
+const K="swap 9507 · log 1";
+const steps={
+"pk":[
+ {pc:[1, 2, 3, 4],t:"First write",b:"The Go indexer writes swap 9507 log 1 into a primary-key table. The key is block height plus log index. The decoder has a bug: amount 125.",w:"The key names the event. Every later write of this swap targets the same row.",bx:W("w","l","l").concat([ROW(90,"s",K,"version 1, amount 125")]),ln:[[290,78,398,118,"w","insert"]],tx:[[630,60,"primary-key table","fg"]],bar:"Upsert: update if the key exists, insert if not"},
+ {pc:[2, 3, 6],t:"A fix writes version 2",b:"After the decoder fix, the same swap is written again as version 2 with amount 12.5. The key exists, so the row is updated.",w:"Still one row. The corrected amount replaced the wrong one.",bx:W("l","w","l").concat([ROW(90,"o",K,"version 2, amount 12.5")]),ln:[[290,158,398,118,"w","update"]],tx:[[630,60,"primary-key table","fg"]],bar:"Upsert: update if the key exists, insert if not"},
+ {pc:[5],t:"A late replay of version 1",b:"A crash makes an old worker replay version 1. The key 9507 log 1 exists, so the upsert compares versions: the incoming 1 is lower than the stored 2.",w:"The older write is ignored. The higher version wins, not the later arrival.",bx:W("l","l","u").concat([ROW(90,"o",K,"version 2, amount 12.5")]),ln:[[290,238,398,130,"u","",true]],tx:[[630,60,"primary-key table","fg"],[630,190,"write 3 ignored: version 1 < 2","u"]],bar:"Keep the row with the higher version"},
+ {pc:[7, 6],t:"The failure that matters",b:"Without a version column, the table keeps the last write it receives. The late replay of version 1 overwrites the fix. Amount 125 is back.",w:"Last-write-wins with no version lets old data beat new data. Fix: compare a version or a source position.",bx:W("l","l","f").concat([ROW(90,"f",K,"version 1, amount 125 again")]),ln:[[290,238,398,130,"f"]],tx:[[630,60,"no version column","f"],[630,190,"write 3 overwrites the fix","f"]],bar:"Last write wins",fail:true},
+ {pc:[5, 8],t:"The fix",b:"Every row carries a version: the decoder version, or a log position from change data capture. The upsert keeps the higher one.",w:"Key every row by the event and upsert with a version, so a replay or a fix leaves exactly one correct row.",bx:W("l","l","l").concat([ROW(90,"o",K,"version 2, amount 12.5")]),tx:[[630,60,"primary-key table with version","fg"]],bar:"MERGE ... WHEN MATCHED AND new.version > old.version"}
+],
+"append":[
+ {pc:[1],t:"An append-only table",b:"Here the same writes go into a plain append-only table. Every write adds a row.",w:"Append is the fastest write. Watch what it costs.",bx:W("w","l","l").concat([ROW(50,"s",K,"version 1, amount 125")]),ln:[[290,78,398,78,"w","append"]],bar:"INSERT every write"},
+ {pc:[1],t:"The fix adds a row",b:"Version 2 lands as a second row. The wrong row is still there.",w:"Two rows now describe one swap.",bx:W("l","w","l").concat([ROW(50,"s",K,"version 1, amount 125"),ROW(130,"s",K,"version 2, amount 12.5")]),ln:[[290,158,398,158,"w","append"]],bar:"INSERT every write"},
+ {pc:[1],t:"The replay adds a third",b:"The replay of version 1 lands as a third row.",w:"Three rows for one swap.",bx:W("l","l","w").concat([ROW(50,"s",K,"version 1, amount 125"),ROW(130,"s",K,"version 2, amount 12.5"),ROW(210,"s",K,"version 1, amount 125")]),ln:[[290,238,398,238,"w","append"]],bar:"INSERT every write"},
+ {pc:[2, 3],t:"The failure that matters",b:"Daily volume sums all three rows: 262.5 instead of 12.5. The same happens when the key is an auto-increment id: every replay is a new row.",w:"Without an event key, at-least-once delivery becomes double counting.",bx:W("l","l","l").concat([ROW(50,"f",K,"version 1, amount 125"),ROW(130,"f",K,"version 2, amount 12.5"),ROW(210,"f",K,"version 1, amount 125")]),tx:[[630,300,"sum: 262.5, truth: 12.5","f"]],bar:"SUM(amount) counts one swap three times",fail:true},
+ {pc:[4, 5],t:"Deduplicate at read",b:"If the table cannot upsert, readers keep one row per key: the one with the highest version. The other two are ignored.",w:"It works, but every reader must remember to do it. An upsert at write time is safer.",bx:W("l","l","l").concat([ROW(50,"l",K,"version 1: ignored"),ROW(130,"o",K,"version 2: kept"),ROW(210,"l",K,"version 1: ignored")]),bar:"ROW_NUMBER() OVER (PARTITION BY key ORDER BY version DESC) = 1"}
+]};
+
+const C={c:"var(--coord)",s:"var(--svc)",o:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",p:"var(--panel)"};
+function draw(s){
+  let o="";
+  (s.ln||[]).forEach(([x1,y1,x2,y2,c,lab,d])=>o+=L(x1,y1,x2,y2,C[c]||c,lab||"",d));
+  (s.bx||[]).forEach(([x,y,w,h,c,a,b,dash])=>{const f=C[c];o+=B(x,y,w,h,f,8,dash?'stroke="var(--fail)" stroke-width="2" stroke-dasharray="6 4"':(c==="p"?'stroke="var(--line)"':""))+T(x+w/2,y+(b?h/2-3:h/2+5),a,{c:dash?"var(--fail)":ink(f),s:14})+(b?T(x+w/2,y+h/2+14,b,{c:dash?"var(--fail)":ink(f),w:400,s:12}):"");});
+  (s.tx||[]).forEach(([x,y,t,c,a])=>o+=T(x,y,t,{c:C[c]||"var(--muted)",a:a||"middle"}));
+  if(s.bar)o+=B(20,s.barY||320,860,40,s.fail?"var(--fail)":"var(--coord)")+T(450,(s.barY||320)+26,s.bar,{c:"#fff",s:15});
+  return o;
+}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code._,s=steps[mode][i],pcs=s.pc||[];
+  const real=c.real&&view==="real";const lines=real?c.real:c.pc;
+  let hl=new Set(pcs);
+  if(real){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";$("realtab").style.display=c.real?"":"none";
+  $("pconly").style.display=c.real?"none":"";$("pconly").textContent=c.real?"":("Pseudo code only: "+(c.why||""));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s);
+  document.querySelectorAll("#scene .msg").forEach((el,k)=>{RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),120*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

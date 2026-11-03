@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inbox pattern</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+svg text{paint-order:stroke}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs{margin:8px 0}
+#codetabs button[aria-pressed="true"]{background:var(--coord);color:#fff;border-color:var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>The inbox: remembering what was processed</h1>
+  <p class="lede">The shipping service receives OrderPlaced events. A broker may deliver one twice. The shipping service keeps an inbox table of event ids it has processed. Press <b>Next</b> to see why the inbox row and the effect must share one transaction, and how long to keep the rows.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="same">One transaction</button>
+    <button role="tab" aria-selected="false" data-mode="split">Two steps (the trap)</button>
+    <button role="tab" aria-selected="false" data-mode="clean">How long to keep it</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title">
+      <title id="stage-title">Animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code" id="codecard">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story: <code>handbook/code/04-inbox/main.go</code> (<code>go run .</code>). <span id="codenote"></span></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">service</span>
+    <span style="--c:var(--svc)">broker or database</span>
+    <span style="--c:var(--wait)">in progress</span>
+    <span style="--c:var(--ok)">processed once</span>
+    <span style="--c:var(--fail)">duplicate or lost</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Any at-least-once consumer whose effect is a database write: an <code>inbox(message_id primary key)</code> table next to the business tables. MassTransit, NServiceBus and Axon ship it built in.</p>
+    </div>
+    <div class="card">
+      <h2>When the effect is not in your database</h2>
+      <p>Calling a courier or payment API cannot join your transaction. Pass the event id to the API as its idempotency key, so the remote side deduplicates for you.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Inbox in the same transaction</th><th>Inbox written separately</th></tr>
+      <tr><td>Crash after the effect</td><td>Both rolled back or both kept</td><td>Effect kept, no inbox row: done twice</td></tr>
+      <tr><td>Crash after the inbox row</td><td>Both rolled back or both kept</td><td>Inbox row kept, no effect: lost</td></tr>
+      <tr><td>Duplicate delivery</td><td>Unique key conflict, skip</td><td>Depends on where it crashed</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"The inbox is the outbox's mirror on the consumer side: I store the message id in the same transaction as the effect, so a redelivery finds it and does nothing."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const C={idle:["var(--line)","var(--fg)"],busy:["var(--wait)","#fff"],ok:["var(--ok)","#fff"],fail:["var(--fail)","#fff"],main:["var(--coord)","#fff"],svc:["var(--svc)","#fff"],undo:["var(--undo)","#fff"],off:["none","var(--muted)"]};
+const col=st=>st==="idle"?"var(--muted)":(C[st]||[ "var(--fg)"])[0];
+function box(x,y,w,h,st,label,sub){const [f,t]=C[st]||C.idle;const cx=x+w/2,cy=y+h/2;
+  return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="5 4"/><text x="${cx}" y="${sub?cy-3:cy+6}" font-size="16" font-weight="700" fill="${t}">${label}</text>`+(sub?`<text x="${cx}" y="${cy+17}" font-size="13" fill="${t}">${sub}</text>`:"");}
+function arrow(x1,y1,x2,y2,label,st,dash){const c=st?col(st):"var(--fg)";
+  return `<g class="msg"><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)"${dash?' stroke-dasharray="6 5"':""}/>`+(label?`<rect x="${(x1+x2)/2-String(label).length*4.1-6}" y="${(y1+y2)/2-11}" width="${String(label).length*8.2+12}" height="22" rx="5" fill="var(--panel)" stroke="${c}" stroke-width="1"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+5}" font-size="14" font-weight="700" fill="${c}">${label}</text>`:"")+`</g>`;}
+function chip(x,y,w,label,st){const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="${x}" y="${y}" width="${w}" height="26" rx="13" fill="${f}" stroke="${st==="off"?"var(--line)":"none"}" stroke-dasharray="4 3"/><text x="${x+w/2}" y="${y+18}" font-size="13" font-weight="700" fill="${t}">${label}</text></g>`;}
+function note(y,txt,st){if(!txt)return"";const [f,t]=C[st]||C.idle;
+  return `<g class="msg"><rect x="60" y="${y}" width="780" height="32" rx="16" fill="${f}"/><text x="450" y="${y+22}" font-size="15" font-weight="700" fill="${t}">${txt}</text></g>`;}
+function gdraw(s,base){let h="";const N=Object.assign({},base||{},s.nd||{});
+  for(const k in N){const n=N[k];if(n)h+=box(n[0],n[1],n[2],n[3],n[4],n[5],n[6]);}
+  (s.ar||[]).forEach(a=>h+=arrow(...a));(s.ch||[]).forEach(c=>h+=chip(...c));
+  if(s.n)h+=note(s.n[2]||352,s.n[0],s.n[1]);return h;}
+function seq(A,s){const n=A.length,gap=860/n,X={};A.forEach((a,k)=>X[a[0]]=20+gap*k+gap/2);
+  const w=Math.min(gap-14,180);let h="";
+  A.forEach(a=>{const x=X[a[0]];h+=box(x-w/2,14,w,52,(s.ac&&s.ac[a[0]])||a[2]||"main",a[1],a[3]);
+    h+=`<line x1="${x}" y1="66" x2="${x}" y2="330" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  let y=98;(s.m||[]).forEach(m=>{
+    if(m[0]==="x"){h+=`<g class="msg"><rect x="20" y="${y-15}" width="860" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="450" y="${y+4}" fill="var(--fail)" font-weight="700" font-size="14">${m[1]}</text></g>`;y+=34;return;}
+    const [f,t,l,st,d]=m;
+    if(f===t)h+=chip(X[f]-Math.min(gap/2-4,110),y-13,Math.min(gap-8,220),l,st||"idle");
+    else{const x1=X[f],x2=X[t],dir=x2>x1?1:-1;h+=arrow(x1+4*dir,y,x2-6*dir,y,l,st||"main",d);}
+    y+=34;});
+  for(const k in (s.st||{})){const [st,txt]=s.st[k];h+=chip(X[k]-w/2,340,w,txt,st);}
+  if(s.n)h+=note(380,s.n[0],s.n[1]);return h;}
+
+const A=[["k","Kafka","svc","orders.events"],["c","Shipping service","main","consumer"],["db","Postgres","svc","shipments + inbox"]];
+const code={"same": {"label": "Go", "pc": ["consumer, on event e:", "  begin transaction", "    insert e.id into inbox              # unique key", "    if the insert hits the key:", "      roll back; commit the offset; stop   # a duplicate", "    apply the effect: insert shipment", "  commit                                # both, or neither", "  commit the Kafka offset               # a crash before this = redelivery"], "real": ["// inbox row and effect in one transaction", "func (d *DB) handle(id string, day int) string {", "\tif _, seen := d.inbox[id]; seen {", "\t\treturn \"duplicate: rolled back, skipped\" // unique key", "\t}", "\td.inbox[id] = day", "\td.shipments[id]++", "\treturn \"committed\"", "}", "", "// SQL form of the same thing:", "// BEGIN;", "// INSERT INTO inbox(event_id) VALUES ($1);  -- a unique key", "// INSERT INTO shipments(...) VALUES (...);", "// COMMIT;"], "map": {"1": [2], "2": [12], "3": [6, 13], "4": [3], "5": [4], "6": [7], "7": [8, 15], "8": [8]}}, "split": {"label": "Go", "pc": ["effect first, in two commits:", "  commit: insert shipment", "  # a crash here: no inbox row", "  commit: insert inbox row", "inbox first, in two commits:", "  commit: insert inbox row", "  # a crash here: marked done, no shipment", "  commit: insert shipment", "the fix: both writes in one transaction", "  an external API: send e.id as its idempotency key"], "real": ["// effect first", "d.shipments[\"evt-601\"]++ // committed", "// crash here: the inbox row was never written", "if _, seen := d.inbox[\"evt-601\"]; !seen {", "\td.shipments[\"evt-601\"]++ // redelivered: shipped again", "}", "", "// inbox first", "d.inbox[\"evt-602\"] = 1 // committed", "// crash here: the shipment was never written", "_, seen := d.inbox[\"evt-602\"] // true: skipped, shipped 0 times", "", "// the fix: one transaction", "fmt.Println(\"the fix, one transaction:\", d.handle(\"evt-603\", 30))"], "map": {"1": [1], "2": [2], "3": [2, 3], "4": [4, 5], "5": [8], "6": [9], "7": [10], "8": [11], "9": [14], "10": [13]}}, "clean": {"label": "Go", "pc": ["every event adds a row to the inbox", "the oldest possible duplicate = the topic's retention, 7 days", "cleanup, every night:", "  delete inbox rows older than retention + 1 day     # 8 days", "if cleanup is shorter than a replay window:", "  the inbox forgets; replayed events run again", "with strict order per partition:", "  store only the last offset, in the same transaction", "  offset <= last means a duplicate"], "real": ["// cleanup deletes inbox rows older than keepDays.", "func (d *DB) cleanup(today, keepDays int) {", "\tfor id, day := range d.inbox {", "\t\tif today-day > keepDays {", "\t\t\tdelete(d.inbox, id)", "\t\t}", "\t}", "}", "", "d.cleanup(30, 8) // retention 7 days + 1 day margin", "fmt.Println(\"replay from day 25 with 8 days kept:\", d.handle(\"evt-day-25\", 30))", "", "d.cleanup(30, 1) // the trap", "fmt.Println(\"replay from day 25 after cleanup at 1 day:\", d.handle(\"evt-day-25\", 30))", "", "// an inbox of one row: strict order per partition", "duplicate := off <= last[partition]"], "map": {"1": [11], "2": [10], "3": [2], "4": [4, 5], "5": [13], "6": [14], "7": [16], "8": [17], "9": [17]}}};
+const steps={
+"same":[
+ {pc:[1],t:"An event arrives",b:"Kafka delivers OrderPlaced with event id evt-501 to the shipping service.",w:"The event id is set once by the producer and never changes on redelivery.",m:[["k","c","OrderPlaced evt-501"]],st:{c:["busy","processing"]}},
+ {pc:[2, 3, 6, 7],t:"Inbox row and effect together",b:"The service begins a transaction, inserts evt-501 into the inbox table, inserts the shipment, and commits. The two rows commit together, or neither does.",w:"The inbox table's primary key is the event id. Both rows commit or neither does.",m:[["k","c","OrderPlaced evt-501"],["c","db","begin","main"],["c","db","insert inbox evt-501","main"],["c","db","insert shipment, commit","ok"]],st:{db:["ok","1 shipment, inbox: 501"]}},
+ {pc:[8],t:"Crash before the offset commit",b:"The pod is killed before it commits the Kafka offset. The shipment and the inbox row are safe. Kafka still thinks evt-501 is unread.",w:"Kafka will deliver evt-501 again. That is at-least-once, and it is fine.",m:[["x","pod killed before offset commit"]],ac:{c:"fail"},st:{k:["busy","offset not committed"],db:["ok","1 shipment, inbox: 501"]}},
+ {pc:[1, 2, 3],t:"Redelivery",b:"The restarted pod receives evt-501 again and tries the same transaction.",w:"The inbox insert hits the primary key.",m:[["k","c","OrderPlaced evt-501 again","busy"],["c","db","insert inbox evt-501","busy"],["db","c","conflict: already there","ok"]],st:{db:["ok","1 shipment, inbox: 501"]}},
+ {pc:[4, 5],t:"Skip and move on",b:"The inbox insert hits the unique key on event id. So the service rolls back, skips the event, and commits the offset. evt-501 shipped 1 time.",w:"One shipment, however many deliveries.",m:[["c","c","skip evt-501","ok"],["c","k","commit offset","ok"]],st:{k:["ok","committed"],db:["ok","still 1 shipment"]},n:["Delivered twice, shipped once","ok"]}
+],
+"split":[
+ {pc:[2, 3, 4],t:"Effect first, inbox later",b:"A second version creates the shipment and commits, then writes the inbox row in a separate statement. Each write commits on its own.",w:"Two commits means a moment between them.",m:[["k","c","OrderPlaced evt-601"],["c","db","insert shipment, commit","ok"]],st:{db:["ok","1 shipment, inbox: empty"]}},
+ {pc:[3],t:"Crash in the gap",b:"The pod is killed after the shipment commit and before the inbox write.",w:"The effect happened. The memory of it did not.",m:[["c","db","insert shipment, commit","ok"],["x","pod killed"]],ac:{c:"fail"},st:{db:["busy","1 shipment, inbox: empty"]}},
+ {pc:[4],t:"The failure: shipped twice",b:"evt-601 is redelivered. The check finds no inbox row, so the service creates a second shipment: shipped 2 times.",w:"Two parcels for one order.",m:[["k","c","OrderPlaced evt-601 again","busy"],["c","db","inbox: not found","busy"],["c","db","insert shipment, commit","fail"]],st:{db:["fail","2 shipments"]},n:["Two parcels for one order","fail"]},
+ {pc:[6, 7, 8],t:"The other order is no better",b:"Write the inbox row first, then the shipment, in two commits. A crash between them leaves evt-602 in the inbox. On redelivery the check says seen, so it is skipped: shipped 0 times.",w:"Now the order is never shipped, and the redelivery is skipped.",m:[["c","db","insert inbox evt-602, commit","ok"],["x","pod killed"],["k","c","evt-602 again"],["db","c","already done: skip","fail"]],st:{db:["fail","order 602 never shipped"]},n:["Marked done, never shipped","fail"]},
+ {pc:[9, 10],t:"The fix",b:"Put both writes in one transaction, as on the first tab. If the effect is an external API, send the event id as the API's idempotency key.",w:"The inbox only works when it cannot disagree with the effect.",m:[["c","db","begin: inbox + shipment, commit","ok"]],st:{db:["ok","1 shipment, inbox: 602"]}}
+],
+"clean":[
+ {pc:[1],t:"The inbox grows",b:"Every event adds a row. After a year the inbox holds hundreds of millions of rows and its index slows every insert.",w:"The inbox only needs to remember as far back as a duplicate can arrive.",m:[["c","db","insert inbox ...","busy"]],st:{db:["busy","inbox: very large"]}},
+ {pc:[2],t:"How far back can a duplicate come?",b:"The topic keeps messages for 7 days. A consumer reset or replay can redeliver at most 7 days of events.",w:"Older ids can never be delivered again, so they need no memory.",m:[["k","k","retention: 7 days"]],st:{k:["idle","7 days kept"]}},
+ {pc:[3, 4],t:"Delete with a margin",b:"A nightly job deletes rows older than 8 days: the retention plus one day. The check on each row: is today minus its day more than 8? In the run, 9 of 30 rows stay.",w:"The inbox stays small, and covers every duplicate the broker can still produce.",m:[["c","db","delete inbox older than 8 days","ok"]],st:{db:["ok","inbox: 8 days"]}},
+ {pc:[5, 6],t:"The trap: deleting too early",b:"Someone sets the cleanup to 1 day. Then the team replays from day 25, 5 days back. The check finds no row for evt-day-25, so the handler commits again: shipped 2 times.",w:"Inbox retention must be at least as long as any replay you might run.",m:[["c","db","delete inbox older than 1 day","busy"],["k","c","replay from 5 days ago","busy"],["c","db","inbox: not found, ship again","fail"]],st:{db:["fail","thousands of duplicates"]},n:["The inbox forgot what the broker still holds","fail"]},
+ {pc:[7, 8, 9],t:"An inbox of one row",b:"When a partition is processed strictly in order, store the last offset per partition in the same transaction as the effect. The check: is this offset at most the last one? Offset 90 with last 90: yes, a duplicate.",w:"One row per partition instead of one per event. It works only for in-order processing.",m:[["c","db","effect + last offset 9,812, commit","ok"],["k","c","offset 9,810 again"],["c","c","9,810 at or below 9,812: skip","ok"]],st:{db:["ok","one row per partition"]}}
+]};
+function draw(s){return seq(A,s);}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+function render(){
+  const L=steps[mode],s=L[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${L.length}`;
+  $("scene").innerHTML=draw(s,mode);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("scene").querySelectorAll(".msg")].forEach((el,k)=>reduce?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),70*k+30));
+  $("prev").disabled=i===0;$("next").disabled=i===L.length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"){$("codecard").style.display="none";return;}
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codenote").textContent=c.note||"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

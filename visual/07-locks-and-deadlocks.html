@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locks and deadlocks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>Locks and deadlocks: one lock order, or a cycle</h1>
+  <p class="lede">A graph sync writes address nodes in page order: A, then B. A migration writes the same nodes in key order: B, then A. Watch each take its first lock and wait for the other. Then see the fix, one lock order, and the choice between optimistic and pessimistic writes.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="dead">Deadlock</button>
+    <button role="tab" aria-selected="false" data-mode="order">Fix: one lock order</button>
+    <button role="tab" aria-selected="false" data-mode="opt">Optimistic or pessimistic</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Locks and deadlocks: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a writer</span>
+    <span style="--c:var(--wait)">lock held</span>
+    <span style="--c:var(--coord)">waiting for a lock</span>
+    <span style="--c:var(--ok)">committed</span>
+    <span style="--c:var(--undo)">aborted by the engine</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>An indexer lane has one writer at a time. The lease is one statement: <code>UPDATE lease SET owner = :me, epoch = epoch + 1 WHERE owner IS NULL OR expires &lt; now()</code>. Zero rows means someone else holds it. The epoch fences a stale writer that wakes up late.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Sort keys before writing, so every writer locks in the same order. Keep transactions small. A booking system with many fights for one seat locks first: <code>SELECT ... FOR UPDATE</code>. A profile edit that rarely conflicts uses a version column and retries.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>Pessimistic</th><th>Optimistic</th></tr>
+      <tr><td>How</td><td>Lock first, then write: <code>SELECT ... FOR UPDATE</code></td><td>Write with a check: <code>UPDATE ... WHERE version = :seen</code></td></tr>
+      <tr><td>On conflict</td><td>The second writer waits in line</td><td>Zero rows changed, so re-read and retry</td></tr>
+      <tr><td>Fits</td><td>Many writers fight for the same row</td><td>Conflicts are rare</td></tr>
+      <tr><td>Trap</td><td>Deadlocks if lock order differs; lock escalation to a whole table</td><td>Retries for ever under heavy contention (live-lock)</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Prevent deadlocks with one lock order, and pick optimistic or pessimistic by how often writers collide."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const wr=(sk,mk,so,mo)=>[B(40,60,220,"graph sync",sk||"s",44),B(640,60,220,"migration",mk||"s",44),T(40,130,so||"order: A, then B","f"),T(860,130,mo||"order: B, then A","f","end")];
+const nodes=(ak,al,bk,bl)=>[B(300,220,120,"node A",ak||"n",44),B(480,220,120,"node B",bk||"n",44),T(360,290,al||"free","f","middle"),T(540,290,bl||"free","f","middle")];
+const sA=k=>A(150,106,350,218,"",k||"w"),sB=(k,d)=>A(200,106,520,218,"",k||"r",d),mB=k=>A(750,106,550,218,"",k||"w"),mA=(k,d)=>A(700,106,380,218,"",k||"r",d);
+const ed=(r,rk,x,y)=>[B(40,60,220,"Ana edits",rk||"s",44),B(640,60,220,"Ben edits",y||"s",44),B(330,220,240,r,x||"n",44)];
+const seat=(bk,sk,lab,ex)=>[B(370,220,160,"seat 12A",sk,44),...Array.from({length:6},(_,j)=>B(40+140*j,60,120,"buyer "+(j+1),bk[j],40))].concat(ex||[]);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-locks-and-deadlocks/main.go</code> is a tiny lock manager with a wait-for graph. It replays the graph sync and the migration, then profile 7 and seat 12A, and prints every value quoted here (<code>go run .</code>).";
+const CODE={
+dead:{pc:["sync order A, B · migration order B, A",
+"lock(tx, node):",
+"  if another tx holds node: add tx -> node to the wait-for graph, wait",
+"  else: tx becomes the holder of node",
+"sync: lock A",
+"migration: lock B",
+"sync: lock B -> waits",
+"migration: lock A -> waits",
+"detect: follow the waits from tx; back at tx = deadlock",
+"abort the victim: release its locks; the other commits",
+"retry the victim: same orders, same risk next run"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Lock asks for an exclusive lock. If another transaction holds it,", "// the caller waits: an edge goes into the wait-for graph.", "func (t *LockTable) Lock(tx, node string) bool {", "\tif h, ok := t.holder[node]; ok && h != tx {", "\t\tt.waits[tx] = node", "\t\treturn false", "\t}", "\tt.holder[node] = tx", "\tdelete(t.waits, tx)", "\treturn true", "}"],[""],["// Cycle follows the wait-for graph from tx: tx waits for a node,", "// the node's holder waits for another node, and so on.", "// It returns the path when the walk comes back to tx: a deadlock.", "func (t *LockTable) Cycle(tx string) []string {", "\tpath := []string{tx}", "\tcur := tx", "\tfor len(path) < 20 {", "\t\tnode, ok := t.waits[cur]", "\t\tif !ok {", "\t\t\treturn nil // somebody in the chain is running: no cycle", "\t\t}", "\t\th := t.holder[node]", "\t\tpath = append(path, node, h)", "\t\tif h == tx {", "\t\t\treturn path", "\t\t}", "\t\tcur = h", "\t}", "\treturn nil", "}"],[""],["// Release is commit or abort: every lock of tx is freed.", "func (t *LockTable) Release(tx string) {", "\tfor node, h := range t.holder {", "\t\tif h == tx {", "\t\t\tdelete(t.holder, node)", "\t\t}", "\t}", "\tdelete(t.waits, tx)", "}"],[""],["func twoOrders() {", "\tfmt.Println(\"== two writers, two lock orders\")", "\tt := NewLockTable()", "\tsync := []string{\"A\", \"B\"}      // page order", "\tmigration := []string{\"B\", \"A\"} // key order", "\tfmt.Printf(\"sync order %v, migration order %v\\n\", sync, migration)", "\tfmt.Printf(\"sync locks A: %v\\n\", t.Lock(\"sync\", sync[0]))", "\tfmt.Printf(\"migration locks B: %v\\n\", t.Lock(\"migration\", migration[0]))", "\tfmt.Printf(\"sync locks B: %v, sync waits\\n\", t.Lock(\"sync\", sync[1]))", "\tfmt.Printf(\"cycle from sync: %d steps, none (the migration still runs)\\n\", len(t.Cycle(\"sync\")))", "\tfmt.Printf(\"migration locks A: %v, migration waits\\n\", t.Lock(\"migration\", migration[1]))", "\tcycle := t.Cycle(\"migration\")", "\tfmt.Printf(\"cycle from migration: %s: a deadlock\\n\", strings.Join(cycle, \" -> \"))", "\tt.Release(\"migration\") // the engine picks a victim and aborts it", "\tfmt.Println(\"engine aborts migration: its lock on B is freed, its work is thrown away\")", "\tfmt.Printf(\"sync locks B: %v, sync commits\\n\", t.Lock(\"sync\", \"B\"))", "\tt.Release(\"sync\")", "\tok := t.Lock(\"migration\", \"B\") && t.Lock(\"migration\", \"A\")", "\tt.Release(\"migration\")", "\tfmt.Printf(\"migration retries alone: %v; the same two orders can deadlock again\\n\", ok)", "}"]),
+  map:[["sync order A, B","// page order","// key order","sync order %v, migration order"],["lock(tx, node):","func (t *LockTable) Lock("],
+   ["if another tx holds node","if h, ok := t.holder[node]; ok..return false"],["else: tx becomes the holder","t.holder[node] = tx..return true"],
+   ["=sync: lock A#1","sync locks A"],["migration: lock B","migration locks B"],["sync: lock B -> waits","sync waits","cycle from sync"],["migration: lock A -> waits","migration waits"],
+   ["detect: follow the waits","func (t *LockTable) Cycle(..return path","cycle := t.Cycle..a deadlock"],
+   ["abort the victim","func (t *LockTable) Release(..delete(t.waits, tx)","the engine picks a victim","engine aborts migration","sync commits"],
+   ["retry the victim","ok := t.Lock(\"migration\", \"B\")..can deadlock again"]]}]},
+order:{pc:["sync wants A, B · migration wants B, A",
+"sort both key lists: both become A, B",
+"sync: lock A",
+"migration: lock A -> waits, holding nothing",
+"a waiter that holds no lock closes no cycle",
+"sync: lock B, commit, release both",
+"migration: lock A, lock B, commit · aborted 0"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// Lock asks for an exclusive lock. If another transaction holds it,", "// the caller waits: an edge goes into the wait-for graph.", "func (t *LockTable) Lock(tx, node string) bool {", "\tif h, ok := t.holder[node]; ok && h != tx {", "\t\tt.waits[tx] = node", "\t\treturn false", "\t}", "\tt.holder[node] = tx", "\tdelete(t.waits, tx)", "\treturn true", "}"],[""],["func oneOrder() {", "\tfmt.Println(\"== fix: both writers sort their keys\")", "\tt := NewLockTable()", "\tsync := []string{\"A\", \"B\"}", "\tmigration := []string{\"B\", \"A\"}", "\tsort.Strings(sync)", "\tsort.Strings(migration) // now A, B as well", "\tfmt.Printf(\"sync order %v, migration order %v\\n\", sync, migration)", "\tfmt.Printf(\"sync locks A: %v\\n\", t.Lock(\"sync\", sync[0]))", "\twaited := !t.Lock(\"migration\", migration[0])", "\theld := t.Held(\"migration\")", "\tfmt.Printf(\"migration waits for A: %v, locks it holds while waiting: %d\\n\", waited, held)", "\tfmt.Printf(\"cycle from migration: %d steps, none\\n\", len(t.Cycle(\"migration\")))", "\tfmt.Printf(\"sync locks B: %v, sync commits\\n\", t.Lock(\"sync\", sync[1]))", "\tt.Release(\"sync\")", "\tok := t.Lock(\"migration\", migration[0]) && t.Lock(\"migration\", migration[1])", "\tt.Release(\"migration\")", "\tfmt.Printf(\"migration locks A then B: %v, commits; aborted: 0\\n\", ok)", "}"]),
+  map:[["sync wants A, B","sync := []string{\"A\", \"B\"}","migration := []string{\"B\", \"A\"}"],["sort both key lists","sort.Strings(sync)..sync order %v"],
+   ["sync: lock A","sync locks A"],["migration: lock A -> waits","waited := !t.Lock","if h, ok := t.holder[node]; ok..return false"],
+   ["a waiter that holds no lock","held := t.Held..cycle from migration"],["sync: lock B, commit","sync locks B..t.Release(\"sync\")"],
+   ["migration: lock A, lock B","ok := t.Lock(\"migration\", migration[0])..aborted: 0"]]}]},
+opt:{pc:["read row 7 and its version, no lock",
+"UPDATE ... SET version = version + 1 WHERE id = 7 AND version = seen",
+"  version matches: 1 row, the write lands",
+"  version moved: 0 rows, someone else won",
+"on 0 rows: re-read the version, apply the edit again",
+"seat 12A: six buyers each take a payment hold, write at version 1",
+"  one write lands, five get 0 rows: their work is wasted",
+"pessimistic: SELECT ... FOR UPDATE first",
+"  the holder pays once, the others wait, then read sold"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// UpdateIfVersion is UPDATE ... SET version = version + 1 WHERE id = :id AND version = :seen.", "// It returns the number of rows changed.", "func (r *Row) UpdateIfVersion(seen int, who string) (rows int) {", "\tif r.version != seen {", "\t\treturn 0", "\t}", "\tr.version++", "\tr.holder = who", "\treturn 1", "}"],[""],["func optimistic() {", "\tfmt.Println(\"== optimistic: profile 7 with a version column\")", "\tp := &Row{version: 3}", "\tana, ben := p.version, p.version", "\tfmt.Printf(\"Ana reads version %d, Ben reads version %d, no lock taken\\n\", ana, ben)", "\trows := p.UpdateIfVersion(ana, \"Ana\")", "\tfmt.Printf(\"Ana writes WHERE version = %d: %d row, now version %d\\n\", ana, rows, p.version)", "\trows = p.UpdateIfVersion(ben, \"Ben\")", "\tfmt.Printf(\"Ben writes WHERE version = %d: %d rows, someone else won\\n\", ben, rows)", "\tben = p.version // re-read, apply the edit again", "\trows = p.UpdateIfVersion(ben, \"Ben\")", "\tfmt.Printf(\"Ben re-reads %d and writes again: %d row, now version %d\\n\", ben, rows, p.version)", "}"],[""],["func seat() {", "\tfmt.Println(\"== seat 12A, six buyers\")", "\ts := &Row{version: 1}", "\tholds, wasted := 0, 0", "\tfor b := 1; b <= 6; b++ {", "\t\tseen := 1 // all six read the free seat at version 1", "\t\tholds++   // each takes a payment hold before the write", "\t\tif s.UpdateIfVersion(seen, fmt.Sprintf(\"buyer %d\", b)) == 0 {", "\t\t\twasted++ // 0 rows: undo the hold, re-read, retry", "\t\t}", "\t}", "\tfmt.Printf(\"optimistic: winner %s, payment holds %d, writes with 0 rows: %d wasted\\n\", s.holder, holds, wasted)", "", "\tt := NewLockTable()", "\twaiting := 0", "\tfor b := 1; b <= 6; b++ {", "\t\tif !t.Lock(fmt.Sprintf(\"buyer %d\", b), \"12A\") { // SELECT ... FOR UPDATE", "\t\t\twaiting++ // waits in line, holds nothing, does no work yet", "\t\t}", "\t}", "\tfmt.Printf(\"FOR UPDATE: buyer 1 holds the lock, %d wait in line\\n\", waiting)", "\tt.Release(\"buyer 1\") // buyer 1 pays once and commits", "\tfmt.Println(\"FOR UPDATE: buyer 1 buys, the others read sold: payment holds 1, wasted 0\")", "}"]),
+  map:[["read row 7 and its version","ana, ben := p.version, p.version","Ana reads version"],["UPDATE ... SET version","func (r *Row) UpdateIfVersion("],
+   ["version matches: 1 row","r.version++..return 1","rows := p.UpdateIfVersion(ana","Ana writes WHERE"],
+   ["version moved: 0 rows","if r.version != seen {..return 0","rows = p.UpdateIfVersion(ben, \"Ben\")#1","Ben writes WHERE"],
+   ["on 0 rows: re-read","ben = p.version..Ben re-reads"],
+   ["seat 12A: six buyers","s := &Row{version: 1}..if s.UpdateIfVersion(seen"],["one write lands, five","wasted++ // 0 rows","optimistic: winner"],
+   ["pessimistic: SELECT","t := NewLockTable()..buyer 1 holds the lock"],["the holder pays once","t.Release(\"buyer 1\")..the others read sold"]]},
+ {v:"pg",label:"PostgreSQL, not run here",lines:["-- optimistic: a version column",
+"SELECT name, version FROM profile WHERE id = 7;      -- version 3",
+"UPDATE profile SET name = 'Ana', version = version + 1",
+"WHERE id = 7 AND version = 3;                       -- 1 row, then 0 for Ben",
+"",
+"-- optimistic seat: six buyers send this",
+"UPDATE seats SET holder = :me, version = 2",
+"WHERE id = '12A' AND version = 1;                   -- 1 row once, 0 rows five times",
+"",
+"-- pessimistic: lock the seat first",
+"BEGIN;",
+"SELECT * FROM seats WHERE id = '12A' FOR UPDATE;    -- the others wait here",
+"UPDATE seats SET holder = 'buyer 1' WHERE id = '12A';",
+"COMMIT;                                             -- the next buyer reads sold"],
+  map:[["read row 7 and its version","SELECT name, version"],["UPDATE ... SET version","UPDATE profile SET..1 row, then 0"],["version matches: 1 row","1 row, then 0"],["version moved: 0 rows","1 row, then 0"],
+   ["on 0 rows: re-read","SELECT name, version"],["seat 12A: six buyers","-- optimistic seat","UPDATE seats SET holder = :me..0 rows five times"],["one write lands, five","0 rows five times"],
+   ["pessimistic: SELECT","BEGIN;","FOR UPDATE"],["the holder pays once","UPDATE seats SET holder = 'buyer 1'","COMMIT;"]]}]}};
+// CODE PANEL END
+const S={
+dead:{name:"two writers, two nodes",st:[
+ {t:"Start: two writers, two orders",pc:["sync order A, B \u00b7 migration order B, A"],b:"The graph sync writes nodes in page order: A, then B. The migration writes the same nodes in key order: B, then A.",w:"Each needs an exclusive lock on a node before it writes it.",d:wr().concat(nodes())},
+ {t:"The sync locks A",pc:["lock(tx, node):", "  else: tx becomes the holder of node", "sync: lock A"],b:"The graph sync calls lock(sync, A). Nobody holds A, so the lock table records the sync as its holder. The sync writes A.",w:"An exclusive lock lets one writer in and nobody else.",d:wr().concat(nodes("w","held by sync"),[sA()])},
+ {t:"The migration locks B",pc:["  else: tx becomes the holder of node", "migration: lock B"],b:"At the same moment the migration calls lock(migration, B). Nobody holds B, so the migration becomes its holder.",w:"Nothing is wrong yet. Each holds one lock.",d:wr().concat(nodes("w","held by sync","w","held by migration"),[sA(),mB()])},
+ {t:"The sync waits for B",pc:["  if another tx holds node: add tx -> node to the wait-for graph, wait", "sync: lock B -> waits"],b:"The sync calls lock(sync, B). B's holder is the migration, so the call returns false and adds the edge sync -> B to the wait-for graph. The detector walks from the sync: B, then the migration, which waits for nothing. No cycle.",w:"Waiting is normal. The migration will finish and release B. Or will it?",d:wr("r").concat(nodes("w","held by sync","w","held by migration"),[sA(),mB(),sB("r",1)])},
+ {t:"The migration waits for A: a deadlock",pc:["  if another tx holds node: add tx -> node to the wait-for graph, wait", "migration: lock A -> waits", "detect: follow the waits from tx; back at tx = deadlock"],b:"The migration calls lock(migration, A). A's holder is the sync, so it waits too. The detector walks from the migration: migration -> A -> sync -> B -> migration. The walk is back where it started. Neither can ever move.",w:"A deadlock is a cycle of waits. Follow the arrows: sync, B, migration, A, sync.",d:wr("x","x").concat(nodes("x","held by sync","x","held by migration"),[sA("x"),mB("x"),sB("x",1),mA("x",1),T(450,350,"cycle: nobody can move","x","middle",16)])},
+ {t:"The engine aborts one side",pc:["abort the victim: release its locks; the other commits"],b:"The engine picks the migration as the victim and aborts it. Release frees its lock on B. lock(sync, B) now returns true, and the sync commits.",w:"Someone's work is thrown away. The migration must run again.",d:wr("c","u").concat(nodes("c","written by sync","c","written by sync"),[sA("c"),sB("c"),T(860,155,"aborted: deadlock detected","x","end")])},
+ {t:"Retrying is not the fix",pc:["retry the victim: same orders, same risk next run"],b:"The migration retries alone: lock B, then lock A, both true. But its order is still B, then A. The next run beside the sync can build the same cycle.",w:"Retrying treats the symptom. The cause is two writers locking in different orders.",d:wr("c","c").concat(nodes("c","written","c","written"),[T(450,350,"same orders: it will happen again","w","middle",16)])}
+]},
+order:{name:"both writers sort their keys",st:[
+ {t:"Fix: one lock order",pc:["sync wants A, B \u00b7 migration wants B, A", "sort both key lists: both become A, B"],b:"Both writers run sort.Strings on their keys before the first lock. The sync keeps A, B. The migration's B, A becomes A, B.",w:"With one order for every writer, a cycle of waits cannot form.",d:wr(null,null,"order: A, then B","order: A, then B (sorted)").concat(nodes())},
+ {t:"The sync locks A first",pc:["sync: lock A"],b:"The sync calls lock(sync, A) and gets it.",w:"Same start as before.",d:wr(null,null,"order: A, then B","order: A, then B (sorted)").concat(nodes("w","held by sync"),[sA()])},
+ {t:"The migration waits for A, holding nothing",pc:["migration: lock A -> waits, holding nothing", "a waiter that holds no lock closes no cycle"],b:"The migration also starts with A. lock(migration, A) returns false, so it waits. It holds 0 locks while it waits, so the detector finds no cycle.",w:"A waiter that holds nothing cannot be part of a cycle.",d:wr(null,"r","order: A, then B","order: A, then B (sorted)").concat(nodes("w","held by sync"),[sA(),mA("r",1)])},
+ {t:"The sync takes B and commits",pc:["sync: lock B, commit, release both"],b:"lock(sync, B) returns true. The sync writes B and commits. Release frees both A and B.",w:"The wait was short. Nothing was aborted.",d:wr("c","r","order: A, then B","order: A, then B (sorted)").concat(nodes("c","released","c","released"),[sA("c"),sB("c"),mA("r",1)])},
+ {t:"The migration goes next",pc:["migration: lock A, lock B, commit \u00b7 aborted 0"],b:"The migration takes A, then B, and commits. Both writers finished. Aborted: 0.",w:"Sort the keys, keep transactions small and short. Prevention beats retry.",d:wr("c","c","order: A, then B","order: A, then B (sorted)").concat(nodes("c","written by both","c","written by both"),[mA("c"),mB("c")])}
+]},
+opt:{name:"profile row 7, then seat 12A",st:[
+ {t:"Optimistic: both read version 3",pc:["read row 7 and its version, no lock"],b:"Ana and Ben open the same profile. Both read it with version = 3. Nobody takes a lock.",w:"Optimistic: assume no conflict, check at write time.",d:ed("profile 7, version 3").concat([A(150,106,400,218,"","r",1),A(750,106,500,218,"","r",1),T(40,130,"read version 3","f"),T(640,130,"read version 3","f")])},
+ {t:"Ana writes first",pc:["UPDATE ... SET version = version + 1 WHERE id = 7 AND version = seen", "  version matches: 1 row, the write lands"],b:"Ana runs UPDATE profile SET ..., version = 4 WHERE id = 7 AND version = 3. One row changed.",w:"The version check passed, so nobody changed the row since she read it.",d:ed("profile 7, version 4","c","c").concat([A(150,106,400,218,"","c"),T(40,130,"WHERE version = 3","f"),T(40,150,"1 row changed","c"),T(640,130,"read version 3","f")])},
+ {t:"Ben's write changes zero rows",pc:["UPDATE ... SET version = version + 1 WHERE id = 7 AND version = seen", "  version moved: 0 rows, someone else won"],b:"Ben runs the same UPDATE with WHERE version = 3. The row is at version 4 now. Zero rows changed.",w:"Zero rows is the signal: someone else won. Nothing was overwritten.",d:ed("profile 7, version 4","c","c","w").concat([A(750,106,500,218,"","w",1),T(40,150,"1 row changed","c"),T(640,130,"WHERE version = 3","f"),T(640,150,"0 rows changed","w")])},
+ {t:"Ben re-reads and retries",pc:["on 0 rows: re-read the version, apply the edit again"],b:"Ben reads version 4, applies his edit again, and writes WHERE version = 4. One row changed. The row is at version 5.",w:"With rare conflicts, an occasional retry is cheaper than locking every read.",d:ed("profile 7, version 5","c","c","c").concat([A(750,106,500,218,"","c"),T(640,130,"WHERE version = 4","f"),T(640,150,"1 row changed","c")])},
+ {t:"The failure: many writers, one row",pc:["seat 12A: six buyers each take a payment hold, write at version 1", "  one write lands, five get 0 rows: their work is wasted"],b:"Six buyers want seat 12A at once, all optimistic. Each reads the seat at version 1 and takes a payment hold: 6 holds. Each writes WHERE version = 1. One write lands. Five get 0 rows, undo their hold and retry.",w:"Under heavy contention most optimistic writes waste their work, and a writer that keeps losing retries for ever. That is a live-lock.",d:seat(["c","x","x","x","x","x"],"w","",[A(100,102,420,218,"","c"),...[1,2,3,4,5].map(j=>A(100+140*j,102,460+8*j,218,"","x",1)),T(450,330,"5 of 6 buyers retry, again and again","x","middle",16)])},
+ {t:"Pessimistic: lock first, wait in line",pc:["pessimistic: SELECT ... FOR UPDATE first", "  the holder pays once, the others wait, then read sold"],b:"Switch to SELECT ... FROM seats WHERE id = '12A' FOR UPDATE. Buyer 1 gets the lock. The other 5 wait in line and do no work yet. Buyer 1 pays once and commits. The others then read the seat as sold: 1 payment hold, 0 wasted.",w:"When collisions are common, waiting in line is cheaper than retrying.",d:seat(["c","r","r","r","r","r"],"w","",[A(100,102,420,218,"","w"),T(450,330,"one at a time, no wasted work","c","middle",16)])}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

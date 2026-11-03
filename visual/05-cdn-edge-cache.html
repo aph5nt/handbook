@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CDN and Edge Cache</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>CDN and edge cache: copies near the user</h1>
+  <p class="lede">The Chain Insights website is served from Frankfurt, and users are all over the world. Press <b>Next</b> and watch edges and an origin shield serve four users with one origin request. Then switch tabs and purge everything on a deploy.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="flow">Edges and a shield</button>
+    <button role="tab" aria-selected="false" data-mode="purge">A global purge</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Users in three regions, their CDN edges, an origin shield and the origin</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="uW" class="box" x="20" y="40" width="130" height="64" rx="8" fill="var(--coord)"/>
+        <text id="h-uW" data-on="uW" x="85.0" y="66" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">User</text>
+        <text id="s-uW" data-on="uW" x="85.0" y="90" text-anchor="middle" font-size="14" fill="#fff">Warsaw</text>
+        <rect id="eW" class="box" x="230" y="40" width="170" height="64" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-eW" data-on="eW" x="315.0" y="66" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Edge Warsaw</text>
+        <rect id="cW" class="box" x="245" y="72" width="140" height="26" rx="13.0" fill="var(--line)"/>
+        <text id="t-cW" data-on="cW" x="315.0" y="90.0" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)"></text>
+        <rect id="uP" class="box" x="20" y="150" width="130" height="64" rx="8" fill="var(--coord)"/>
+        <text id="h-uP" data-on="uP" x="85.0" y="176" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">User</text>
+        <text id="s-uP" data-on="uP" x="85.0" y="200" text-anchor="middle" font-size="14" fill="#fff">Sao Paulo</text>
+        <rect id="eP" class="box" x="230" y="150" width="170" height="64" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-eP" data-on="eP" x="315.0" y="176" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Edge Sao Paulo</text>
+        <rect id="cP" class="box" x="245" y="182" width="140" height="26" rx="13.0" fill="var(--line)"/>
+        <text id="t-cP" data-on="cP" x="315.0" y="200.0" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)"></text>
+        <rect id="uG" class="box" x="20" y="260" width="130" height="64" rx="8" fill="var(--coord)"/>
+        <text id="h-uG" data-on="uG" x="85.0" y="286" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">User</text>
+        <text id="s-uG" data-on="uG" x="85.0" y="310" text-anchor="middle" font-size="14" fill="#fff">Singapore</text>
+        <rect id="eG" class="box" x="230" y="260" width="170" height="64" rx="8" fill="var(--panel)" stroke="var(--line)" stroke-width="2"/>
+        <text id="h-eG" data-on="eG" x="315.0" y="286" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)">Edge Singapore</text>
+        <rect id="cG" class="box" x="245" y="292" width="140" height="26" rx="13.0" fill="var(--line)"/>
+        <text id="t-cG" data-on="cG" x="315.0" y="310.0" text-anchor="middle" font-size="12" font-weight="700" fill="var(--fg)"></text>
+        <rect id="sh" class="box" x="500" y="140" width="160" height="74" rx="8" fill="var(--coord)"/>
+        <text id="h-sh" data-on="sh" x="580.0" y="166" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Origin shield</text>
+        <text id="s-sh" data-on="sh" x="580.0" y="190" text-anchor="middle" font-size="14" fill="#fff"></text>
+        <rect id="or" class="box" x="730" y="140" width="150" height="74" rx="8" fill="var(--svc)"/>
+        <text id="h-or" data-on="or" x="805.0" y="166" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Origin</text>
+        <text id="s-or" data-on="or" x="805.0" y="190" text-anchor="middle" font-size="14" fill="#fff">Frankfurt</text>
+        <rect id="oc" class="box" x="730" y="224" width="150" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-oc" data-on="oc" x="805.0" y="246.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-cdn-edge-cache/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">copy at the edge, or a calm origin</span>
+    <span style="--c:var(--coord)">origin shield on</span>
+    <span style="--c:var(--line)">no copy, or purged</span>
+    <span style="--c:var(--fail)">origin overloaded</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Cloudflare, Fastly, CloudFront and Akamai, in front of static files and public API answers. Fastly and CloudFront call the shield an origin shield; Cloudflare calls it tiered cache. Per-user and live answers pass straight through to the origin.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Hashed URLs for static files, so a deploy needs no purge. Turn the shield on. Purge by tag only what changed. Use <code>s-maxage</code> and <code>stale-while-revalidate</code> to control the edge separately from browsers.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No CDN</th><th>CDN, no shield</th><th>CDN with a shield</th></tr>
+      <tr><td>Distance for a hit</td><td>Across the world</td><td>Nearby</td><td>Nearby</td></tr>
+      <tr><td>Origin requests per file</td><td>One per user</td><td>One per edge</td><td>About one</td></tr>
+      <tr><td>After a global purge</td><td>No change</td><td>Every edge hits the origin</td><td>One request per file</td></tr>
+      <tr><td>Interview line</td><td colspan="3">&quot;A CDN keeps copies at edges near users, with an origin shield so edge misses do not all hit the origin, and I use hashed URLs so a deploy needs no global purge.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[430,8,450];
+const Y={W:72,P:182,G:292};
+const U=(r,txt,col)=>[150,Y[r],228,Y[r],txt||"",col||FG];
+const ES=(r,txt,col)=>[400,Y[r],498,177,txt||"",col||FG];
+const SO=(txt,col)=>[660,177,728,177,txt||"",col||FG];
+const ALL=(c,t)=>({fill:{cW:c,cP:c,cG:c},text:{"t-cW":t,"t-cP":t,"t-cG":t}});
+const steps={
+"flow":[
+ {pc:[2, 3, 4, 8, 9, 10],t:"First user in Warsaw",b:"A user in Warsaw asks for the facts of a sealed day. DNS sends them to the Warsaw edge. The check on line 2: is the URL in this edge? No. Line 3 asks the shield. The check on line 8: is it in the shield? No. So line 9 asks the origin in Frankfurt.",
+  w2:"The first request pays the full trip. On the way back, the shield and the edge both keep a copy.",...ALL(LINE,"no copy"),fill:{cW:OK,sh:COORD,oc:SVC},text:{"t-cW":"copy","t-cP":"no copy","t-cG":"no copy","s-sh":"copy","t-oc":"origin requests: 1"},a:[U("W"),ES("W","miss"),SO("miss")]},
+ {pc:[2],t:"Second user in Warsaw",b:"Another Warsaw user asks for the same day. The Warsaw edge answers from nearby.",w2:"No trip across Europe. The origin sees nothing.",a:[U("W","hit",OK)]},
+ {pc:[3, 8],t:"A user in Sao Paulo",b:"A user in Sao Paulo asks too. Line 2 misses at their edge, so line 3 asks the shield. The check on line 8 says yes, the shield has it.",w2:"The origin is still not asked. Many edges share one shield.",fill:{cP:OK},text:{"t-cP":"copy"},a:[U("P"),ES("P","miss: shield hit",OK)]},
+ {pc:[3, 8],t:"And Singapore",b:"The same for Singapore. Three regions, four users, one request to the origin.",w2:"That is what a CDN buys: copies near users and a calm origin.",fill:{cG:OK},text:{"t-cG":"copy"},a:[U("G"),ES("G","shield hit",OK)]}
+],
+"purge":[
+ {pc:[2],t:"Every edge is warm",b:"Every edge in the world holds a copy of the site's files. The origin is calm.",w2:"Now a deploy happens.",...ALL(OK,"copy"),fill:{cW:OK,cP:OK,cG:OK,sh:LINE,oc:SVC},text:{"t-cW":"copy","t-cP":"copy","t-cG":"copy","s-sh":"turned off","t-oc":"origin requests: calm"}},
+ {pc:[13],t:"The deploy purges everything",b:"To ship new files under the same names, the deploy purges the whole CDN. Every edge drops every copy.",w2:"The purge itself is instant. The cost arrives with the next requests.",...ALL(LINE,"purged")},
+ {pc:[3, 13],t:"The failure that matters: every edge asks the origin",b:"Users everywhere keep loading the site. Every edge misses at the same moment, and with no shield each one asks Frankfurt directly. A real CDN has hundreds of edges: in the program, 300 edges make 300 origin requests for one file.",
+  w2:"A global purge turns the CDN into a stampede on the origin.",fill:{oc:FAIL,or:FAIL},text:{"t-oc":"hundreds at once"},a:[U("W"),U("P"),U("G"),[400,Y.W,728,160,"",FAIL],[400,Y.P,728,177,"",FAIL],[400,Y.G,728,195,"miss, miss, miss",FAIL]],ban:["global purge: every edge hits the origin",8]},
+ {pc:[8, 9, 14],t:"Fix 1: an origin shield",b:"With the shield on, every edge misses to the shield. The first edge makes line 9 run once. The other 299 pass the check on line 8. The program prints 1 origin request.",w2:"Many edges, one origin request per file.",fill:{sh:COORD,oc:OK,or:SVC},text:{"s-sh":"collapses requests","t-oc":"origin requests: 1 per file"},a:[ES("W"),ES("P"),ES("G"),SO("one request",OK)]},
+ {pc:[15],t:"Fix 2: nothing to purge",b:"Give static files hashed names. A deploy ships new names. The old copies stay valid for anyone still on the old page, and new names are fetched on demand.",w2:"The best purge is the one you never need. Purge by tag only what truly changed.",
+  ...ALL(OK,"old + new names"),fill:{cW:OK,cP:OK,cG:OK,oc:OK},text:{"t-oc":"origin requests: calm"}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"flow": {
+"label": "Go",
+"pc": [
+"edge.get(url):",
+"  if url in edge.store: return it        # hit, from nearby",
+"  v = upstream.fetch(url)                # miss: the shield, or the origin",
+"  edge.store[url] = v",
+"  return v",
+"",
+"shield.fetch(url):",
+"  if url in shield.store: return it      # many edges share this copy",
+"  v = origin.fetch(url)                  # one request per file",
+"  shield.store[url] = v",
+"  return v",
+"",
+"purge all: every edge.store = empty      # the next read of each edge misses",
+"fix 1: turn the shield on                # 300 edge misses, 1 origin request",
+"fix 2: hashed names, no purge at all     # old copies stay valid"
+],
+"real": [
+"func (e *Edge) Get(url string) (string, string) {",
+"\tif v, ok := e.store[url]; ok {",
+"\t\treturn v, \"hit\"",
+"\t}",
+"\tv := e.upstream.Fetch(url) // the shield, or the origin",
+"\te.store[url] = v",
+"\treturn v, \"miss\"",
+"}",
+"",
+"func (s *Shield) Fetch(url string) string {",
+"\tif v, ok := s.store[url]; ok {",
+"\t\treturn v // many edges, one origin request per file",
+"\t}",
+"\tv := s.origin.Fetch(url)",
+"\ts.store[url] = v",
+"\treturn v",
+"}",
+"",
+"func (e *Edge) Purge() { e.store = map[string]string{} }",
+"",
+"list := edges(names, o) // 300 edges, no shield",
+"warm(list, \"/app.js\") // after purgeAll(list): 300 origin requests",
+"list = edges(names, sh) // the same edges, shield on",
+"warm(list, \"/app.js\") // after purgeAll(list): 1 origin request",
+"warm(list, \"/app.7c21.js\")    // a hashed name: no purge needed"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2,
+3,
+4
+],
+"3": [
+5
+],
+"4": [
+6
+],
+"5": [
+7
+],
+"7": [
+10
+],
+"8": [
+11,
+12,
+13
+],
+"9": [
+14
+],
+"10": [
+15
+],
+"11": [
+16
+],
+"13": [
+19,
+22
+],
+"14": [
+23,
+24
+],
+"15": [
+25
+]
+}
+},
+"purge": {
+"label": "Go",
+"pc": [
+"edge.get(url):",
+"  if url in edge.store: return it        # hit, from nearby",
+"  v = upstream.fetch(url)                # miss: the shield, or the origin",
+"  edge.store[url] = v",
+"  return v",
+"",
+"shield.fetch(url):",
+"  if url in shield.store: return it      # many edges share this copy",
+"  v = origin.fetch(url)                  # one request per file",
+"  shield.store[url] = v",
+"  return v",
+"",
+"purge all: every edge.store = empty      # the next read of each edge misses",
+"fix 1: turn the shield on                # 300 edge misses, 1 origin request",
+"fix 2: hashed names, no purge at all     # old copies stay valid"
+],
+"real": [
+"func (e *Edge) Get(url string) (string, string) {",
+"\tif v, ok := e.store[url]; ok {",
+"\t\treturn v, \"hit\"",
+"\t}",
+"\tv := e.upstream.Fetch(url) // the shield, or the origin",
+"\te.store[url] = v",
+"\treturn v, \"miss\"",
+"}",
+"",
+"func (s *Shield) Fetch(url string) string {",
+"\tif v, ok := s.store[url]; ok {",
+"\t\treturn v // many edges, one origin request per file",
+"\t}",
+"\tv := s.origin.Fetch(url)",
+"\ts.store[url] = v",
+"\treturn v",
+"}",
+"",
+"func (e *Edge) Purge() { e.store = map[string]string{} }",
+"",
+"list := edges(names, o) // 300 edges, no shield",
+"warm(list, \"/app.js\") // after purgeAll(list): 300 origin requests",
+"list = edges(names, sh) // the same edges, shield on",
+"warm(list, \"/app.js\") // after purgeAll(list): 1 origin request",
+"warm(list, \"/app.7c21.js\")    // a hashed name: no purge needed"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+2,
+3,
+4
+],
+"3": [
+5
+],
+"4": [
+6
+],
+"5": [
+7
+],
+"7": [
+10
+],
+"8": [
+11,
+12,
+13
+],
+"9": [
+14
+],
+"10": [
+15
+],
+"11": [
+16
+],
+"13": [
+19,
+22
+],
+"14": [
+23,
+24
+],
+"15": [
+25
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

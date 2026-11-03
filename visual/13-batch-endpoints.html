@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch Endpoints</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.note{font-size:13px}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Batch and bulk endpoints</h1>
+  <p class="lede">An agent screens 500 addresses. Three of them are malformed. Press <b>Next</b> and compare one call per address with one batch call.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="one">One call per address</button>
+    <button role="tab" aria-selected="false" data-mode="batch">One batch call</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Animated sequence of an agent screening 500 addresses one by one versus in one batch</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="actors" font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700"></g>
+      <g id="chips" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program replays this story with <code>net/http</code> handlers and <code>httptest</code>: <code>handbook/code/13-batch-endpoints/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">caller</span>
+    <span style="--c:var(--svc)">gateway, API, database</span>
+    <span style="--c:var(--ok)">efficient, clear</span>
+    <span style="--c:var(--wait)">waiting, slow</span>
+    <span style="--c:var(--fail)">limited or lost results</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: screening and graph tools</h2>
+      <p>Screening or enriching many addresses at once. A graph tool that runs several anchored queries in one batch call.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: bulk imports</h2>
+      <p>Too big for one request: upload a file to a job resource, and let a worker process it with per-row results.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>One call per item</th><th>Batch call</th></tr>
+      <tr><td>Round trips</td><td>One per item</td><td>One</td></tr>
+      <tr><td>Rate limit</td><td>One unit per item</td><td>One unit per call</td></tr>
+      <tr><td>Partial failure</td><td>Natural</td><td>Per-item results, never one <code>400</code></td></tr>
+      <tr><td>Limit</td><td>None needed</td><td>A stated maximum size</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A batch endpoint takes many items in one call and answers per item, with a size limit, so one bad item never hides the other results."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Each tab: actors (columns), chips (state pills under some actors) and steps.
+// A step message is [from,to,y,text,kind], ["band",y,text], or ["note",actor,y,text,kind].
+// kind: true or "fail" = red, "lost" = cut arrow, "replay" = purple, "ok" = green, "wait" = amber.
+const TABS={
+ "one":{actors:[{"id":"g","n":"Agent","c":"coord"},{"id":"gw","n":"Gateway"},{"id":"a","n":"Labels API"},{"id":"d","n":"Database"}],chips:["g","gw","d"],steps:[
+  {"t":"Call after call","b":"Line 1: the agent walks 500 addresses. Line 3 sends GET /addresses/x/labels for each, one after another.","w":"Each call pays a full round trip and one unit of the rate limit.","m":[["g","gw",120,"address 1"],["gw","a",145,"route"],["g","gw",175,"address 2"],["gw","a",200,"route"]],"st":{"g":["2 of 500","wait"],"gw":["2 of 5/min","ok"],"d":["2 queries","ok"]},"pc":[1,3]},
+  {"t":"The rate limit","b":"Line 2: after five calls the gateway answers 429. The agent has 495 addresses left and must wait.","w":"A per-call limit and a per-item loop do not mix.","m":[["g","gw",140,"address 6"],["gw","g",175,"429, Retry-After 60",true]],"st":{"g":["5 of 500","fail"],"gw":["over limit","fail"],"d":["5 queries","ok"]},"bad":"gw","pc":[2]},
+  {"t":"Bad items, one by one","b":"Line 4: three addresses are malformed. Each gets its own 400. At least the agent knows which three.","w":"Per-call errors are clear, but they cost a call each.","m":[["g","a",130,"address 0xzz"],["a","g",170,"400 invalid address",true]],"st":{"g":["3 errors","wait"],"gw":["over limit","fail"],"d":["5 queries","ok"]},"pc":[4]},
+  {"t":"Wait and resume","b":"Line 2 again: the agent waits 60 seconds, sends five more, waits again. The analyst who asked is still waiting.","w":"The loop spends most of its time waiting on the limit.","m":[["note","g",130,"wait 60 s","wait"],["g","gw",170,"address 6 to 10"],["gw","g",205,"429 again",true]],"st":{"g":["10 of 500","wait"],"gw":["over limit","fail"],"d":["10 queries","ok"]},"pc":[2]},
+  {"t":"The cost adds up","b":"Line 5: the program prints calls 500, minutes 100, queries 500. That is 500 tiny queries for one question.","w":"500 round trips for one question.","m":[["band",160,"500 calls, 500 queries, 100 minutes"]],"st":{"g":["slow","fail"],"gw":["over limit","fail"],"d":["500 queries","wait"]},"pc":[5]}
+ ]},
+ "batch":{actors:[{"id":"g","n":"Agent","c":"coord"},{"id":"gw","n":"Gateway"},{"id":"a","n":"Labels API"},{"id":"d","n":"Database"}],chips:["g","gw","d"],steps:[
+  {"t":"One call, many items","b":"Line 1: the agent sends POST /labels:batchGet with 500 addresses. Line 2 checks the stated maximum of 1,000 per call and lets it through.","w":"A batch endpoint takes a list, up to a limit.","m":[["g","gw",130,"batchGet 500 addresses"],["gw","a",160,"1 call of 5/min","ok"]],"st":{"g":["1 call","ok"],"gw":["1 of 5/min","ok"],"d":["idle","idle"]},"pc":[1,2]},
+  {"t":"One query","b":"Line 3: the API looks up all valid addresses in one query. The program prints queries 1.","w":"The server batches the database work too.","m":[["a","d",140,"WHERE address IN (497)"],["d","a",175,"labels","ok"]],"st":{"g":["waiting","wait"],"gw":["1 of 5/min","ok"],"d":["1 query","ok"]},"pc":[3]},
+  {"t":"An answer per item","b":"Lines 4 to 6 build one result per input, in order. Line 7 answers 200 with 500 results: the program prints labels 497, errors 3. Item 7 holds invalid address, next to its own input.","w":"A partial failure is normal. The errors are per item, not for the whole call.","m":[["a","g",130,"200: 497 ok, 3 errors","ok"],["note","g",175,"fix 3, keep 497","ok"]],"st":{"g":["497 + 3 errors","ok"],"gw":["1 of 5/min","ok"],"d":["1 query","ok"]},"pc":[4,5,6,7]},
+  {"t":"The failure: all or nothing by accident","b":"Line 8 is another batch API. One bad address fails the whole call with 400. The agent cannot tell which one, and gets none of the 497 good results.","w":"One bad item must not hide the other results.","m":[["g","a",130,"batch with 1 bad item"],["a","g",170,"400 Bad Request",true],["note","g",215,"which one? none saved",true]],"st":{"g":["0 results","fail"],"gw":["2 of 5/min","ok"],"d":["0 queries","idle"]},"bad":"a","pc":[8]},
+  {"t":"The failure: no size limit","b":"A caller sends 2 million addresses in one call. Without line 2 it would run for minutes and hold the memory. With line 2 the program prints 413.","w":"A maximum batch size, and a job resource for bulk imports.","m":[["g","a",140,"2,000,000 addresses",true],["a","g",180,"413: max 1,000 per call","ok"]],"st":{"g":["split it","wait"],"gw":["3 of 5/min","ok"],"d":["safe","ok"]},"pc":[2]},
+  {"t":"Batch writes need a key","b":"A batch write, such as adding 500 labels, carries a key and says whether it is atomic. Line 9 applies it once and line 10 skips the retry: the program prints applied 500, after two sends.","w":"State it in the contract: atomic, or per item.","m":[["g","a",140,"batchCreate, key k9"],["a","g",180,"201, per-item results","ok"]],"st":{"g":["done once","ok"],"gw":["4 of 5/min","ok"],"d":["1 write","ok"]},"pc":[9,10]}
+ ]}
+};
+const CODE={
+ "one":{label:"Go",
+  pc:[
+   "for each address:",
+   "  budget of 5 this minute used up: wait for the next minute",
+   "  send one GET, the database runs one query",
+   "  address malformed: that call gets its own 400",
+   "total: 500 calls, 500 queries, 100 minutes"],
+  real:[
+   "const perMinute = 5",
+   "",
+   "func valid(a string) bool { return len(a) == 42 && a[:2] == \"0x\" }",
+   "",
+   "func oneByOne(as []string) (calls, bad, minutes int) {",
+   "\tused := 0",
+   "\tfor _, a := range as {",
+   "\t\tif used == perMinute {",
+   "\t\t\tminutes++",
+   "\t\t\tused = 0",
+   "\t\t}",
+   "\t\tused++",
+   "\t\tcalls++",
+   "\t\tqueries++",
+   "\t\tif !valid(a) {",
+   "\t\t\tbad++",
+   "\t\t}",
+   "\t}",
+   "\treturn calls, bad, minutes + 1",
+   "}"],
+  map:{"1":[7],"2":[8,9,10],"3":[12,13,14],"4":[15,16],"5":[19]}},
+ "batch":{label:"Go",
+  pc:[
+   "POST /labels:batchGet with the addresses",
+   "more than 1,000: 413, stop",
+   "one query for all the valid addresses",
+   "for each input, in order:",
+   "  valid: a result with its labels",
+   "  invalid: a result with its own error",
+   "answer 200 with one result per input",
+   "the other API: any bad item: 400 for the whole call",
+   "batch write: key not seen: apply and remember the key",
+   "  key seen: apply nothing, answer the same"],
+  real:[
+   "const maxBatch = 1000",
+   "",
+   "func batchGet(w http.ResponseWriter, r *http.Request) {",
+   "\tvar req struct{ Addresses []string }",
+   "\tjson.NewDecoder(r.Body).Decode(&req)",
+   "\tif len(req.Addresses) > maxBatch {",
+   "\t\thttp.Error(w, fmt.Sprintf(\"at most %d per call\", maxBatch), http.StatusRequestEntityTooLarge)",
+   "\t\treturn",
+   "\t}",
+   "\tqueries++ // one query for all the valid addresses",
+   "\tout := make([]Result, len(req.Addresses))",
+   "\tfor i, a := range req.Addresses {",
+   "\t\tif valid(a) {",
+   "\t\t\tout[i] = Result{Address: a, Labels: []string{\"Exchange\"}}",
+   "\t\t} else {",
+   "\t\t\tout[i] = Result{Address: a, Error: \"invalid address\"}",
+   "\t\t}",
+   "\t}",
+   "\tjson.NewEncoder(w).Encode(out)",
+   "}",
+   "",
+   "func allOrNothing(w http.ResponseWriter, r *http.Request) {",
+   "\tvar req struct{ Addresses []string }",
+   "\tjson.NewDecoder(r.Body).Decode(&req)",
+   "\tfor _, a := range req.Addresses {",
+   "\t\tif !valid(a) {",
+   "\t\t\thttp.Error(w, \"invalid request\", http.StatusBadRequest)",
+   "\t\t\treturn",
+   "\t\t}",
+   "\t}",
+   "\tjson.NewEncoder(w).Encode(req.Addresses)",
+   "}",
+   "",
+   "func (b *Writes) ServeHTTP(w http.ResponseWriter, r *http.Request) {",
+   "\tkey := r.Header.Get(\"Idempotency-Key\")",
+   "\tvar req struct{ Labels []string }",
+   "\tjson.NewDecoder(r.Body).Decode(&req)",
+   "\tif !b.seen[key] {",
+   "\t\tb.seen[key] = true",
+   "\t\tb.applied += len(req.Labels)",
+   "\t}",
+   "\tjson.NewEncoder(w).Encode(map[string]any{\"atomic\": true, \"applied\": b.applied})",
+   "}"],
+  map:{"1":[3],"2":[6,7],"3":[10],"4":[12],"5":[13,14],"6":[15,16],"7":[19],"8":[22,23,24,25,26,27],"9":[38,39,40],"10":[38]}}
+};
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)"};
+const colFor={fail:"var(--fail)",lost:"var(--fail)",replay:"var(--undo)",ok:"var(--ok)",wait:"var(--wait)"};
+const NS="http://www.w3.org/2000/svg";
+let mode="one",view="pc",i=0,timer=null,X={},W=160;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function drawActors(){
+  const T=TABS[mode],n=T.actors.length,gap=900/n;W=Math.min(180,gap-24);X={};
+  let a="",c="";
+  T.actors.forEach((ac,k)=>{const x=gap/2+k*gap;X[ac.id]=x;
+    a+=`<rect id="bx-${ac.id}" class="box" x="${x-W/2}" y="20" width="${W}" height="52" rx="8" fill="var(--${ac.c||"svc"})"/><text x="${x}" y="52" text-anchor="middle" fill="#fff">${esc(ac.n)}</text><line x1="${x}" y1="72" x2="${x}" y2="340" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;});
+  T.chips.forEach(id=>{const x=X[id];
+    c+=`<rect id="st-${id}" class="box" x="${x-W/2+6}" y="300" width="${W-12}" height="28" rx="14" fill="var(--line)"/><text id="tx-${id}" x="${x}" y="319" fill="var(--fg)"></text>`;});
+  $("actors").innerHTML=a;$("chips").innerHTML=c;
+}
+function msgSvg(m){
+  if(m[0]==="band"){const col=colFor[m[3]||"fail"];
+    return `<rect x="20" y="${m[1]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[1]+3}" text-anchor="middle" fill="${col}" font-weight="700">${esc(m[2])}</text>`;}
+  if(m[0]==="note"){const [,id,y,txt,kind]=m,x=X[id],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+    return `<rect x="${x-W/2}" y="${y-17}" width="${W}" height="26" rx="6" fill="var(--panel)" stroke="${col}" stroke-width="2"/><text class="note" x="${x}" y="${y+1}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  const [a,b,y,txt,kind]=m,x1=X[a],x2=X[b],col=colFor[kind===true?"fail":kind]||"var(--fg)";
+  if(kind==="lost"){const mid=(x1+x2)/2;
+    return `<line x1="${x1}" y1="${y}" x2="${mid}" y2="${y}" stroke="${col}" stroke-dasharray="6 5"/><path d="M${mid-8} ${y-8}L${mid+8} ${y+8}M${mid-8} ${y+8}L${mid+8} ${y-8}" stroke="${col}" stroke-width="3"/><text x="${(x1+mid)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;}
+  return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700" stroke="none">${esc(txt)}</text>`;
+}
+function drawCode(){
+  const c=CODE[mode],s=TABS[mode].steps[i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const T=TABS[mode],s=T.steps[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${T.steps.length}`;
+  for(const id of T.chips){const [v,c]=(s.st&&s.st[id])||["","idle"];$("tx-"+id).textContent=v;
+    $("st-"+id).setAttribute("fill",fillFor[c]);$("tx-"+id).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");}
+  for(const ac of T.actors)$("bx-"+ac.id).setAttribute("fill",s.bad===ac.id?"var(--fail)":`var(--${ac.c||"svc"})`);
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=msgSvg(m);g.appendChild(el);
+    const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,140*k+30);});
+  $("prev").disabled=i===0;$("next").disabled=i===T.steps.length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(TABS[mode].steps.length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=TABS[mode].steps.length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));drawActors();go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawActors();go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

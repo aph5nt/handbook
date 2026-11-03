@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Burn-rate alerts</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Burn-rate alerts: page when the budget will run out</h1>
+  <p class="lede">The graph API promises 99.9 percent good requests over 30 days, so 0.1 percent may fail. The chart shows the error rate over three days. Watch a fixed threshold page on blips and miss a slow leak, then watch burn-rate alerts on two windows get both right. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="static">Fixed threshold: the failure</button>
+    <button role="tab" aria-selected="false" data-mode="burn">Burn rate on two windows</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Error rate over three days, the allowed rate, alert lamps and the error budget</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <line x1="40" y1="300" x2="600" y2="300" stroke="var(--muted)" stroke-width="2"/>
+        <line x1="40" y1="40" x2="40" y2="300" stroke="var(--muted)" stroke-width="2"/>
+        <g class="sm" fill="var(--muted)"><text x="40" y="322">hour 0</text><text x="227" y="322">hour 24</text><text x="413" y="322">hour 48</text><text x="600" y="322">hour 72</text>
+        <text x="34" y="304" text-anchor="end">0</text><text x="34" y="174" text-anchor="end">1%</text><text x="34" y="44" text-anchor="end">2%</text></g>
+        <line x1="40" y1="287" x2="600" y2="287" stroke="var(--ok)" stroke-width="2" stroke-dasharray="5 4"/>
+        <text x="596" y="282" text-anchor="end" class="sm" fill="var(--ok)">allowed 0.1%</text>
+        <g data-scene="static"><line x1="40" y1="170" x2="600" y2="170" stroke="var(--fail)" stroke-width="2" stroke-dasharray="5 4"/><text x="596" y="164" text-anchor="end" class="sm" fill="var(--fail)">fixed threshold 1%</text></g>
+        <rect id="b-st" class="box" x="640" y="30" width="240" height="56" rx="8"/><text id="b-st-t" x="760" y="54">Fixed threshold alert</text><text id="b-st-l" x="760" y="75" class="sm"></text>
+        <rect id="b-fa" class="box" x="640" y="100" width="240" height="56" rx="8"/><text id="b-fa-t" x="760" y="124">Fast burn: page</text><text id="b-fa-l" x="760" y="145" class="sm"></text>
+        <rect id="b-sl" class="box" x="640" y="170" width="240" height="56" rx="8"/><text id="b-sl-t" x="760" y="194">Slow burn: ticket</text><text id="b-sl-l" x="760" y="215" class="sm"></text>
+        <text x="760" y="258" class="sm" fill="var(--fg)">error budget for 30 days</text>
+        <rect x="640" y="266" width="240" height="18" rx="9" fill="var(--line)"/>
+        <rect id="bud" class="box" x="640" y="266" width="240" height="18" rx="9"/>
+        <text id="bud-t" x="760" y="304" class="sm" fill="var(--fg)"></text>
+        <text id="cap" x="320" y="356" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-burn-rate/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">the error rate</span>
+    <span style="--c:var(--ok)">quiet, budget healthy</span>
+    <span style="--c:var(--wait)">a ticket, or budget dropping</span>
+    <span style="--c:var(--fail)">a page</span>
+    <span style="--c:var(--line)">alert not used in this tab</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A freshness SLO (service level objective) for chain data, with burn measured on minutes over 100 blocks behind head. Prometheus recording rules for error ratios over 5 minutes, 1 hour, 6 hours and 3 days, with alert rules on top. The multi-window, multi-burn-rate recipe from the Google SRE (site reliability engineering) workbook.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Page on a fast burn (about 14 times over an hour, with a 5-minute window to confirm it is still happening). Ticket on a slow burn (about 1 to 3 times over days, with a 6-hour window). Tie every page to an SLO. Delete fixed thresholds that page without costing budget.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Fixed threshold</th><th>Burn rate, two windows</th></tr>
+      <tr><td>Short blip</td><td>Pages</td><td>Quiet: the long window barely moves</td></tr>
+      <tr><td>Slow leak below the line</td><td>Silent while the month's budget drains</td><td>Opens a ticket</td></tr>
+      <tr><td>Real outage</td><td>Pages</td><td>Pages, and clears soon after it ends</td></tr>
+      <tr><td>Meaning of a page</td><td>Something crossed a number</td><td>Users will lose the SLO if nobody acts</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I alert on how fast the error budget burns, with a long and a short window, so a fast burn pages, a slow burn opens a ticket, and a blip does neither."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const X=h=>40+h/72*560,Yr=r=>300-r*130;
+const base0=[[0,.05],[72,.05]];
+const D={static:{f:{"b-st":G,"b-fa":N,"b-sl":N},x:{"b-st-l":"quiet","b-fa-l":"","b-sl-l":"","cap":""}},burn:{f:{"b-st":N,"b-fa":G,"b-sl":G},x:{"b-st-l":"removed","b-fa-l":"1 h above 14 and 5 min above 14","b-sl-l":"3 days above 1 and 6 h above 1","cap":""}}};
+const blip=h=>[[h-.05,.05],[h,2],[h+.05,2],[h+.1,.05]];
+const P1=[[0,.05]].concat(blip(10),[[20,.05]]),P2=P1.concat(blip(20).slice(1)),
+ P3=P2.concat([[30,.05],[30.2,.3],[72,.3]]),
+ Q2=[[0,.05]].concat(blip(10),[[30,.05]]),Q3=Q2.concat([[30,.05],[30.2,2],[31,2],[31.1,.05]]),Q4=Q3.concat([[45,.05],[45.2,.3],[72,.3]]);
+const steps={
+static:[
+ {t:"A quiet start",b:"Errors sit at 0.05 percent. The fixed alert has one rule: is the error rate above 1 percent this minute? 0.05 is not, so it is quiet.",w:"The allowed rate is 100 percent minus the SLO: 0.1 percent for 99.9.",pts:base0.slice(0,1).concat([[10,.05]]),bud:1},
+ {t:"Hour 10: a short blip pages",b:"A node restart causes 2 percent errors for two minutes. 2 is above 1, so the fixed alert pages the on-call at once.",w:"The rule looks at one number, one minute. Nobody needed to wake up for 2 minutes at 2 percent.",f:{"b-st":R},x:{"b-st-l":"PAGE: errors above 1%"},pts:P1,bud:.993},
+ {t:"Hour 20: another blip, another page",b:"A second two-minute blip at 2 percent. Same check, same page. The on-call looks, it is already over, and goes back to sleep.",w:"Pages that need no action teach people to ignore the pager.",f:{"b-st":R},x:{"b-st-l":"PAGE again, nothing to do"},pts:P2,bud:.985},
+ {t:"Hour 30: a slow leak starts",b:"A release adds errors on one endpoint: 0.3 percent in all. The check: 0.3 is not above 1. Quiet. But 0.3 is three times the allowed 0.1.",w:"Three times the allowed rate spends the whole 30-day budget in 10 days.",f:{"b-st":G},x:{"b-st-l":"quiet"},pts:P3.slice(0,P3.length-1).concat([[40,.3]]),bud:.936},
+ {t:"The failure that matters: silent while the budget drains",b:"At hour 72 the leak is still there. The check never passed. Adding up the errors, 19 percent of the month's budget is gone in three days.",w:"The fixed threshold paged twice for nothing and stayed silent for the thing that costs the SLO. It measures a number, not what users lose.",f:{"b-st":G},x:{"b-st-l":"quiet: below 1%","cap":"at this pace the 30-day budget is gone by day 10"},pts:P3,bud:.806}
+],
+burn:[
+ {t:"Burn rate: how fast the budget goes",b:"Burn rate is the error rate divided by the allowed rate. 0.05 divided by 0.1 is a burn of 0.5: the budget would last 60 days.",w:"Burn 1 spends the budget exactly over 30 days. Burn 10 spends it in 3 days.",x:{"b-fa-l":"burn 0.5","b-sl-l":"burn 0.5"},pts:base0.slice(0,1).concat([[10,.05]]),bud:1},
+ {t:"Hour 10: the blip does not page",b:"The same two-minute blip at 2 percent. Over 5 minutes the average is 0.83 percent, a burn of 8.3. Over 1 hour it is 0.115 percent, a burn of 1.15.",w:"The fast alert needs both windows above 14. Neither is. The long window proves it matters, and this blip does not.",x:{"b-fa-l":"5 min 8.3, 1 h 1.15: quiet","b-sl-l":"burn 0.5"},pts:Q2,bud:.993},
+ {t:"Hour 30: a real outage pages",b:"The graph returns 2 percent errors, a burn of 20. The 5-minute window passes 14 almost at once. The 1-hour window passes 14 after 41 minutes: now both are true, and the page fires.",w:"A burn of 14 for an hour spends about 2 percent of the month's budget in that hour. The same data also trips the slow rule, so a follow-up ticket opens beside the page.",f:{"b-fa":R,"b-sl":Y},x:{"b-fa-l":"PAGE: 1 h 14.2, 5 min 20","b-sl-l":"follow-up ticket"},pts:Q3.slice(0,Q3.length-1),bud:.95},
+ {t:"The fix lands: the page clears fast",b:"The on-call rolls back at hour 31. One minute later the 5-minute burn is 12.2, under 14. The alert resolves, even though the 1-hour burn is still 19.",w:"The short window is what makes the alert stop when the problem stops.",f:{"b-fa":G},x:{"b-fa-l":"5 min 12.2: resolved","b-sl-l":"burn 0.5"},pts:Q3,bud:.95},
+ {t:"Hour 45: the slow leak opens a ticket",b:"The same 0.3 percent leak as the first tab: a burn of 3. 73 minutes in, at hour 46.2, the 6-hour burn and the 3-day burn are both above 1. A ticket opens. Nobody is woken.",w:"A slow burn has days of runway. By hour 72 the 6-hour burn is 3 and the 3-day burn is 1.7, and the budget still has 83 percent left.",f:{"b-sl":Y},x:{"b-sl-l":"TICKET: both windows above 1"},pts:Q4,bud:.832},
+ {t:"Pages that mean something",b:"Over three days: no page for the blip, one page for the outage with its follow-up ticket, one ticket for the leak.",w:"Every alert is tied to the SLO. A page means users will lose the promise unless someone acts now.",f:{"b-sl":Y},x:{"b-sl-l":"ticket: fix this week","cap":"blip: nothing. outage: page. leak: ticket"},pts:Q4,bud:.832}
+]};
+function draw(s,g){
+  const b=s.bud??1;$("bud").setAttribute("width",b*240);$("bud").setAttribute("fill",b>.9?G:b>.5?Y:R);$("bud-t").textContent=`${Math.round(b*1000)/10} percent of the budget left`;
+  const d=s.pts.map((p,k)=>(k?"L":"M")+X(p[0]).toFixed(1)+" "+Yr(p[1]).toFixed(1)).join(" ");
+  g.innerHTML=`<path d="${d}" fill="none" stroke="var(--coord)" stroke-width="3" stroke-linejoin="round"/>`;
+}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["allowed = 100 - 99.9 = 0.1 percent", "burn(errors, minute, window):", "  average the last window minutes of errors", "  return average / allowed", "fixed(minute): errors[minute] > 1", "fast(minute):            # page", "  burn over 60 min > 14 and burn over 5 min > 14", "slow(minute):            # ticket", "  burn over 3 days > 1 and burn over 6 h > 1", "budgetLeft(minute):", "  spent = sum of errors so far, as a share", "  return 1 - spent / 43.2 full-outage minutes", "edges(alert):             # one page per start", "  for each minute: if alert turned on: fire", "  if alert turned off: resolve"], "real": ["func Burn(errs []float64, m, window int) float64 {", "\tfrom := m - window + 1", "\tif from < 0 {", "\t\tfrom = 0", "\t}", "\tsum := 0.0", "\tfor _, e := range errs[from : m+1] {", "\t\tsum += e", "\t}", "\treturn sum / float64(m+1-from) / allowed", "}", "", "func Fixed(errs []float64, m int) bool {", "\treturn errs[m] > 1", "}", "", "func Fast(errs []float64, m int) bool {", "\treturn Burn(errs, m, 60) > 14 && Burn(errs, m, 5) > 14", "}", "", "func Slow(errs []float64, m int) bool {", "\treturn Burn(errs, m, 3*1440) > 1 && Burn(errs, m, 360) > 1", "}", "", "func BudgetLeft(errs []float64, m int) float64 {", "\tspent := 0.0", "\tfor _, e := range errs[:m+1] {", "\t\tspent += e / 100", "\t}", "\treturn 1 - spent/(30*24*60*allowed/100)", "}", "", "func Edges(errs []float64, alert func([]float64, int) bool) [][2]int {", "\tvar out [][2]int", "\ton := false", "\tfor m := range errs {", "\t\tnow := alert(errs, m)", "\t\tif now && !on {", "\t\t\tout = append(out, [2]int{m, -1})", "\t\t}", "\t\tif !now && on {", "\t\t\tout[len(out)-1][1] = m", "\t\t}", "\t\ton = now", "\t}", "\treturn out", "}"], "map": {"1": [10], "2": [1], "3": [2, 3, 4, 5, 6, 7, 8], "4": [10], "5": [13, 14], "6": [17], "7": [18], "8": [21], "9": [22], "10": [25], "11": [26, 27, 28], "12": [30], "13": [33], "14": [37, 38, 39], "15": [41, 42]}}},PCS={"static": [[1, 5], [5, 13, 14], [5, 13, 14], [5, 10, 11], [5, 10, 11, 12]], "burn": [[1, 2, 3, 4], [2, 3, 4, 6, 7], [6, 7, 13, 14], [6, 7, 13, 15], [8, 9, 13, 14], [6, 7, 8, 9]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

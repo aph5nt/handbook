@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semi-sync and quorum</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Semi-sync and quorum writes: wait for enough copies</h1>
+  <p class="lede">A payment ledger cannot lose a write, and cannot wait for its slowest copy either. Watch semi-sync wait for one replica, then a quorum wait for two of three, and watch both go wrong when the rule is quietly relaxed. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="semi">Semi-sync and the silent fallback</button>
+    <button role="tab" aria-selected="false" data-mode="quorum">Quorum: W plus R over N</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A client, a primary or coordinator, and three copies of a balance</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <rect id="b-cl" class="box" x="20" y="160" width="150" height="62" rx="8"/><text id="b-cl-t" x="95" y="186">Client</text><text id="b-cl-l" x="95" y="209" class="sm"></text>
+        <rect id="b-p" class="box" x="260" y="160" width="180" height="62" rx="8"/><text id="b-p-t" x="350" y="186">Primary</text><text id="b-p-l" x="350" y="209" class="sm"></text>
+        <g id="g-r1" class="dim"><rect id="b-r1" class="box" x="640" y="40" width="200" height="62" rx="8"/><text id="b-r1-t" x="740" y="66">Replica 1</text><text id="b-r1-l" x="740" y="89" class="sm"></text></g>
+        <g id="g-r2" class="dim"><rect id="b-r2" class="box" x="640" y="160" width="200" height="62" rx="8"/><text id="b-r2-t" x="740" y="186">Replica 2</text><text id="b-r2-l" x="740" y="209" class="sm"></text></g>
+        <g id="g-r3" class="dim"><rect id="b-r3" class="box" x="640" y="280" width="200" height="62" rx="8"/><text id="b-r3-t" x="740" y="306">Replica 3</text><text id="b-r3-l" x="740" y="329" class="sm"></text></g>
+        <text id="rule" x="20" y="34" text-anchor="start" fill="var(--fg)"></text>
+        <text id="cap" x="450" y="372" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-semi-sync-and-quorum/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">client, primary or coordinator</span>
+    <span style="--c:var(--svc)">copy with the old value</span>
+    <span style="--c:var(--wait)">writing, or waiting</span>
+    <span style="--c:var(--ok)">copy with the new value</span>
+    <span style="--c:var(--fail)">down, lost, or an old answer</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>MySQL semi-sync replication for a primary with a failover replica. Cassandra and DynamoDB style stores, with a consistency level chosen per query. Raft-based stores such as etcd, and a warehouse that confirms a write when a majority of a tablet's three replicas have it.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Use semi-sync when one confirmed copy is enough and alert on every fallback to async. In a quorum store keep W plus R above N for data that must be read fresh, for example N 3, W 2, R 2. Use W 1 or R 1 only for data where an old answer is acceptable, and say so in the design.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Semi-sync</th><th>Quorum</th></tr>
+      <tr><td>Waits for</td><td>At least one replica</td><td>W of N copies, and reads ask R</td></tr>
+      <tr><td>Slowest copy</td><td>Not waited for</td><td>Not waited for</td></tr>
+      <tr><td>Survives</td><td>Loss of the primary</td><td>Loss of N minus W copies for writes</td></tr>
+      <tr><td>Quiet trap</td><td>Falls back to async on timeout</td><td>W plus R at or below N returns old values</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Semi-sync waits for one replica and a quorum waits for W of N copies, so with W plus R above N a read always overlaps the latest write without waiting for the slowest copy."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const CP=[170,184,258,184],PC=[258,204,172,204],PR=[[440,176,638,76],[440,188,638,188],[440,204,638,302]],RP=[[638,92,446,182],[638,200,446,196],[638,290,446,212]];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const LB=[[540,110],[540,180],[540,266]];
+const sem={f:{"b-cl":C,"b-p":C,"b-r1":S,"b-r2":S,"b-r3":S},x:{"b-cl-l":"","b-p-t":"Primary","b-p-l":"balance 100","b-r1-t":"Replica 1","b-r2-t":"Replica 2","b-r3-t":"Replica 3","b-r1-l":"balance 100","b-r2-l":"balance 100","b-r3-l":"","rule":"Semi-sync: wait for 1 replica","cap":""},dim:["g-r3"]};
+const quo={f:{"b-cl":C,"b-p":C,"b-r1":S,"b-r2":S,"b-r3":S},x:{"b-cl-l":"","b-p-t":"Coordinator","b-p-l":"","b-r1-t":"Copy 1","b-r2-t":"Copy 2","b-r3-t":"Copy 3","b-r1-l":"v1","b-r2-l":"v1","b-r3-l":"v1","rule":"N 3, W 2, R 2: W plus R is 4, more than 3","cap":""},dim:[]};
+const D={semi:sem,quorum:quo};
+const send=(k,t,c,d)=>a(PR[k],t,c,d,LB[k][0],LB[k][1]-12),back=(k,t,c)=>a(RP[k],t,c,0,LB[k][0]+20,LB[k][1]+(k===1?42:18));
+const steps={
+semi:[
+ {t:"The write reaches the primary",b:"A customer pays 10. The primary writes balance 90 and sends it to both replicas. The semi-sync rule: answer on the first confirmation. None has arrived, so the client waits.",w:"Full sync would wait for both replicas. Semi-sync waits for just one.",f:{"b-p":Y,"b-r1":Y,"b-r2":Y},x:{"b-p-l":"balance 90, waiting","b-r1-l":"writing 90","b-r2-l":"writing 90"},m:[a(CP,"write 90",C),send(0,"copy",Y),send(1,"copy",Y)]},
+ {t:"One replica confirms: answer the client",b:"Replica 1 confirms after 8 ms. Replica 2 would take 30 ms. The first confirmation meets the rule, so the client is told ok after 8 ms, while replica 2 is still writing.",w:"The write now exists on two machines. The client did not wait for the slower replica.",f:{"b-p":G,"b-r1":G,"b-r2":Y},x:{"b-p-l":"balance 90","b-r1-l":"balance 90","b-r2-l":"writing 90","b-cl-l":"paid"},m:[back(0,"ok",G),a(PC,"ok",G,0,214,224)]},
+ {t:"The primary crashes: nothing lost",b:"Seconds later the primary dies. Replica 1 is promoted. It holds 90, the same as the balance the client was told, so 0 writes are lost. The rule made sure of that: no ok without one confirmation.",w:"Every write a client saw confirmed is on at least one replica. That is the promise of semi-sync.",f:{"b-p":R,"b-r1":C,"b-r2":G},x:{"b-p-t":"Primary: crashed","b-p-l":"","b-r1-t":"New primary","b-r1-l":"balance 90","b-r2-l":"balance 90","b-cl-l":"paid"},m:[]},
+ {t:"Replicas get slow: the timeout",b:"Another day, both replicas are slow under a backfill. A customer pays another 10. Confirmations would take 8,000 and 9,000 ms. The primary waits, but only up to its timeout of 3,000 ms.",w:"MySQL semi-sync has a choice to make when nobody confirms in time.",f:{"b-p":Y,"b-r1":Y,"b-r2":Y},x:{"b-p-l":"balance 80, waiting","b-r1-l":"slow","b-r2-l":"slow","b-cl-l":"waiting"},m:[a(CP,"write 80",C),send(0,"copy",Y,1),send(1,"copy",Y,1)]},
+ {t:"The silent fallback to async",b:"At 3,000 ms the fastest confirmation has not come. The rule on timeout: switch to async and answer ok with no confirmation. No error is shown. Balance 80 is on one machine only, and the replicas hold 90.",w:"The fallback keeps the service up, and quietly removes the guarantee.",f:{"b-p":Y,"b-r1":Y,"b-r2":Y},x:{"b-p-l":"fell back to async","b-r1-l":"balance 90, behind","b-r2-l":"balance 90, behind","b-cl-l":"paid 80","rule":"Semi-sync: fell back to async"},m:[a(PC,"ok, unconfirmed",Y,0,214,224)]},
+ {t:"The failure that matters: the write is lost",b:"The primary crashes before the slow replicas catch up. Replica 1 is promoted with 90. The client was told 80, so 1 write is lost. The payment the client saw confirmed is gone.",w:"Alert on every fallback to async, and treat it as an incident: until the replicas confirm again, writes can be lost.",f:{"b-p":R,"b-r1":C,"b-r2":S,"b-cl":R},x:{"b-p-t":"Primary: crashed","b-p-l":"had balance 80","b-r1-t":"New primary","b-r1-l":"balance 90: write lost","b-r2-l":"balance 90","b-cl-l":"told ok for 80","rule":"Semi-sync: fell back to async"},m:[]}
+],
+quorum:[
+ {t:"Three equal copies",b:"A ledger store keeps N = 3 copies of every key. All three hold version v1 of the balance. The settings are W = 2 confirmations for a write and R = 2 answers for a read.",w:"There is no primary here. A coordinator sends each write and read to the copies.",m:[]},
+ {t:"Write v2, wait for W of them",b:"A new balance, v2, is sent to all three copies. Copy 3 is down. Copies 1 and 2 confirm: 2 confirmations, and W is 2, so the write succeeds.",w:"With W 2, one copy can be down and writes still succeed.",f:{"b-r1":G,"b-r2":G,"b-r3":R,"b-cl":C},x:{"b-r1-l":"v2","b-r2-l":"v2","b-r3-l":"down, still v1","b-cl-l":"write ok"},m:[a(CP,"write v2",C),back(0,"ok",G),back(1,"ok",G),send(2,"",R,1)]},
+ {t:"Read from R of them, take the newest",b:"Copy 3 comes back with v1. A read asks R = 2 copies: copy 2 says v2, copy 3 says v1. The rule: return the highest version, v2. Trying every write set and read set, 9 of 9 pairs share a copy.",w:"Because W plus R is 4, more than N, every read set shares at least one copy with every write set. The newest value is always in the answer.",f:{"b-r1":G,"b-r2":G,"b-r3":S},x:{"b-r1-l":"v2","b-r2-l":"v2","b-r3-l":"v1, back","b-cl-l":"reads v2"},m:[back(1,"v2",G),back(2,"v1",S),a(PC,"v2",G,0,214,224)]},
+ {t:"The failure that matters: W 1, R 1 for speed",b:"To go faster, someone sets W = 1 and R = 1. A write of v3 lands on copy 1 only. A read asks only copy 3, which still has v1. Now only 3 of 9 pairs share a copy, and the other 6 can read old.",w:"W plus R is now 2, not more than 3. The read and write sets can miss each other, and the read returns an old value with no error.",f:{"b-r1":G,"b-r2":S,"b-r3":R,"b-cl":R},x:{"b-r1-l":"v3","b-r2-l":"v2","b-r3-l":"v1","b-cl-l":"reads v1: old","rule":"N 3, W 1, R 1: W plus R is 2, not more than 3"},m:[a(CP,"write v3",C),back(0,"ok",G),back(2,"v1",R),a(PC,"v1",R,0,214,224)]},
+ {t:"A majority write",b:"Back to W = 2. A majority of 3 is 3 ÷ 2 + 1 = 2. Any two sets of 2 copies out of 3 share at least one copy: 9 of 9 pairs. So two writers cannot both get a majority for different values without meeting on a copy.",w:"Majority writes are what Raft and Paxos use to stay correct through a failure. Most quorum setups pick W as a majority.",f:{"b-r1":G,"b-r2":G},x:{"b-r1-l":"v3","b-r2-l":"v3","b-r3-l":"v2, catching up","b-cl-l":"write ok"},m:[a(CP,"write v3",C),back(0,"ok",G),back(1,"ok",G),send(2,"",Y,1)]}
+]};
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"semi": {"label": "Go", "pc": ["semiWrite(balance):", "  primary writes balance, sends copies", "  fastest = the first confirmation time", "  if fastest > timeout:     # 3,000 ms", "    async = true            # no error, no sign", "    answer ok, unconfirmed", "  every replica gets the balance", "  answer ok after fastest", "promote():", "  replica 1 becomes primary", "  a write is lost if its balance differs"], "real": ["type Primary struct {", "\tBalance  int", "\tAsync    bool // true after the silent fallback", "\tReplicas []*Replica", "}", "", "func (p *Primary) SemiWrite(balance int) (waitMs int, confirmed bool) {", "\tp.Balance = balance", "\tfastest := p.Replicas[0].AckMs", "\tfor _, r := range p.Replicas {", "\t\tfastest = min(fastest, r.AckMs)", "\t}", "\tif fastest > timeoutMs {", "\t\tp.Async = true // no error, no sign to the client", "\t\treturn timeoutMs, false", "\t}", "\tfor _, r := range p.Replicas {", "\t\tr.Balance = balance // the slower one arrives moments later", "\t}", "\treturn fastest, true", "}", "", "func (p *Primary) Promote() (int, bool) {", "\treturn p.Replicas[0].Balance, p.Replicas[0].Balance != p.Balance", "}"], "map": {"1": [7], "2": [8], "3": [9, 10, 11], "4": [13], "5": [14], "6": [15], "7": [18], "8": [20], "9": [23], "10": [24], "11": [24]}}, "quorum": {"label": "Go", "pc": ["write(version, W, reach):", "  for each copy in reach, if it is up:", "    copy.version = version; acks += 1", "  ok if acks >= W", "read(ask):", "  for each copy asked: newest = max(newest, its version)", "  return newest", "overlap(N, W, R):", "  for every write set of W and read set of R:", "    total += 1", "    if the sets share a copy: shared += 1", "copy: a version and up or down; N = 3 copies at v1"], "real": ["type Copy struct {", "\tVersion int", "\tUp      bool", "}", "", "func Write(cs []*Copy, version, w int, reach ...int) bool {", "\tacks := 0", "\tfor _, k := range reach {", "\t\tif cs[k].Up {", "\t\t\tcs[k].Version = version", "\t\t\tacks++", "\t\t}", "\t}", "\treturn acks >= w", "}", "", "func Read(cs []*Copy, ask ...int) int {", "\tnewest := 0", "\tfor _, k := range ask {", "\t\tnewest = max(newest, cs[k].Version)", "\t}", "\treturn newest", "}", "", "func Overlap(n, w, r int) (shared, total int) {", "\tfor ws := 0; ws < 1<<n; ws++ {", "\t\tfor rs := 0; rs < 1<<n; rs++ {", "\t\t\tif bits(ws) == w && bits(rs) == r {", "\t\t\t\ttotal++", "\t\t\t\tif ws&rs != 0 {", "\t\t\t\t\tshared++", "\t\t\t\t}", "\t\t\t}", "\t\t}", "\t}", "\treturn shared, total", "}", "", "// in main: N = 3 copies, all at v1", "cs := []*Copy{{1, true}, {1, true}, {1, false}}"], "map": {"1": [6], "2": [8, 9], "3": [10, 11], "4": [14], "5": [17], "6": [19, 20], "7": [22], "8": [25], "9": [26, 27, 28], "10": [29], "11": [30, 31], "12": [1, 2, 3, 4, 40]}}},PCS={"semi": [[1, 2], [3, 7, 8], [9, 10, 11], [3, 4], [4, 5, 6], [9, 10, 11]], "quorum": [[12, 1], [1, 2, 3, 4], [5, 6, 7, 9, 11], [3, 4, 6, 9, 10, 11], [3, 4, 9, 11]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

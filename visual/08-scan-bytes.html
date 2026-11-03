@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan bytes as the cost</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,opacity .35s}
+.dim{opacity:.25}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Scan bytes: what a warehouse query really costs</h1>
+  <p class="lede">The <b>transfers</b> table in a columnar warehouse, drawn as one cell per column file per day partition. Watch how many cells each query opens.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="cut">Cut the bytes</button>
+    <button role="tab" aria-selected="false" data-mode="limit">LIMIT does not help</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 340" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui" font-weight="700">
+      <title id="stage-title">A grid of seven day partitions by eight column files</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+<text x="30" y="22" text-anchor="start" font-size="12" font-weight="400" fill="var(--muted)">transfers: one file per column per day partition (7 days drawn of a year)</text>
+<text x="155.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">day</text>
+<text x="229.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">pool</text>
+<text x="303.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">amount</text>
+<text x="382.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">sender</text>
+<text x="466.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">to</text>
+<text x="555.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">tx_hash</text>
+<text x="634.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">fee</text>
+<text x="768.0" y="44" text-anchor="middle" font-size="11" font-weight="400" fill="var(--muted)">input_data (wide)</text>
+<text x="30" y="70" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">09-27</text>
+<rect id="g0_0" class="box" data-f="var(--line)" x="120" y="54" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_1" class="box" data-f="var(--line)" x="194" y="54" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_2" class="box" data-f="var(--line)" x="268" y="54" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_3" class="box" data-f="var(--line)" x="342" y="54" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_4" class="box" data-f="var(--line)" x="426" y="54" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_5" class="box" data-f="var(--line)" x="510" y="54" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_6" class="box" data-f="var(--line)" x="604" y="54" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g0_7" class="box" data-f="var(--line)" x="668" y="54" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<text x="30" y="102" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">09-28</text>
+<rect id="g1_0" class="box" data-f="var(--line)" x="120" y="86" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_1" class="box" data-f="var(--line)" x="194" y="86" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_2" class="box" data-f="var(--line)" x="268" y="86" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_3" class="box" data-f="var(--line)" x="342" y="86" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_4" class="box" data-f="var(--line)" x="426" y="86" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_5" class="box" data-f="var(--line)" x="510" y="86" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_6" class="box" data-f="var(--line)" x="604" y="86" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g1_7" class="box" data-f="var(--line)" x="668" y="86" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<text x="30" y="134" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">09-29</text>
+<rect id="g2_0" class="box" data-f="var(--line)" x="120" y="118" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_1" class="box" data-f="var(--line)" x="194" y="118" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_2" class="box" data-f="var(--line)" x="268" y="118" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_3" class="box" data-f="var(--line)" x="342" y="118" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_4" class="box" data-f="var(--line)" x="426" y="118" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_5" class="box" data-f="var(--line)" x="510" y="118" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_6" class="box" data-f="var(--line)" x="604" y="118" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g2_7" class="box" data-f="var(--line)" x="668" y="118" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<text x="30" y="166" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">09-30</text>
+<rect id="g3_0" class="box" data-f="var(--line)" x="120" y="150" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_1" class="box" data-f="var(--line)" x="194" y="150" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_2" class="box" data-f="var(--line)" x="268" y="150" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_3" class="box" data-f="var(--line)" x="342" y="150" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_4" class="box" data-f="var(--line)" x="426" y="150" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_5" class="box" data-f="var(--line)" x="510" y="150" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_6" class="box" data-f="var(--line)" x="604" y="150" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g3_7" class="box" data-f="var(--line)" x="668" y="150" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<text x="30" y="198" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">10-01</text>
+<rect id="g4_0" class="box" data-f="var(--line)" x="120" y="182" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_1" class="box" data-f="var(--line)" x="194" y="182" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_2" class="box" data-f="var(--line)" x="268" y="182" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_3" class="box" data-f="var(--line)" x="342" y="182" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_4" class="box" data-f="var(--line)" x="426" y="182" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_5" class="box" data-f="var(--line)" x="510" y="182" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_6" class="box" data-f="var(--line)" x="604" y="182" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g4_7" class="box" data-f="var(--line)" x="668" y="182" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<text x="30" y="230" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">10-02</text>
+<rect id="g5_0" class="box" data-f="var(--line)" x="120" y="214" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_1" class="box" data-f="var(--line)" x="194" y="214" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_2" class="box" data-f="var(--line)" x="268" y="214" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_3" class="box" data-f="var(--line)" x="342" y="214" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_4" class="box" data-f="var(--line)" x="426" y="214" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_5" class="box" data-f="var(--line)" x="510" y="214" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_6" class="box" data-f="var(--line)" x="604" y="214" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g5_7" class="box" data-f="var(--line)" x="668" y="214" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<text x="30" y="262" text-anchor="start" font-size="12" font-weight="400" fill="var(--fg)">10-03</text>
+<rect id="g6_0" class="box" data-f="var(--line)" x="120" y="246" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_1" class="box" data-f="var(--line)" x="194" y="246" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_2" class="box" data-f="var(--line)" x="268" y="246" width="70" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_3" class="box" data-f="var(--line)" x="342" y="246" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_4" class="box" data-f="var(--line)" x="426" y="246" width="80" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_5" class="box" data-f="var(--line)" x="510" y="246" width="90" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_6" class="box" data-f="var(--line)" x="604" y="246" width="60" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect id="g6_7" class="box" data-f="var(--line)" x="668" y="246" width="200" height="26" rx="3" fill="var(--line)" stroke="var(--line)"/>
+<rect x="20" y="290" width="860" height="40" rx="8" fill="none" stroke="var(--line)"/>
+<text id="big" data-t="" x="38" y="316" text-anchor="start" font-size="16" font-weight="700" fill="var(--fg)"></text>
+<text id="sql" data-t="" x="862" y="315" text-anchor="end" font-size="13" font-weight="400" font-family="ui-monospace,Menlo,monospace" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-scan-bytes/main.go</code> (<code>go run .</code>). The file sizes in the program are assumed examples. The sum is the point.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">read</span>
+    <span style="--c:var(--ok)">read, needed</span>
+    <span style="--c:var(--fail)">read for nothing or costly</span>
+    <span style="--c:var(--wait)">refused by a guard rail</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>BigQuery on-demand pricing bills per byte scanned. Athena and Trino on object storage: bytes read are both the time and the bill. StarRocks: scan bytes per statement shape, next to CPU.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Name columns, filter on the bare partition column, leave wide columns out, dry-run before running, require a partition filter on big tables, and serve repeated dashboards from a materialized view.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Row store</th><th>Column store warehouse</th></tr>
+      <tr><td>Main cost</td><td>pages and rows touched</td><td>bytes of the column files read</td></tr>
+      <tr><td>SELECT *</td><td>little extra</td><td>every column file</td></tr>
+      <tr><td>LIMIT 100</td><td>can stop early</td><td>often reads the same bytes</td></tr>
+      <tr><td>Interview line</td><td colspan=2>"In a warehouse the cost is bytes scanned, partitions times columns, so LIMIT does not save you and naming columns and partitions does."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const steps={
+cut:[
+ {"t": "SELECT * over a year", "b": "The dashboard reads every column of every partition, then keeps one day. Each cell is a compressed column file. The bill sums their sizes: 1,179 MB per day × 365 days = 430.3 GB in the program's example sizes.", "w": "In a warehouse the cost is bytes scanned: partitions read times columns read.", "f": {"g0_0": "f", "g0_1": "f", "g0_2": "f", "g0_3": "f", "g0_4": "f", "g0_5": "f", "g0_6": "f", "g0_7": "f", "g1_0": "f", "g1_1": "f", "g1_2": "f", "g1_3": "f", "g1_4": "f", "g1_5": "f", "g1_6": "f", "g1_7": "f", "g2_0": "f", "g2_1": "f", "g2_2": "f", "g2_3": "f", "g2_4": "f", "g2_5": "f", "g2_6": "f", "g2_7": "f", "g3_0": "f", "g3_1": "f", "g3_2": "f", "g3_3": "f", "g3_4": "f", "g3_5": "f", "g3_6": "f", "g3_7": "f", "g4_0": "f", "g4_1": "f", "g4_2": "f", "g4_3": "f", "g4_4": "f", "g4_5": "f", "g4_6": "f", "g4_7": "f", "g5_0": "f", "g5_1": "f", "g5_2": "f", "g5_3": "f", "g5_4": "f", "g5_5": "f", "g5_6": "f", "g5_7": "f", "g6_0": "f", "g6_1": "f", "g6_2": "f", "g6_3": "f", "g6_4": "f", "g6_5": "f", "g6_6": "f", "g6_7": "f"}, "x": {"big": "scan bytes: 430.3 GB", "sql": "SELECT * FROM transfers"}, "pc": [1, 2, 3, 4], "rl": [1, 2]},
+ {"t": "Name the columns", "b": "The dashboard shows day, pool and amount. The rule: open a column file only if the query names that column. 1 + 8 + 20 MB per day × 365 days = 10.6 GB.", "w": "Projection pushdown: three narrow columns instead of eight, one of them wide.", "f": {"g0_0": "c", "g0_1": "c", "g0_2": "c", "g1_0": "c", "g1_1": "c", "g1_2": "c", "g2_0": "c", "g2_1": "c", "g2_2": "c", "g3_0": "c", "g3_1": "c", "g3_2": "c", "g4_0": "c", "g4_1": "c", "g4_2": "c", "g5_0": "c", "g5_1": "c", "g5_2": "c", "g6_0": "c", "g6_1": "c", "g6_2": "c"}, "x": {"big": "scan bytes: 10.6 GB", "sql": "SELECT day, pool, amount"}, "pc": [2, 3, 4], "rl": [5]},
+ {"t": "Name the partition", "b": "Add WHERE day = '2026-10-01'. The planner checks each partition's day against the filter, and one passes. 29 MB is left.", "w": "Three small files instead of the whole table.", "f": {"g4_0": "ok", "g4_1": "ok", "g4_2": "ok"}, "x": {"big": "scan bytes: 29 MB", "sql": "… WHERE day = '2026-10-01'"}, "pc": [1, 2], "rl": [7]},
+ {"t": "A wide column costs most", "b": "Adding input_data, a long string, opens one more file of 900 MB. The sum goes from 29 MB to 929 MB. It outweighs the other three together, 31 times over.", "w": "Bytes, not columns, are the cost. Leave wide columns out unless they are needed.", "f": {"g4_0": "ok", "g4_1": "ok", "g4_2": "ok", "g4_7": "f"}, "x": {"big": "929 MB: one wide column outweighs three narrow ones", "sql": "SELECT day, pool, amount, input_data"}, "pc": [3, 4], "rl": [16, 17]},
+ {"t": "Know the bytes before you run", "b": "The query profile shows scan bytes after a run. A BigQuery dry run estimates them before, so a terabyte mistake is caught for free.", "w": "Make scan bytes part of review, next to the plan.", "f": {"g4_0": "ok", "g4_1": "ok", "g4_2": "ok"}, "x": {"big": "dry run: estimated bytes first", "sql": "bq query --dry_run …"}, "pc": [5, 6], "rl": [12, 13, 14]}
+],
+limit:[
+ {"t": "SELECT * … LIMIT 100", "b": "Someone adds LIMIT 100 to make the query cheap. The bill counts the files opened before the limit applies. So 100 rows come back, and 430.3 GB are read.", "w": "LIMIT stops the output. It does not stop a column store from opening every file it needs.", "f": {"g0_0": "f", "g0_1": "f", "g0_2": "f", "g0_3": "f", "g0_4": "f", "g0_5": "f", "g0_6": "f", "g0_7": "f", "g1_0": "f", "g1_1": "f", "g1_2": "f", "g1_3": "f", "g1_4": "f", "g1_5": "f", "g1_6": "f", "g1_7": "f", "g2_0": "f", "g2_1": "f", "g2_2": "f", "g2_3": "f", "g2_4": "f", "g2_5": "f", "g2_6": "f", "g2_7": "f", "g3_0": "f", "g3_1": "f", "g3_2": "f", "g3_3": "f", "g3_4": "f", "g3_5": "f", "g3_6": "f", "g3_7": "f", "g4_0": "f", "g4_1": "f", "g4_2": "f", "g4_3": "f", "g4_4": "f", "g4_5": "f", "g4_6": "f", "g4_7": "f", "g5_0": "f", "g5_1": "f", "g5_2": "f", "g5_3": "f", "g5_4": "f", "g5_5": "f", "g5_6": "f", "g5_7": "f", "g6_0": "f", "g6_1": "f", "g6_2": "f", "g6_3": "f", "g6_4": "f", "g6_5": "f", "g6_6": "f", "g6_7": "f"}, "x": {"big": "scan bytes: unchanged", "sql": "SELECT * FROM transfers LIMIT 100"}, "pc": [1, 2, 3, 4, 7], "rl": [1, 2, 3]},
+ {"t": "Rows returned are not the cost", "b": "The bill counts bytes scanned. BigQuery bills the whole read: 430.3 GB read for 100 rows bills 430.3 GB.", "w": "Judge a warehouse query by its bytes, never by its row count.", "f": {"g0_0": "f", "g0_1": "f", "g0_2": "f", "g0_3": "f", "g0_4": "f", "g0_5": "f", "g0_6": "f", "g0_7": "f", "g1_0": "f", "g1_1": "f", "g1_2": "f", "g1_3": "f", "g1_4": "f", "g1_5": "f", "g1_6": "f", "g1_7": "f", "g2_0": "f", "g2_1": "f", "g2_2": "f", "g2_3": "f", "g2_4": "f", "g2_5": "f", "g2_6": "f", "g2_7": "f", "g3_0": "f", "g3_1": "f", "g3_2": "f", "g3_3": "f", "g3_4": "f", "g3_5": "f", "g3_6": "f", "g3_7": "f", "g4_0": "f", "g4_1": "f", "g4_2": "f", "g4_3": "f", "g4_4": "f", "g4_5": "f", "g4_6": "f", "g4_7": "f", "g5_0": "f", "g5_1": "f", "g5_2": "f", "g5_3": "f", "g5_4": "f", "g5_5": "f", "g5_6": "f", "g5_7": "f", "g6_0": "f", "g6_1": "f", "g6_2": "f", "g6_3": "f", "g6_4": "f", "g6_5": "f", "g6_6": "f", "g6_7": "f"}, "x": {"big": "100 rows, 430.3 GB billed"}, "pc": [4, 7], "rl": [2, 3]},
+ {"t": "Guard rail: require a partition filter", "b": "Set require_partition_filter on the table. The check runs at plan time: does the query filter on the partition column? No, so it is refused, and 0 bytes are read.", "w": "The mistake is stopped by the engine, not by a code review.", "f": {"g0_0": "w", "g0_1": "w", "g0_2": "w", "g0_3": "w", "g0_4": "w", "g0_5": "w", "g0_6": "w", "g0_7": "w", "g1_0": "w", "g1_1": "w", "g1_2": "w", "g1_3": "w", "g1_4": "w", "g1_5": "w", "g1_6": "w", "g1_7": "w", "g2_0": "w", "g2_1": "w", "g2_2": "w", "g2_3": "w", "g2_4": "w", "g2_5": "w", "g2_6": "w", "g2_7": "w", "g3_0": "w", "g3_1": "w", "g3_2": "w", "g3_3": "w", "g3_4": "w", "g3_5": "w", "g3_6": "w", "g3_7": "w", "g4_0": "w", "g4_1": "w", "g4_2": "w", "g4_3": "w", "g4_4": "w", "g4_5": "w", "g4_6": "w", "g4_7": "w", "g5_0": "w", "g5_1": "w", "g5_2": "w", "g5_3": "w", "g5_4": "w", "g5_5": "w", "g5_6": "w", "g5_7": "w", "g6_0": "w", "g6_1": "w", "g6_2": "w", "g6_3": "w", "g6_4": "w", "g6_5": "w", "g6_6": "w", "g6_7": "w"}, "x": {"big": "refused: no partition filter", "sql": "require_partition_filter = true"}, "pc": [8, 9], "rl": [5, 6, 7]},
+ {"t": "Fix: columns and partition", "b": "Name three columns and one day. The same 100 rows, from 29 MB.", "w": "Ban SELECT * in dashboards and scheduled jobs.", "f": {"g4_0": "ok", "g4_1": "ok", "g4_2": "ok"}, "x": {"big": "scan bytes: 29 MB", "sql": "SELECT day, pool, amount … WHERE day = '2026-10-01'"}, "pc": [1, 2, 3, 4], "rl": [9, 10]},
+ {"t": "And keep it small for repeats", "b": "A dashboard asked every minute goes onto a materialized view, which stores the answer in a few rows.", "w": "Pruning cuts bytes per query. A view cuts the number of times you pay them.", "f": {"g4_0": "ok", "g4_1": "ok", "g4_2": "ok"}, "x": {"big": "repeat queries: read the view", "sql": "mv_daily_pool_volume"}, "pc": [10], "rl": [12, 13, 14]}
+]
+};
+const base={};
+const code={
+"cut":{
+ label:"SQL",
+ pc:["scan_bytes(query):", "  partitions = partitions that match the filter on the partition column", "  columns = columns the query names          # SELECT * names all", "  return sum of file size for each column in each partition", "before running:", "  estimate = dry run                         # the same sum, from metadata", "LIMIT applies to the rows returned, after the files are opened", "guard rail:", "  if the table requires a partition filter and the query has none: refuse", "repeat queries: read a materialized view instead"],
+ real:["-- before: every column, every day", "SELECT * FROM transfers;", "", "-- after: named columns, one partition", "SELECT day, pool, amount", "FROM   transfers", "WHERE  day = '2026-10-01';", "", "-- StarRocks: read the bytes after a run", "-- Query profile: ScanBytes, RawRowsRead", "", "-- BigQuery: read the bytes before a run", "-- bq query --dry_run --use_legacy_sql=false 'SELECT day, pool, amount ...'", "-- Query will process 29 MB when run.", "", "-- a wide column: one more file, 900 MB a day", "SELECT day, pool, amount, input_data FROM transfers WHERE day = '2026-10-01';"],
+ map:{"1": [2, 5, 6, 7], "2": [7], "3": [2, 5], "4": [10], "5": [12], "6": [13, 14]}},
+"limit":{
+ label:"SQL",
+ pc:["scan_bytes(query):", "  partitions = partitions that match the filter on the partition column", "  columns = columns the query names          # SELECT * names all", "  return sum of file size for each column in each partition", "before running:", "  estimate = dry run                         # the same sum, from metadata", "LIMIT applies to the rows returned, after the files are opened", "guard rail:", "  if the table requires a partition filter and the query has none: refuse", "repeat queries: read a materialized view instead"],
+ real:["-- LIMIT does not cut the bill", "SELECT * FROM transfers LIMIT 100;", "-- BigQuery bills the columns of every partition it opens", "", "-- guard rail: refuse a query with no day filter", "ALTER TABLE transfers SET OPTIONS (require_partition_filter = true);", "-- Error: Cannot query over table without a filter over column(s) 'day'", "", "-- the fix", "SELECT day, pool, amount FROM transfers WHERE day = '2026-10-01' LIMIT 100;", "", "-- repeats: a view that stores the answer", "CREATE MATERIALIZED VIEW mv_daily_pool_volume AS", "SELECT day, pool, sum(amount) AS volume FROM transfers GROUP BY day, pool;"],
+ map:{"1": [2, 10], "2": [10], "3": [2, 10], "4": [3], "7": [1, 2], "8": [5], "9": [6, 7], "10": [12, 13, 14]}}
+};
+const C={c:"var(--coord)",s:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",l:"var(--line)",n:"var(--panel)"};
+function $(id){const el=document.getElementById(id);if(!el)throw new Error("missing #"+id);return el}
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function label(id,on){["-t","-u","-v"].forEach(s=>{const t=document.getElementById(id+s);if(t)t.setAttribute("fill",on?"#fff":"var(--fg)")})}
+function apply(s){
+  for(const id in s.f||{}){const k=s.f[id];$(id).setAttribute("fill",C[k]||k);label(id,k!=="l"&&k!=="n")}
+  (s.on||[]).forEach(id=>$(id).classList.add("on"));
+  (s.d||[]).forEach(id=>$(id).classList.add("dim"));
+  for(const id in s.x||{})$(id).textContent=s.x[id];
+  for(const id in s.a||{}){const d=s.a[id];for(const k in d)$(id).setAttribute(k,d[k])}
+}
+function render(){
+  const s=steps[mode][i];
+  document.querySelectorAll("[data-f]").forEach(el=>{el.setAttribute("fill",el.dataset.f);label(el.id,false)});
+  document.querySelectorAll(".msg.on").forEach(el=>el.classList.remove("on"));
+  document.querySelectorAll(".dim").forEach(el=>el.classList.remove("dim"));
+  document.querySelectorAll("[data-t]").forEach(el=>el.textContent=el.dataset.t);
+  document.querySelectorAll("[data-a]").forEach(el=>{const d=JSON.parse(el.dataset.a);for(const k in d)el.setAttribute(k,d[k])});
+  apply(base[mode]||{});apply(s);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

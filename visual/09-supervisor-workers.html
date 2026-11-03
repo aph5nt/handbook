@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Supervisor and workers</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<style>
+.bar{transition:width .5s}
+@media (prefers-reduced-motion:reduce){.bar,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Supervisor and workers</h1>
+  <p class="lede">A change has three independent tasks: add a database migration, update a dashboard, fix a parser. One supervisor agent splits the work. Three worker agents build in parallel, each in its own git worktree. Watch the briefs go out and the reports come back. Then see what happens when a worker says DONE and has no proof.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Three workers, one merge</button>
+    <button role="tab" aria-selected="false" data-mode="bad">DONE with no evidence</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A supervisor, three workers, a verifier and the main branch</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="edges" fill="none" stroke-width="2.5" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700"></g>
+      <g id="nodes" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle"></g>
+      <g id="chips" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" text-anchor="middle"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-supervisor-workers/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">working</span>
+    <span style="--c:var(--wait)">waiting, or a claim not yet checked</span>
+    <span style="--c:var(--ok)">done and proven</span>
+    <span style="--c:var(--fail)">failed, or broken on main</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>A Claude Code harness: the main session plans, spawns one executor per task in its own worktree, then a reviewer that sees the code and not the implementer's reasoning. The main session alone owns commits, memory and the answer to the human. LangGraph and similar frameworks call it the supervisor pattern.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>The worker knows only its brief, and the supervisor sees only the report. So write the brief like one for a peer: the goal, the files to read, what is already ruled out. Ask for a fixed report shape: DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT or BLOCKED. Accept DONE only with the command that proves it and its output.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>One agent</th><th>Supervisor and workers</th></tr>
+      <tr><td>Speed</td><td>One task at a time</td><td>Independent tasks in parallel</td></tr>
+      <tr><td>Context</td><td>One window fills with everything</td><td>Each worker has a clean window</td></tr>
+      <tr><td>Review</td><td>Agrees with its own work</td><td>A fresh reviewer is not anchored</td></tr>
+      <tr><td>Cost</td><td>Lowest</td><td>Higher: briefs, reports, a verifier</td></tr>
+      <tr><td>Breaks when</td><td>The window overflows</td><td>A handoff drops detail, or DONE has no proof</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A supervisor buys parallel work and fresh-eyes review, and pays with lossy handoffs, so every DONE needs evidence."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const N={sup:[360,14,180,48,"Supervisor",""],wa:[30,116,220,64,"Worker A: migration","own worktree"],wb:[340,116,220,64,"Worker B: dashboard","own worktree"],wc:[650,116,220,64,"Worker C: parser","own worktree"],
+ ver:[150,284,180,48,"Verifier",""],main:[400,284,180,48,"main branch",""],op:[670,284,200,48,"Ask the operator",""]};
+const E={ba:["M400 62 L150 114","brief",230,84],bb:["M450 62 L450 114","brief",478,92],bc:["M500 62 L750 114","brief",660,84],
+ ra:["M140 218 L220 282","report",150,256],rb:["M440 218 L300 282","report",400,256],rc:["M760 218 L770 282","BLOCKED",820,256],
+ rbm:["M470 218 L490 282","merged unchecked",560,256],vm:["M330 308 L398 308","",0,0],back:["M290 284 L410 220","sent back with the failure",210,236],rcv:["M700 214 C640 250 420 262 332 292","report",640,262]};
+const steps={
+"ok":[
+ {t:"One change, three tasks",b:"The supervisor reads the change. It sees three tasks that touch no common file: a migration, a dashboard, a parser fix.",w:"Only independent tasks run in parallel. Two tasks that edit the same file must run one after the other.",on:{sup:"run"},e:[],ch:{}},
+ {t:"Three briefs go out",b:"Each worker gets a brief: the goal, the files to read, and what is already ruled out. That brief is all the worker will ever know.",w:"A brief is the worker's whole world. Anything left out of it is lost.",on:{sup:"ok"},e:["ba","bb","bc"],ch:{wa:["brief read","wait"],wb:["brief read","wait"],wc:["brief read","wait"]}},
+ {t:"They build in parallel",b:"Each worker works in its own git worktree, a separate checkout of its own branch. They cannot overwrite each other's files.",w:"Isolation is what makes parallel safe. Three agents in one folder would clash.",on:{wa:"run",wb:"run",wc:"run"},e:[],ch:{wa:["working","run"],wb:["working","run"],wc:["working","run"]},p:{wa:.7,wb:.5,wc:.4}},
+ {t:"Reports come back",b:"Worker A and Worker B report DONE, each with the test command and its output. Worker C reports BLOCKED: the table name in the brief does not exist and it needs a ruling.",w:"BLOCKED is a good report. A worker that guesses past a missing fact does more damage than one that stops.",on:{wa:"wait",wb:"wait",wc:"bad"},e:["ra","rb","rc"],ch:{wa:["DONE + test log","wait"],wb:["DONE + test log","wait"],wc:["BLOCKED","bad"]},p:{wa:1,wb:1,wc:.6}},
+ {t:"The verifier checks the proof",b:"The verifier runs each worker's test command itself on that worker's branch, and reads the exit code, not the report. A and B both return 0 failures.",w:"A report is a claim. The verifier turns the claim into a fact before anything merges.",on:{wa:"ok",wb:"ok",wc:"bad",ver:"ok"},e:["ra","rb","rc"],ch:{wa:["proven","ok"],wb:["proven","ok"],wc:["BLOCKED","bad"]},p:{wa:1,wb:1,wc:.6}},
+ {t:"Merge, and ask about the rest",b:"The supervisor merges A and B into main. It asks the operator one short question about the table name for C. It owns the commits and the answer to the human.",w:"Workers never publish or talk to the human. One owner for commits and answers means one place to look.",on:{wa:"ok",wb:"ok",wc:"wait",ver:"ok",main:"ok",op:"wait",sup:"run"},e:["vm","rc"],ch:{wa:["merged","ok"],wb:["merged","ok"],wc:["waits for ruling","wait"]},p:{wa:1,wb:1,wc:.6}}
+],
+"bad":[
+ {t:"Three workers running",b:"Same change, same three briefs, same three worktrees. All three workers are building.",w:"So far nothing is different from the happy path.",on:{wa:"run",wb:"run",wc:"run"},e:["ba","bb","bc"],ch:{wa:["working","run"],wb:["working","run"],wc:["working","run"]},p:{wa:.6,wb:.6,wc:.6}},
+ {t:"A claim with no proof",b:"Worker B reports: “DONE. All tests pass.” There is no test command and no output. Worker A and Worker C report DONE, each with its test log.",w:"The supervisor sees only the summary. “All tests pass” with no output is a sentence, not evidence.",on:{wa:"ok",wb:"wait",wc:"ok"},e:["ra","rb","rcv"],ch:{wa:["DONE + test log","ok"],wb:["DONE, no output","wait"],wc:["DONE + test log","ok"]},p:{wa:1,wb:1,wc:1}},
+ {t:"Without a verifier",b:"Suppose line 5, the verifier, is off. The report says DONE, so the supervisor merges B straight into main. The dashboard test was never run. Main goes red, and every other branch now starts from a broken base.",w:"One unproven DONE costs everyone. The failure shows up later, far from the worker that caused it.",on:{wa:"ok",wb:"bad",wc:"ok",main:"bad"},e:["rbm"],ch:{wa:["DONE + test log","ok"],wb:["merged unchecked","bad"],wc:["DONE + test log","ok"]},p:{wa:1,wb:1,wc:1}},
+ {t:"With a verifier",b:"Replay it with the verifier in place. It runs the dashboard tests on B's branch and gets 2 failures, not 0. B is sent back with the failing output, and nothing reaches main.",w:"The verifier catches the lie before the merge. The cost is one more test run, not a broken main.",on:{wa:"ok",wb:"bad",wc:"ok",ver:"bad"},e:["rb","back"],ch:{wa:["DONE + test log","ok"],wb:["2 tests fail","bad"],wc:["DONE + test log","ok"]},p:{wa:1,wb:.7,wc:1}},
+ {t:"Fixed, proven, merged",b:"B fixes the two tests and reports DONE with the command and its output. The verifier runs it again and it passes. All three merge.",w:"Evidence is the shape of the report, not an extra. Ask for the command and its output every time.",on:{wa:"ok",wb:"ok",wc:"ok",ver:"ok",main:"ok"},e:["ra","rb","rcv","vm"],ch:{wa:["merged","ok"],wb:["merged","ok"],wc:["merged","ok"]},p:{wa:1,wb:1,wc:1}}
+]};
+const col={run:"var(--coord)",wait:"var(--wait)",ok:"var(--ok)",bad:"var(--fail)"};
+let mode="ok",i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  let h="";
+  for(const [k,[x,y,w,ht,lbl,sub]] of Object.entries(N)){
+    const st=s.on[k];const fill=st?col[st]:"var(--line)";const tc=st?"#fff":"var(--fg)";
+    h+=`<rect class="box" x="${x}" y="${y}" width="${w}" height="${ht}" rx="8" fill="${fill}"/><text x="${x+w/2}" y="${y+(sub?26:30)}" fill="${tc}">${lbl}</text>`;
+    if(sub)h+=`<text x="${x+w/2}" y="${y+46}" fill="${tc}" font-size="12" font-weight="400">${sub}</text>`;
+    if(s.p&&s.p[k]!==undefined){h+=`<rect x="${x+10}" y="${y+52}" width="${w-20}" height="6" rx="3" fill="rgba(255,255,255,.35)"/><rect class="bar" x="${x+10}" y="${y+52}" width="${(w-20)*s.p[k]}" height="6" rx="3" fill="#fff"/>`;}
+  }
+  $("nodes").innerHTML=h;
+  let c="";
+  for(const [k,[txt,st]] of Object.entries(s.ch)){const [x,y,w]=N[k];
+    c+=`<rect x="${x+20}" y="${y+72}" width="${w-40}" height="26" rx="13" fill="${col[st]}"/><text x="${x+w/2}" y="${y+90}" fill="#fff">${txt}</text>`;}
+  $("chips").innerHTML=c;
+  let e="";
+  for(const k of s.e){const [d,lbl,lx,ly]=E[k];const bad=k==="rbm"||k==="back"||k==="rc";const lt=lbl;const cl=bad?"var(--fail)":"var(--fg)";
+    e+=`<path d="${d}" stroke="${cl}" marker-end="url(#arr)"/>`;if(lbl)e+=`<text x="${lx}" y="${ly}" fill="${cl}" stroke="none" text-anchor="middle">${lt}</text>`;}
+  $("edges").innerHTML=e;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+
+const CODE={"label": "Python", "pc": ["split the change into tasks that touch no common file", "brief = goal, files to read, what is ruled out      # all the worker knows", "run workers in parallel, one worktree each", "collect reports: DONE with proof, or BLOCKED", "verify: run the test command again ourselves, on the branch", "if it fails: send it back with the output           # nothing reaches main", "if BLOCKED: ask the operator one short question", "merge what passed"], "real": ["def write_brief(name, task):", "    return {\"goal\": task, \"files\": f\"{task}/\", \"ruled_out\": \"...\"}  # all it will know", "", "", "def verify(report):", "    failures = TESTS[report[\"branch\"]]  # run it ourselves", "    return failures == 0, failures", "", "", "def supervise(tasks, broken_claim=False, verifier=True, c_blocked=True):", "    briefs = {n: write_brief(n, t) for n, t in tasks.items()}  # no common file", "    with ThreadPoolExecutor(3) as pool:  # one worktree each", "        reports = list(pool.map(lambda n: worker(n, broken_claim, c_blocked), briefs))", "    merged, asks = [], []", "    for r in reports:", "        if r[\"status\"] == \"BLOCKED\":", "            asks.append(f\"{r['worker']}: {r['why']}\")  # one short question", "            continue", "        if verifier:", "            ok, failures = verify(r)", "            if not ok:", "                print(f\"  {r['worker']} sent back: {failures} tests fail\")", "                continue  # nothing reaches main", "        merged.append(r[\"worker\"])", "    return merged, asks"], "map": {"2": [1, 2, 11], "5": [5, 6, 7, 19, 20], "1": [11], "3": [12, 13], "4": [13], "7": [16, 17], "6": [21, 22, 23], "8": [24]}, "path": "handbook/code/09-supervisor-workers/main.py", "cmd": "python3 main.py", "note": ""},PCS={"ok": [[1], [2], [3], [4], [5], [7, 8]], "bad": [[3], [4], [8], [5, 6], [5, 8]]};
+for(const t in PCS)PCS[t].forEach((p,k)=>{steps[t][k].pc=p;});
+let codeView="pc";
+function cesc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE,pc=(steps[mode][i].pc)||[];
+  const v=(codeView==="alt"&&!c.alt)?"real":codeView;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=cesc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const __render=render;render=function(){__render();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{codeView=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

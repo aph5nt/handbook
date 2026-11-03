@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Borg and Spanner</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.box,.dot{transition:none}}
+.note{color:var(--muted);font-size:15px;margin:0}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+<body>
+<main>
+  <h1>Google: one way to run a planet of cheap machines</h1>
+  <p class="lede">Google runs on cheap machines, and some fail every hour. Three ideas make that bearable: Borg places every job, Spanner with TrueTime agrees on time across continents, and SRE (Site Reliability Engineering) turns reliability into a budget. Pick a tab and press <b>Next</b>.</p>
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="borg">Borg: a machine dies</button>
+    <button role="tab" aria-selected="false" data-mode="spanner">Spanner: TrueTime commit</button>
+    <button role="tab" aria-selected="false" data-mode="sre">SRE: error budget</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title">
+      <title id="stage-title">Animated Google infrastructure scenes</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <g data-scene="borg">
+          <rect id="bm" class="box" x="20" y="174" width="170" height="52" rx="8"/><text id="bm-t" x="105" y="205">Borg master</text>
+          <g fill="none" stroke="var(--line)" stroke-width="2"><rect x="240" y="30" width="220" height="300" rx="10"/><rect x="480" y="30" width="200" height="300" rx="10"/><rect x="700" y="30" width="180" height="300" rx="10"/></g>
+          <text x="350" y="58" fill="var(--muted)">Machine 1</text><text x="580" y="58" fill="var(--muted)">Machine 2</text><text x="790" y="58" fill="var(--muted)">Machine 3</text>
+          <rect id="s11" class="box" x="255" y="76" width="190" height="40" rx="6"/><text id="s11-t" x="350" y="102">free</text>
+          <rect id="s12" class="box" x="255" y="128" width="190" height="40" rx="6"/><text id="s12-t" x="350" y="154">free</text>
+          <rect id="s13" class="box" x="255" y="180" width="190" height="40" rx="6"/><text id="s13-t" x="350" y="206">free</text>
+          <rect id="s14" class="box" x="255" y="232" width="190" height="40" rx="6"/><text id="s14-t" x="350" y="258">free</text>
+          <rect id="s21" class="box" x="495" y="76" width="170" height="40" rx="6"/><text id="s21-t" x="580" y="102">free</text>
+          <rect id="s22" class="box" x="495" y="128" width="170" height="40" rx="6"/><text id="s22-t" x="580" y="154">free</text>
+          <rect id="s23" class="box" x="495" y="180" width="170" height="40" rx="6"/><text id="s23-t" x="580" y="206">free</text>
+          <rect id="s24" class="box" x="495" y="232" width="170" height="40" rx="6"/><text id="s24-t" x="580" y="258">free</text>
+          <rect id="s31" class="box" x="712" y="76" width="156" height="40" rx="6"/><text id="s31-t" x="790" y="102">free</text>
+          <rect id="s32" class="box" x="712" y="128" width="156" height="40" rx="6"/><text id="s32-t" x="790" y="154">free</text>
+          <rect id="s33" class="box" x="712" y="180" width="156" height="40" rx="6"/><text id="s33-t" x="790" y="206">free</text>
+          <rect id="s34" class="box" x="712" y="232" width="156" height="40" rx="6"/><text id="s34-t" x="790" y="258">free</text>
+          <g id="dead2" class="msg"><rect x="480" y="30" width="200" height="300" rx="10" fill="var(--fail)" opacity=".18" stroke="var(--fail)" stroke-width="3"/><text x="580" y="310" fill="var(--fail)">machine died</text></g>
+          <g id="queue" class="msg"><rect x="20" y="300" width="170" height="40" rx="6" fill="var(--wait)"/><text x="105" y="326" fill="#1f2320">queue: 4 batch</text></g>
+          <g id="oneip" class="msg"><text x="350" y="310" fill="var(--undo)">one IP for the machine</text></g>
+        </g>
+        <g data-scene="spanner">
+          <rect id="eu" class="box" x="20" y="40" width="210" height="52" rx="8"/><text id="eu-t" x="125" y="71">Frankfurt leader</text>
+          <rect id="us" class="box" x="670" y="40" width="210" height="52" rx="8"/><text id="us-t" x="775" y="71">Iowa replica</text>
+          <rect id="tt" class="box" x="330" y="140" width="240" height="52" rx="8"/><text id="tt-t" x="450" y="171">TrueTime: GPS + atomic</text>
+          <line x1="60" y1="300" x2="850" y2="300" stroke="var(--muted)" stroke-width="2" marker-end="url(#arr)"/><text x="850" y="325" text-anchor="end" fill="var(--muted)" class="sm">true time</text>
+          <g id="iv" class="msg"><rect x="360" y="285" width="120" height="30" fill="var(--wait)" opacity=".55"/><text x="360" y="275" fill="var(--fg)" class="sm">earliest</text><text x="480" y="275" fill="var(--fg)" class="sm">latest</text></g>
+          <g id="ts" class="msg"><line x1="480" y1="232" x2="480" y2="335" stroke="var(--coord)" stroke-width="4"/><text x="480" y="225" fill="var(--coord)">Ana's commit stamp</text></g>
+          <g id="cw" class="msg"><line x1="360" y1="350" x2="478" y2="350" stroke="var(--wait)" stroke-width="3" marker-end="url(#arr)"/><text x="300" y="380" fill="var(--wait)">commit wait: until earliest passes the stamp</text></g>
+          <g id="vis" class="msg"><text x="640" y="290" fill="var(--ok)">visible everywhere</text></g>
+          <g id="bad" class="msg"><line x1="430" y1="240" x2="430" y2="335" stroke="var(--fail)" stroke-width="4" stroke-dasharray="6 4"/><text x="205" y="245" fill="var(--fail)">Iowa write: later, stamped earlier</text></g>
+        </g>
+        <g data-scene="sre">
+          <rect id="tg" class="box" x="20" y="40" width="210" height="52" rx="8"/><text id="tg-t" x="125" y="71">Target: 99.9 %</text>
+          <rect id="rel" class="box" x="20" y="150" width="210" height="52" rx="8"/><text id="rel-t" x="125" y="181">Release train</text>
+          <text id="bud" x="570" y="80" fill="var(--fg)">Error budget left: 43 minutes</text>
+          <rect id="e0" class="box" x="280" y="100" width="52" height="60" rx="4"/><rect id="e1" class="box" x="338" y="100" width="52" height="60" rx="4"/>
+          <rect id="e2" class="box" x="396" y="100" width="52" height="60" rx="4"/><rect id="e3" class="box" x="454" y="100" width="52" height="60" rx="4"/>
+          <rect id="e4" class="box" x="512" y="100" width="52" height="60" rx="4"/><rect id="e5" class="box" x="570" y="100" width="52" height="60" rx="4"/>
+          <rect id="e6" class="box" x="628" y="100" width="52" height="60" rx="4"/><rect id="e7" class="box" x="686" y="100" width="52" height="60" rx="4"/>
+          <rect id="e8" class="box" x="744" y="100" width="52" height="60" rx="4"/><rect id="e9" class="box" x="802" y="100" width="52" height="60" rx="4"/>
+          <rect id="gate" class="box" x="280" y="240" width="574" height="52" rx="8"/><text id="gate-t" x="567" y="271">Feature releases: open</text>
+          <g id="out" class="msg"><rect x="20" y="300" width="210" height="52" rx="8" fill="var(--fail)"/><text x="125" y="331" fill="#fff">Outage: 26 minutes</text></g>
+        </g>
+      </g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+  <div class="legend">
+    <span style="--c:var(--coord)">serving or deciding</span>
+    <span style="--c:var(--wait)">low priority, or waiting</span>
+    <span style="--c:var(--ok)">healthy, budget left</span>
+    <span style="--c:var(--fail)">failed or frozen</span>
+    <span style="--c:var(--undo)">a lesson Kubernetes fixed</span>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Kubernetes is Borg rewritten in public: pods, labels and desired state. Every cluster you deploy to schedules like this, and every pod gets its own IP (Internet Protocol) address because of Borg's port pain.</p>
+    </div>
+    <div class="card">
+      <h2>The same idea at home</h2>
+      <p>Pick a clock everyone agrees on. An EVM (Ethereum Virtual Machine) indexer orders by block height, so the chain is the clock and ordering is cheap. Reliability becomes a target and a budget, not a feeling.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Without it</th><th>Google's answer</th></tr>
+      <tr><td>Placing jobs</td><td>Each team owns its own servers, mostly idle</td><td>Borg packs every job on shared machines, batch fills the gaps</td></tr>
+      <tr><td>A machine dies</td><td>Someone moves the service by hand</td><td>Borg restarts it elsewhere and evicts batch work</td></tr>
+      <tr><td>Order across continents</td><td>Clocks drift, writes come out of order</td><td>TrueTime interval plus commit wait</td></tr>
+      <tr><td>How reliable is enough</td><td>An argument between product and operations</td><td>An SLO (service level objective) and its error budget</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Google made a planet of failing machines feel like one computer: Borg to run, Spanner with TrueTime to agree on time, and SRE error budgets to trade speed for reliability in numbers."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",P="var(--undo)",F="var(--fg)";
+const free={};["11","12","13","14","21","22","23","24","31","32","33","34"].forEach(k=>free["s"+k]=N);
+const freeX={};Object.keys(free).forEach(k=>freeX[k+"-t"]="free");
+const full={};for(let k=0;k<10;k++)full["e"+k]=G;
+const spent=n=>{const o={};for(let k=0;k<10;k++)o["e"+k]=k<10-n?G:N;return o;};
+const D={
+ borg:{f:Object.assign({bm:N},free),x:freeX},
+ spanner:{f:{eu:N,us:N,tt:N}},
+ sre:{f:Object.assign({tg:C,rel:N,gate:G},full),x:{bud:"Error budget left: 43 minutes","gate-t":"Feature releases: open"}}
+};
+const packed={s11:C,s21:C,s31:C,s12:C,s22:C},packedX={"s11-t":"Search","s21-t":"Search","s31-t":"Search","s12-t":"Gmail","s22-t":"Gmail"};
+const batch={s13:Y,s14:Y,s23:Y,s24:Y,s32:Y,s33:Y,s34:Y},batchX={"s13-t":"Batch (low)","s14-t":"Batch (low)","s23-t":"Batch (low)","s24-t":"Batch (low)","s32-t":"Batch (low)","s33-t":"Batch (low)","s34-t":"Batch (low)"};
+const dead={s21:R,s22:R,s23:R,s24:R};
+const moved=Object.assign({},packed,batch,{s21:N,s22:N,s23:N,s24:N,s33:C,s14:C});
+const movedX=Object.assign({},packedX,batchX,{"s21-t":"gone","s22-t":"gone","s23-t":"gone","s24-t":"gone","s33-t":"Search","s14-t":"Gmail"});
+const steps={
+borg:[
+ {t:"Jobs arrive at Borg",b:"The Search team asks for three copies of Search. The Gmail team asks for two copies of Gmail. Both are production priority. Nobody names a machine: the request is a job name and a count.",w:"Teams declare what they want. Borg decides where it runs. Kubernetes kept this idea: desired state, not hand-placed servers.",f:{bm:C},m:[[190,200,238,200,"3 Search, 2 Gmail",C,false,105,160]],pc:[1, 2]},
+ {t:"Borg packs the machines",b:"For each copy Borg picks the machine with the fewest production copies, and ties go to the lowest number. So Search goes on machines 1, 2, 3. Then Gmail: all tie at 1, so machine 1. Next machine 2, the lowest with 1. Our model has this one rule. Real Borg weighs far more.",w:"Copies are spread on purpose. One dead machine never takes every copy of a service.",f:Object.assign({bm:C},packed),x:packedX,m:[[190,190,253,96,"",C],[190,200,493,96,"",C],[190,210,710,96,"",C]],pc:[3, 4, 6]},
+ {t:"Batch work fills every gap",b:"Machines have four slots here. The free slots are checked in order, and each takes a batch job from the queue: 2, 2 and 3. Batch work is index builds and log crunching. It runs at low priority, so it can be thrown off.",w:"Mixing serving work and batch work on shared machines keeps them busy. That is where the savings come from.",f:Object.assign({bm:C},packed,batch),x:Object.assign({},packedX,batchX),pc:[7]},
+ {t:"Machine 2 dies",b:"A disk controller fails and machine 2 drops off the network. Search copy 2, Gmail copy 2 and two batch jobs are gone. The batch jobs go back to the queue. The two production copies must be placed again.",w:"With this many cheap machines, some machine fails every hour. The design assumes it.",f:Object.assign({bm:Y},packed,batch,dead),x:Object.assign({},packedX,batchX),on:["dead2"],pc:[8, 9]},
+ {t:"Borg moves the work",b:"Search first: machine 3 has 1 production copy, machine 1 has 2, so machine 3. Gmail next: both have 2, so the tie goes to machine 1. Both machines are full, so each throws off one batch job. Four batch jobs now wait in the queue.",w:"Priority makes this safe. Serving jobs push out batch jobs, never the other way round. No human was paged.",f:Object.assign({bm:C},moved),x:movedX,on:["dead2","queue"],m:[[190,214,253,252,"",C],[190,222,710,200,"",C]],pc:[10, 4, 5, 6]},
+ {t:"The failure that matters: one address, many jobs",b:"Every job on machine 1 shares the machine's one IP (Internet Protocol) address. Search holds port 8080. Gmail also wants 8080. The check 'is it taken on this machine?' is yes, so Borg hands Gmail port 31207, and every client must look it up.",w:"Kubernetes fixed this by giving each pod its own IP address. It is Borg's own mistake, learned and dropped in the public rewrite.",f:Object.assign({bm:C},moved,{s11:P,s12:P}),x:Object.assign({},movedX,{"s11-t":"Search :8080","s12-t":"Gmail :31207"}),on:["dead2","oneip"],pc:[11]}
+],
+spanner:[
+ {t:"A transfer commits in Frankfurt",b:"Ana moves money between two accounts. The Frankfurt leader for that data must stamp the commit with a time every continent will agree on.",w:"Machine clocks drift. Without help, Iowa and Frankfurt disagree about which write came first.",f:{eu:C},pc:[12]},
+ {t:"Ask TrueTime for the time",b:"TrueTime does not answer with one time. It answers with an interval, here [.000, .006]. GPS receivers and atomic clocks keep it a few milliseconds wide.",w:"Admitting the uncertainty is the trick. A range you can trust beats a point you cannot.",f:{eu:C,tt:C},on:["iv"],m:[[200,94,360,138,"now?",C],[380,192,160,94,"an interval",G,false,230,160]],pc:[12]},
+ {t:"Stamp at the top",b:"The rule is stamp = latest, so Frankfurt stamps .006. The true time now is surely not after it.",w:"The stamp may be a little in the future. That is fine, as long as nobody sees the write before the stamp has passed.",f:{eu:C,tt:C},on:["iv","ts"],pc:[12]},
+ {t:"Commit wait",b:"Frankfurt sends the write to the replicas and starts the check: earliest <= stamp? While that is yes, it keeps the locks. At true time .007 the answer turns no. Now .006 is in the past on every clock in the world. The wait was 7 ms.",w:"Spanner pays a few milliseconds per write to buy one global order. It is a cost you can see and budget for.",f:{eu:Y,tt:C},on:["iv","ts","cw"],pc:[13]},
+ {t:"Copy and release",b:"Paxos, a voting protocol, finishes copying the write to a majority of replicas, including Iowa. With both done, the write becomes visible and its locks are released.",w:"Each shard of data is copied by its own Paxos group, so one data centre can die and the write survives.",f:{eu:G,us:G},on:["iv","ts","cw","vis"],m:[[232,66,668,66,"Paxos copy",G]],pc:[13]},
+ {t:"Iowa reads in order",b:"A read in Iowa takes its own TrueTime stamp, later than .006. Its check is 'stamp <= my read stamp?', so it sees her transfer. Any write stamped later really happened later.",w:"Timestamps now order transactions across continents. This is called external consistency.",f:{eu:G,us:G,tt:C},on:["ts","vis"],m:[[700,94,560,138,"now?",C]],pc:[12]},
+ {t:"The failure that matters: skip the wait",b:"Suppose Frankfurt stamped .010 with a plain clock and released at once. Iowa's clock runs 5 ms behind. A write in Iowa at true .012 reads its clock and gets .007. It happened after Ana's, but its stamp is earlier.",w:"Two readers now see two different orders of the same money. The commit wait prevents it. If GPS fails, the interval grows and every commit waits longer, but it stays correct.",f:{eu:R,us:R,tt:N},on:["ts","bad"],pc:[14]}
+],
+sre:[
+ {t:"Set the target",b:"The team promises that 99.9 percent of requests succeed over 30 days. The rule: 0.1% x 43,200 minutes = 43.2, about 43 minutes of failure a month.",w:"Those 43 minutes are the error budget. They are spent, like money.",f:{tg:C},pc:[15]},
+ {t:"Release 1 spends a little",b:"A new version ships with a bug. Errors spike until it is rolled back. That costs 4 minutes: 43 - 4 = 39. The check 'left <= 0?' is no, so releases go on.",w:"Releases are the main way a working system breaks. So releases are what the budget pays for.",f:Object.assign({rel:C},spent(1)),x:{bud:"Error budget left: 39 minutes"},m:[[232,176,800,162,"spends",Y,false,520,200]],pc:[16, 17]},
+ {t:"Two more releases",b:"Two more versions ship that week. They cost 6 and 7 minutes: 39 - 13 = 26. Left is still above 0, so releases go on.",w:"The team can see the budget fall. They choose whether the next feature is worth it.",f:Object.assign({rel:C},spent(4)),x:{bud:"Error budget left: 26 minutes"},pc:[16, 17]},
+ {t:"The failure that matters: an outage eats the rest",b:"A bad configuration push takes the site down for 26 minutes: 26 - 26 = 0. The check 'left <= 0?' is yes. Feature releases freeze.",w:"Now the rule fires on its own. No feature releases until the budget recovers. Only reliability fixes ship.",f:Object.assign({rel:N,gate:R},spent(10)),x:{bud:"Error budget left: 0 minutes","gate-t":"Feature releases: frozen"},on:["out"],pc:[16, 17]},
+ {t:"Nobody argues",b:"Product wants features, SRE (site reliability engineering) wants calm. The rule decided it, so there is nothing to argue. Teams that want speed invest in tests and canary releases, because that protects the budget.",w:"An error budget turns reliability into a negotiation in numbers, not opinions.",f:Object.assign({rel:N,gate:R},spent(10)),x:{bud:"Error budget left: 0 minutes","gate-t":"Feature releases: frozen"},pc:[17]},
+ {t:"A new month",b:"The 30-day window moves on and old failures drop out of it. Left rises above 0, so the same check now says no, and releases open again.",w:"The budget is a rolling window. A calm month earns the right to move fast.",f:{rel:C},pc:[18]}
+]};
+const code={main:{"label": "Go", "dir": "11-google-borg-spanner", "pc": ["submit(job, copies, priority):            # nobody names a machine", "  for each copy: place(copy)", "place(copy):", "  pick the machine with the fewest production copies, ties to the lowest number", "  if it has no free slot: throw off a batch job, back to the queue", "  put the copy in the slot", "fill: while a slot is free and the batch queue is not empty: run a batch job", "machine dies:", "  its batch jobs go back to the queue", "  for each of its production copies: place(copy)", "port: if the wanted port is taken on this machine: hand out another, clients look it up", "Spanner: stamp = now().latest", "  while now().earliest <= stamp: wait; then release the locks", "  BUG, plain clock: a later write in Iowa, 5 ms behind, gets an earlier stamp", "SRE: budget = 0.1 % of 30 days, about 43 minutes", "  each failure: left -= minutes of failure", "  if left <= 0: freeze feature releases   # nobody argues", "new month: old failures drop out, releases open"], "real": ["type Machine struct {", "\tProd  []string", "\tBatch []string", "\tPorts map[int]string", "\tDead  bool", "}", "", "type Borg struct {", "\tM     []*Machine", "\tQueue []string", "}", "", "func (b *Borg) Place(copyName string) int {", "\tbest := -1", "\tfor i, m := range b.M {", "\t\tif !m.Dead && len(m.Prod) < Slots && (best < 0 || len(m.Prod) < len(b.M[best].Prod)) {", "\t\t\tbest = i", "\t\t}", "\t}", "\tm := b.M[best]", "\tif len(m.Prod)+len(m.Batch) == Slots {", "\t\tlast := len(m.Batch) - 1", "\t\tb.Queue = append(b.Queue, m.Batch[last])", "\t\tm.Batch = m.Batch[:last]", "\t}", "\tm.Prod = append(m.Prod, copyName)", "\treturn best", "}", "", "func (b *Borg) Submit(job string, copies int) {", "\tfor c := 1; c <= copies; c++ {", "\t\tb.Place(fmt.Sprintf(\"%s %d\", job, c))", "\t}", "}", "", "func (b *Borg) Fill() {", "\tfor _, m := range b.M {", "\t\tfor !m.Dead && len(b.Queue) > 0 && len(m.Prod)+len(m.Batch) < Slots {", "\t\t\tm.Batch = append(m.Batch, b.Queue[0])", "\t\t\tb.Queue = b.Queue[1:]", "\t\t}", "\t}", "}", "", "func (b *Borg) Die(i int) {", "\tm := b.M[i]", "\tm.Dead = true", "\tb.Queue = append(b.Queue, m.Batch...)", "\tfor _, c := range m.Prod {", "\t\tb.Place(c)", "\t}", "}", "", "func Port(m *Machine, job string, want, other int) int {", "\tif _, taken := m.Ports[want]; taken {", "\t\twant = other", "\t}", "\tm.Ports[want] = job", "\treturn want", "}", "", "func TrueTimeCommit(trueNow, doubt int) (stamp, doneAt int) {", "\tstamp = trueNow + doubt", "\tfor trueNow <= stamp {", "\t\ttrueNow++", "\t}", "\treturn stamp, trueNow", "}", "", "func PlainStamp(trueNow, behind int) int { return trueNow - behind }", "", "func Budget(left int, failures ...int) (int, bool) {", "\tfor _, f := range failures {", "\t\tleft -= f", "\t}", "\treturn left, left <= 0", "}", ""], "map": {"3": [13], "4": [15, 16, 17], "5": [21, 22, 23, 24], "6": [26], "1": [30], "2": [31, 32], "7": [36, 37, 38, 39, 40], "8": [45], "9": [48], "10": [49, 50], "11": [54, 55, 56, 58], "12": [62, 63], "13": [64, 65, 67], "14": [70], "15": [72], "16": [73, 74], "17": [76], "18": [76]}}};
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i];
+  const pl=(typeof PC!=="undefined"&&PC[mode]&&PC[mode][i])||s.pc||[];
+  const real=c.real&&c.real.length;
+  if(!real)view="pc";
+  $("realtab").style.display=real?"":"none";
+  $("realtab").textContent=c.label||"Go";
+  document.querySelectorAll("#codetabs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  $("codehow").innerHTML=c.how||(real?`The lit lines are the ones this step runs. Switch between pseudo code and the real Go. The full program replays this story: <code>handbook/code/${c.dir}/main.go</code> (<code>cd handbook/code/${c.dir} && go run .</code>).`:"The lit lines are the ones this step runs. This is a team practice, so it has pseudo code only.");
+  let hl=new Set(pl);
+  if(view==="real"){hl=new Set();pl.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  const lines=view==="pc"?c.pc:c.real;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll("#codetabs button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);["-t","-c"].forEach(q=>{const t=$(k+q);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");});}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  document.querySelectorAll(".msg[id]").forEach(e=>e.classList.remove("on"));
+  const on=[...(d.on||[]),...(s.on||[])].map(id=>$(id)).filter(Boolean);
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  const tok=render.tok=(render.tok||0)+1;on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>{if(render.tok===tok)el.classList.add("on")},110*k+30));
+  if(typeof draw==="function")draw(s);
+  drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

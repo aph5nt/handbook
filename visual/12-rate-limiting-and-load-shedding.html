@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rate limiting and shedding</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Rate limiting and load shedding: say no early</h1>
+  <p class="lede">A free-tier agent gets stuck in a loop and sends a thousand queries a minute. Later, a real peak arrives from everyone. Watch a token bucket stop the one client, and load shedding protect the paying users. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="bucket">Token bucket per key</button>
+    <button role="tab" aria-selected="false" data-mode="shed">Load shedding at the peak</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A token bucket in front of a proxy, and a load shedder in front of the graph</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <g data-scene="bucket">
+          <rect id="b-ag" class="box" x="20" y="150" width="170" height="62" rx="8"/><text id="b-ag-t" x="105" y="176">Free-tier agent</text><text id="b-ag-l" x="105" y="199" class="sm"></text>
+          <text x="420" y="40" class="sm" fill="var(--muted)">tokens drip in: +1 per second</text>
+          <line x1="420" y1="50" x2="420" y2="84" stroke="var(--muted)" stroke-width="2" stroke-dasharray="3 4" marker-end="url(#arr)"/>
+          <path id="bk" d="M320 90 L330 250 L510 250 L520 90" fill="none" stroke="var(--fg)" stroke-width="4" stroke-linejoin="round"/>
+          <text id="bk-x" x="420" y="160" font-size="56" fill="var(--fail)"></text>
+          <text id="bk-l" x="420" y="280" class="sm" fill="var(--fg)"></text>
+          <text id="cnt" x="790" y="250" class="sm" fill="var(--fg)"></text>
+        </g>
+        <g data-scene="shed">
+          <rect id="b-pd" class="box" x="20" y="40" width="170" height="56" rx="8"/><text id="b-pd-t" x="105" y="74">Paid users</text>
+          <rect id="b-fr" class="box" x="20" y="150" width="170" height="56" rx="8"/><text id="b-fr-t" x="105" y="184">Free tier</text>
+          <rect id="b-bg" class="box" x="20" y="260" width="170" height="56" rx="8"/><text id="b-bg-t" x="105" y="294">Background jobs</text>
+          <rect id="b-sh" class="box" x="330" y="140" width="200" height="80" rx="10"/><text id="b-sh-t" x="430" y="174">Load shedder</text><text id="b-sh-l" x="430" y="198" class="sm"></text>
+          <rect x="700" y="232" width="180" height="16" rx="8" fill="var(--line)"/>
+          <rect id="ld" class="box" x="700" y="232" width="0" height="16" rx="8"/>
+          <text id="ld-t" x="790" y="272" class="sm" fill="var(--fg)"></text>
+        </g>
+        <rect id="b-sv" class="box" x="700" y="150" width="180" height="62" rx="8"/><text id="b-sv-t" x="790" y="176">Graph</text><text id="b-sv-l" x="790" y="199" class="sm"></text>
+        <text id="cap" x="450" y="350" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-rate-limiting-and-load-shedding/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">a caller</span>
+    <span style="--c:var(--undo)">a token in the bucket</span>
+    <span style="--c:var(--ok)">served</span>
+    <span style="--c:var(--wait)">near the limit</span>
+    <span style="--c:var(--fail)">refused, or overloaded</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>An agent API with three caller classes, each with its own bucket size, enforced in the proxy before the query costs anything. An edge rate limiter in front of the origin. Redis with an atomic Lua script as the shared counter for many proxy copies. Envoy and NGINX ship rate limiters.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Token bucket when bursts are fine and floods are not. Leaky bucket when the output must be smooth. Sliding window when the edge burst matters. One shared counter, not one per copy. Decide in advance what happens when the counter store is down: fail open keeps the product up, fail closed protects the backend.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Rate limiting (throttling)</th><th>Load shedding</th></tr>
+      <tr><td>Who is refused</td><td>One client over its own share</td><td>Anyone, when the whole system is near its limit</td></tr>
+      <tr><td>Decided by</td><td>A counter per key</td><td>The system's own load or queue</td></tr>
+      <tr><td>Reply</td><td>429 Too Many Requests, Retry-After</td><td>503, or a fast refusal of low-priority work</td></tr>
+      <tr><td>Protects</td><td>Fairness between clients</td><td>The service itself</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I give each key a token bucket in a shared store so bursts pass and floods get a 429, and when the whole system is hot I shed the lowest-priority work first."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const REQ=[190,170,318,170],OK=[522,170,698,170],NO=[318,196,192,196];
+const PD=[190,68,328,158],FR=[190,178,328,178],BG=[190,288,328,202],SV=[530,180,698,180];
+const BPD=[328,150,192,80],BFR=[328,192,192,192],BBG=[328,212,192,300];
+const a=(c,t,col,dash,lx,ly)=>[...c,t,col,dash,lx,ly];
+const D={
+ bucket:{f:{"b-ag":C,"b-sv":G},x:{"b-ag-l":"","b-sv-t":"Proxy, then graph","b-sv-l":"","bk-l":"bucket for key free-7: holds 10, refills 1 per second","bk-x":"","cnt":"","cap":""}},
+ shed:{f:{"b-pd":C,"b-fr":C,"b-bg":C,"b-sh":C,"b-sv":G},x:{"b-sh-t":"Load shedder","b-sh-l":"","b-sv-t":"Graph","b-sv-l":"","cap":""}}};
+const steps={
+bucket:[
+ {t:"A full bucket",b:"Each API key has its own bucket with two numbers: a capacity of 10 tokens and a rate of 1 token per second. On each request the bucket first adds the tokens that dripped in since the last request, never more than 10, then checks: is there at least one whole token?",w:"Every request must take a token. A full bucket is what allows a short burst.",tok:10,m:[]},
+ {t:"The agent loops: a burst of 10",b:"The agent gets stuck in a loop and fires 10 queries at t = 0. No time has passed, so nothing drips in. Each check finds a token (10, 9, ... 1), takes it and serves the query. The bucket is now at 0.",w:"A burst passes. A real user who clicks a few times quickly never notices the limit.",tok:0,x:{"b-ag-l":"looping","cnt":"served 10, refused 0"},m:[a(REQ,"request",C),a(OK,"served",G)]},
+ {t:"Request 11: no token left",b:"Request 11 also arrives at t = 0. The check finds 0 tokens, less than 1. It is refused with 429 Too Many Requests. Retry-After is the time until one whole token drips in: (1 - 0) / 1 per second = 1 second.",w:"The refusal is cheap and fast. It costs the graph nothing, and it tells a polite client exactly when to come back.",tok:0,f:{"b-ag":Y},x:{"b-ag-l":"looping","cnt":"served 10, refused 1"},m:[a(REQ,"request 11",C),a(NO,"429, Retry-After: 1 s",R,0,255,222)]},
+ {t:"Tokens drip back: the flood becomes a trickle",b:"The agent keeps sending, 1,000 requests over 60 seconds, about 17 a second. Each second adds 1 token, so about 1 of those 17 finds a token. Over the minute: 10 from the full bucket plus 59 dripped in = 69 served, 931 refused.",w:"The bucket turns a flood into the allowed rate. The graph never sees the loop.",tok:1,f:{"b-ag":Y},x:{"b-ag-l":"1,000 a minute","cnt":"served 69, refused 931"},m:[a(REQ,"request",C),a(OK,"1 per second",G),a(NO,"429",R,0,255,222)]},
+ {t:"The failure that matters: one bucket per copy",b:"The proxy runs as three copies, and each keeps its own bucket in memory. The balancer sends request 1 to copy 1, request 2 to copy 2, and so on. Each copy runs the same check on its own 10 tokens and its own 1 per second, so the key really gets 30 tokens and 3 per second: 207 served, 793 refused.",w:"Three separate buckets let three times the burst and three times the rate through. The limit multiplies by the copy count.",tok:10,f:{"b-sv":R},x:{"bk-l":"3 copies, 3 separate buckets","bk-x":"x 3","b-sv-l":"gets 3 times the limit","cnt":"served 207, refused 793"},m:[a(REQ,"request",C),a(OK,"3 times too many",R)]},
+ {t:"The fix: one shared counter",b:"All copies call one bucket per key in Redis. The drip, the check and the take run as one atomic script, so two copies cannot both read 1 token and both take it. The flood gives 69 served, 931 refused again, whichever copy each request hits.",w:"Now decide what happens if Redis is down. Fail open keeps the product up and risks abuse. Fail closed protects the backend and refuses everyone.",tok:4,x:{"bk-l":"one bucket in Redis, shared by every copy","b-ag-l":"1,000 a minute","cnt":"served 69, refused 931"},m:[a(REQ,"request",C),a(OK,"served",G),a(NO,"429",R,0,255,222)]},
+ {t:"The other trap: a fixed window",b:"A team swaps the bucket for a counter per clock minute with a limit of 60. The agent sends 60 at 12:00:59: counter 12:00 reaches 60, allowed. At 12:01:00 a new counter starts at 0, so 60 more are allowed. 120 requests passed in 2 seconds.",w:"A fixed window lets a client double its rate at the edge: 120 requests in 2 seconds. A sliding window or a token bucket closes the gap.",tok:0,f:{"b-sv":Y},x:{"bk-l":"fixed window: 60 per clock minute","bk-x":"","b-sv-l":"120 in 2 seconds","cnt":"","cap":"12:00:59: 60 requests, window 1 full. 12:01:00: new window, 60 more"},m:[a(REQ,"60 + 60",C),a(OK,"double rate",Y)]}
+],
+shed:[
+ {t:"A normal hour",b:"Paid users ask for 25 percent of the graph's capacity, free-tier users 22, background jobs 13: 60 in all. The shedder admits classes from the highest priority down while the total stays at or under its limit of 90 percent. All three fit.",w:"Every caller is within its own rate limit. Rate limits alone do not protect against everyone being busy at once.",load:.6,m:[a(PD,"",C),a(FR,"",C),a(BG,"",C),a(SV,"serve",G)]},
+ {t:"A real peak arrives",b:"A market event brings everyone at once: paid 42, free 38, background 17, a total of 97 percent. No single key is over its own bucket, so rate limiting refuses nothing. The total is above the shedder's limit of 90.",w:"Past this point every query gets slower for everyone. Queueing makes latency climb steeply near full load.",load:.97,f:{"b-sh":Y,"b-sv":Y},x:{"b-sh-l":"near the limit"},m:[a(PD,"",C),a(FR,"",C),a(BG,"",C),a(SV,"serve",Y)]},
+ {t:"Shed the cheapest work first",b:"The shedder walks the classes by priority. Paid: 42, total 42, under 90, admit. Free: 42 + 38 = 80, admit. Background: 80 + 17 = 97, over 90, so background is refused at once with 503 and a Retry-After.",w:"Background jobs can wait an hour and lose nothing. Shed the work that is cheapest to lose.",load:.8,f:{"b-sh":Y,"b-bg":R},x:{"b-sh-l":"shedding background"},m:[a(PD,"",C),a(FR,"",C),a(BBG,"503, later",R,0,300,280),a(SV,"serve",G)]},
+ {t:"Reject fast, so clients back off",b:"The refusal takes a millisecond and costs the graph nothing. The background jobs back off with jitter. The load holds at 80 percent.",w:"A slow refusal is still load. Saying no early, at the edge, is the whole point.",load:.8,f:{"b-sh":Y,"b-bg":Y},x:{"b-sh-l":"shedding background","b-sv-l":"paid and free served"},m:[a(PD,"",C),a(FR,"",C),a(SV,"serve",G)]},
+ {t:"The failure that matters: accept everything",b:"Replay the peak with no shedder. Inside the peak, spikes of 120 requests a second hit a graph that serves 100. Every second the queue grows by 20. After 30 seconds 600 wait, a 6-second wait, beyond the 2-second timeout, so paid queries time out too.",w:"Without shedding, the system fails everyone a little instead of a few completely. That is worse: nobody gets an answer in time.",load:1.2,f:{"b-sh":N,"b-sv":R,"b-pd":R,"b-fr":R,"b-bg":R},x:{"b-sh-t":"No shedder","b-sh-l":"accepts everything","b-sv-t":"Graph: overloaded","b-sv-l":"paid queries time out"},m:[a(PD,"",R),a(FR,"",R),a(BG,"",R),a(SV,"queue grows",R)]}
+]};
+function draw(s,g){
+  if(mode==="shed"){const l=s.load||0;$("ld").setAttribute("width",Math.min(l,1)*180);$("ld").setAttribute("fill",l>1?R:l>.9?Y:G);$("ld-t").textContent=`load ${Math.round(l*100)} percent of capacity`;}
+  if(s.f&&s.f["b-sh"]===N){$("b-sh-t").setAttribute("fill","var(--fg)");$("b-sh-l").setAttribute("fill","var(--fg)");}
+  if(mode!=="bucket")return;
+  let h="";for(let k=0;k<(s.tok||0);k++){const r=Math.floor(k/5),q=k%5;h+=`<circle class="dot" cx="${360+q*30}" cy="${230-r*30}" r="12" fill="var(--undo)"/>`;}
+  g.innerHTML=h;
+}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"bucket": {"label": "Go", "pc": ["on request from key k at time now:", "  b = bucket[k]           # BUG: one bucket per copy, in its own RAM", "  b = redis.bucket(k)     # FIX: one shared bucket, atomic script", "  b.tokens = min(10, b.tokens + (now - b.last) * 1 per s)   # drip in", "  b.last = now", "  if b.tokens >= 1:", "    b.tokens -= 1", "    serve the request", "  else:", "    wait = (1 - b.tokens) / 1 per s", "    reply 429 Too Many Requests, Retry-After: wait", "# fixed window instead: count[minute(now)] += 1; refuse if > 60"], "real": ["// Bucket is a token bucket: it holds up to Cap tokens, Rate tokens drip in per second.", "type Bucket struct {", "\tCap, Rate float64", "\tTokens    float64", "\tLast      float64 // seconds", "}", "", "// Allow takes one token if there is one. Otherwise it returns the Retry-After wait.", "func (b *Bucket) Allow(now float64) (bool, float64) {", "\tb.Tokens = math.Min(b.Cap, b.Tokens+(now-b.Last)*b.Rate) // drip in since last call", "\tb.Last = now", "\tif b.Tokens >= 1 {", "\t\tb.Tokens--", "\t\treturn true, 0", "\t}", "\treturn false, (1 - b.Tokens) / b.Rate // seconds until the next whole token", "}", "", "// Flood sends n requests spread evenly over secs seconds through the buckets,", "// one after another (round robin), and counts served and refused.", "func Flood(buckets []*Bucket, n int, secs float64) (served, refused int) {", "\tfor k := 0; k < n; k++ {", "\t\tnow := secs * float64(k) / float64(n)", "\t\tif ok, _ := buckets[k%len(buckets)].Allow(now); ok {", "\t\t\tserved++", "\t\t} else {", "\t\t\trefused++", "\t\t}", "\t}", "\treturn", "}", "", "func main() {", "\ts, r = Flood([]*Bucket{newBucket(), newBucket(), newBucket()}, 1000, 60)", "\ts, r = Flood([]*Bucket{newBucket()}, 1000, 60)", "\tfmt.Println(\"step 7: fixed window of 60 per clock minute: 60 at 12:00:59 + 60 at 12:01:00 = 120 in 2 s\")", "}"], "map": {"1": [9], "2": [24, 34], "3": [35], "4": [10], "5": [11], "6": [12], "7": [13], "8": [14, 25], "9": [15, 26], "10": [16], "11": [16, 27], "12": [36]}}, "shed": {"label": "Go", "pc": ["every request of class c (paid > free > background):", "  demand = sum of current demand, per class, in % of capacity", "  admitted = 0", "  for each class c, highest priority first:", "    if admitted + c.demand <= 90%:", "      admitted += c.demand      # serve this class", "    else:", "      reply 503 at once, Retry-After   # shed: cheap to refuse", "# no shedder: accept everything", "#   arrivals 120/s > capacity 100/s -> queue += 20 every second"], "real": ["// Class is one caller class with its demand in percent of graph capacity.", "type Class struct {", "\tName     string", "\tPriority int // higher is kept longer", "\tDemand   float64", "}", "", "// Shed admits classes from the highest priority down while the total stays at or under limit.", "func Shed(classes []Class, limit float64) (admitted float64, shed []string) {", "\tfor _, c := range classes { // classes are sorted by priority, highest first", "\t\tif admitted+c.Demand <= limit {", "\t\t\tadmitted += c.Demand", "\t\t} else {", "\t\t\tshed = append(shed, c.Name) // refused fast: 503, come back later", "\t\t}", "\t}", "\treturn", "}", "", "func main() {", "\tnormal := []Class{{\"paid\", 3, 25}, {\"free\", 2, 22}, {\"background\", 1, 13}}", "\ta, sh := Shed(normal, 90)", "\tpeak := []Class{{\"paid\", 3, 42}, {\"free\", 2, 38}, {\"background\", 1, 17}}", "\ta, sh = Shed(peak, 90)", "\tfmt.Printf(\"step 5: no shedder, spikes at 120 requests/s against 100/s capacity: queue grows %d per second, %d waiting after 30 s, wait %.0f s > 2 s timeout\\n\",", "\t\t120-100, (120-100)*30, float64((120-100)*30)/100)", "}"], "map": {"1": [9], "2": [21, 23], "3": [9], "4": [10, 22, 24], "5": [11], "6": [12], "7": [13], "8": [14], "9": [25], "10": [26]}}},PCS={"bucket": [[1, 4, 6], [4, 5, 6, 7, 8], [6, 9, 10, 11], [4, 6, 7, 8, 11], [1, 2, 6, 7, 8], [1, 3, 4, 6], [12]], "shed": [[2, 4, 5, 6], [2, 5], [4, 5, 6, 7, 8], [8], [9, 10]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

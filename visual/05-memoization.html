@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memoization</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Memoization: a cache inside one function</h1>
+  <p class="lede">The Go indexer needs the decimals of every token it decodes. Press <b>Next</b> and watch a memo map turn a thousand node calls into one. Then switch tabs and memoize a function that is not pure.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="pure">Pure function: decimals</button>
+    <button role="tab" aria-selected="false" data-mode="impure">Not pure: balance</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A decoder, a memo map of arguments to results, and a chain node with a call counter</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="dec" class="box" x="20" y="150" width="170" height="74" rx="8" fill="var(--coord)"/>
+        <text id="h-dec" data-on="dec" x="105.0" y="176" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Decoder</text>
+        <text id="s-dec" data-on="dec" x="105.0" y="200" text-anchor="middle" font-size="14" fill="#fff"></text>
+        <rect x="250" y="20" width="330" height="250" rx="10" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <text id="mt" x="415" y="46" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fg)">Memo map: arguments → result</text>
+        <rect id="m1" class="box" x="265" y="88" width="300" height="38" rx="19.0" fill="var(--panel)"/>
+        <text id="t-m1" data-on="m1" x="415.0" y="112.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="m2" class="box" x="265" y="136" width="300" height="38" rx="19.0" fill="var(--panel)"/>
+        <text id="t-m2" data-on="m2" x="415.0" y="160.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="m3" class="box" x="265" y="184" width="300" height="38" rx="19.0" fill="var(--panel)"/>
+        <text id="t-m3" data-on="m3" x="415.0" y="208.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="m4" class="box" x="265" y="232" width="300" height="38" rx="19.0" fill="var(--panel)"/>
+        <text id="t-m4" data-on="m4" x="415.0" y="256.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="node" class="box" x="650" y="150" width="230" height="74" rx="8" fill="var(--coord)"/>
+        <text id="h-node" data-on="node" x="765.0" y="176" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Chain node (RPC)</text>
+        <text id="s-node" data-on="node" x="765.0" y="200" text-anchor="middle" font-size="14" fill="#fff"></text>
+        <text id="calls" x="765" y="260" text-anchor="middle" font-size="15" font-weight="700" fill="var(--fg)"></text>
+        <text x="250" y="344" font-size="14" font-weight="700" fill="var(--fg)">Memo map size</text><rect x="250" y="352" width="330" height="16" rx="8" fill="var(--line)"/><rect id="mem" class="box" x="250" y="352" width="0" height="16" rx="8" fill="var(--ok)"/>
+        <text id="memt" x="600" y="366" text-anchor="start" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-memoization/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">saved result, correct</span>
+    <span style="--c:var(--wait)">saved result, source changed</span>
+    <span style="--c:var(--fail)">wrong result, or unbounded growth</span>
+    <span style="--c:var(--panel)">empty slot</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>An EVM decoder memoizes token decimals, contract ABIs (the description of a contract's functions) and event signatures. Dynamic programming memoizes subproblems. React's <code>useMemo</code> keeps a value until its inputs change.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Memoize only pure functions. When a result depends on time or state, put that input into the arguments, such as the block number. Bound the map with LRU so it cannot grow forever.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Memoization</th><th>A general cache</th></tr>
+      <tr><td>Key</td><td>The function's arguments</td><td>Any key you design</td></tr>
+      <tr><td>Expiry</td><td>None, the result never changes</td><td>TTL or invalidation</td></tr>
+      <tr><td>Scope</td><td>Usually one process, one function</td><td>Shared across functions or services</td></tr>
+      <tr><td>Safe for</td><td>Pure functions only</td><td>Any data that may be a little stale</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Memoization caches a pure function's result by its arguments, so it is only safe when the same input always gives the same output, and the map needs a size bound.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[250,282,330];
+const steps={
+"pure":[
+ {pc:[1],t:"An empty memo map",b:"The decoder reads a USDC transfer. To turn the raw amount into tokens it needs decimals(USDC). The memo map is empty.",w2:"decimals(token) is pure: the same token always gives the same answer. That makes it safe to memoize.",
+  text:{"s-dec":"transfer of USDC",calls:"calls to the node: 0",memt:"0 entries"},w:{mem:0}},
+ {pc:[2, 3, 6, 7, 10, 13],t:"Miss: ask the node once",b:"The check on line 3: is USDC in the map? No, the map is empty. So line 6 runs the real work: the decoder asks the chain node, gets 6, and line 7 saves USDC → 6.",w2:"One network call. Every later USDC transfer can skip it.",
+  fill:{m1:OK},text:{"t-m1":"decimals(USDC) → 6",calls:"calls to the node: 1",memt:"1 entry"},w:{mem:20},a:[[190,180,263,100,"decimals(USDC)?",FG,false,[-80,0]],[567,108,648,175,"miss: ask",FG,false,[20,0]],[648,200,567,120,"6",OK,false,[16,10]]]},
+ {pc:[3, 4, 5],t:"A thousand hits",b:"The next thousand USDC transfers all ask for decimals(USDC). The check on line 3 now says yes. Line 5 returns 6 from the map, and the node is not asked. The call counter stays at 1.",w2:"No network call, no wait. The map lookup costs nanoseconds.",
+  text:{"s-dec":"1,000 more USDC transfers"},a:[[190,185,263,108,"decimals(USDC)?",FG,false,[-80,-5]],[263,118,190,205,"6, from the map",OK,false,[-121,97]]]},
+ {pc:[3, 6, 7, 10],t:"A new token is a new miss",b:"A WETH transfer arrives. The check asks: is WETH in the map? No, only USDC is. So it misses, asks the node, and saves WETH → 18. The counter goes to 2.",w2:"The key is the arguments. A different argument is a different entry.",
+  fill:{m2:OK},text:{"s-dec":"transfer of WETH","t-m2":"decimals(WETH) → 18",calls:"calls to the node: 2",memt:"2 entries"},w:{mem:40},a:[[567,156,648,185,"miss: ask"],[648,205,567,166,"18",OK,false,[0,26]]]},
+ {pc:[3, 5],t:"One call per token, not per transfer",b:"The decoder has handled 1,002 transfers and asked the node twice.",w2:"Memoization turns repeated slow work into one slow call and many fast lookups.",text:{"s-dec":"1,002 transfers done"}},
+ {pc:[1, 8, 9],t:"Bound the map",b:"Over a day the decoder meets thousands of tokens, many seen once. Line 8 checks the size after each save. Above 10,000 entries, line 9 drops the entry used longest ago.",w2:"An unbounded memo map is a memory leak with a nice name. LRU keeps the tokens in use and drops the rest.",
+  fill:{m3:OK,m4:OK,mem:WAIT},text:{"t-m3":"decimals(PEPE) → 18","t-m4":"limit: 10,000 entries, LRU",memt:"bounded"},w:{mem:300}}
+],
+"impure":[
+ {pc:[6, 7, 14],t:"Memoize a function that is not pure",b:"Someone memoizes balance(0x18) too. The first call asks the node and saves 5 ETH.",w2:"It looks the same as decimals. It is not: a balance changes with every block.",
+  fill:{m1:OK},text:{"s-dec":"needs balance(0x18)","t-m1":"balance(0x18) → 5 ETH",calls:"calls to the node: 1",memt:"1 entry"},w:{mem:20},a:[[567,108,648,175,"miss: ask"],[648,200,567,120,"5 ETH",OK,false,[16,10]]]},
+ {pc:[14],t:"The chain moves on",b:"A new block sends 3 ETH out of 0x18. The node now says 2 ETH. The memo map does not know.",w2:"The function's answer changed while its arguments stayed the same. That breaks the one rule of memoization.",fill:{m1:WAIT},text:{"s-node":"balance(0x18) = 2 ETH"}},
+ {pc:[3, 5, 14],t:"The failure that matters: wrong forever",b:"The decoder asks balance(0x18) again. The check on line 3 only compares the arguments, and 0x18 is in the map. So line 5 returns 5 ETH. There is no TTL, so it will say 5 ETH for as long as the process runs.",
+  w2:"A memo has no expiry, because a pure function never needs one. An impure function in a memo is wrong with no end.",fill:{m1:FAIL},text:{"s-dec":"got 5 ETH, wrong"},a:[[190,185,263,108,"balance(0x18)?",FG,false,[-80,-5]],[263,118,190,205,"5 ETH",FAIL,false,[-121,97]]],ban:["the memo returns the old balance forever",282]},
+ {pc:[7, 8, 9],t:"And the map only grows",b:"Suppose lines 8 and 9 are left out, as in many hand-written memos. Every new address adds an entry. Millions of addresses pass through the decoder. Nothing is ever removed.",w2:"Two failures in one: wrong answers and a memory leak.",
+  fill:{m2:FAIL,m3:FAIL,m4:FAIL,mem:FAIL},text:{"t-m2":"balance(0x77) → ...","t-m3":"balance(0xc2) → ...","t-m4":"... millions more",memt:"growing"},w:{mem:330},ban:["memory grows until the process dies",282]},
+ {pc:[8, 9, 15],t:"Fix: make the arguments complete",b:"Put the block number in the arguments: balance(0x18, block 9,506). At one block the balance never changes, so the function is pure again. Add an LRU limit.",
+  w2:"A function is pure when its arguments hold every input. Add the missing input, and memoizing is safe.",fill:{m1:OK,m2:LINE,m3:LINE,m4:LINE,mem:OK},text:{"t-m1":"balance(0x18, block 9506) → 5","t-m2":"","t-m3":"","t-m4":"",memt:"bounded"},w:{mem:60}}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"pure": {
+"label": "Go",
+"pc": [
+"memo = map of arguments -> result, limit 10,000",
+"function memoized(args):",
+"  if args in memo:                    # hit: seen before",
+"    move args to the front            # LRU: most recent first",
+"    return memo[args]",
+"  result = realWork(args)             # miss: ask the node once",
+"  memo[args] = result",
+"  if size(memo) > limit:              # bound the map",
+"    drop the least recently used entry",
+"  return result",
+"",
+"safe only when realWork is pure:",
+"    decimals(token)        yes, never changes",
+"    balance(addr)          no, changes every block",
+"    balance(addr, block)   yes, the block is an argument"
+],
+"real": [
+"type Memo[K comparable, V any] struct {",
+"\tlimit int",
+"\torder *list.List // front = most recently used",
+"\titems map[K]*list.Element",
+"}",
+"",
+"func (m *Memo[K, V]) Get(key K, load func(K) V) (V, bool) {",
+"\tif el, ok := m.items[key]; ok { // hit: seen before",
+"\t\tm.order.MoveToFront(el)",
+"\t\treturn el.Value.(entry[K, V]).val, true",
+"\t}",
+"\tv := load(key) // miss: do the real work once",
+"\tm.items[key] = m.order.PushFront(entry[K, V]{key, v})",
+"\tif m.order.Len() > m.limit { // bound the map",
+"\t\told := m.order.Remove(m.order.Back()).(entry[K, V])",
+"\t\tdelete(m.items, old.key)",
+"\t}",
+"\treturn v, false",
+"}",
+"",
+"// pure: the same token always gives the same decimals",
+"dec := NewMemo[string, int](10_000)",
+"v, hit := dec.Get(\"USDC\", n.Decimals)",
+"",
+"// not pure: the balance changes with every block",
+"bal := NewMemo[string, int](10_000)",
+"v, _ = bal.Get(\"0x18\", n.Balance)",
+"",
+"// fix: the block number joins the key",
+"byBlock := NewMemo[balanceKey, int](10_000) // the key holds the block",
+"v, _ = byBlock.Get(balanceKey{\"0x18\", 9506}, load)",
+"",
+"type balanceKey struct {",
+"\taddr  string",
+"\tblock int",
+"}"
+],
+"map": {
+"1": [
+1,
+2,
+3,
+4,
+22
+],
+"2": [
+7
+],
+"3": [
+8
+],
+"4": [
+9
+],
+"5": [
+10
+],
+"6": [
+12
+],
+"7": [
+13
+],
+"8": [
+14
+],
+"9": [
+15,
+16
+],
+"10": [
+18
+],
+"13": [
+22,
+23
+],
+"14": [
+26,
+27
+],
+"15": [
+30,
+31,
+33,
+34,
+35,
+36
+]
+}
+},
+"impure": {
+"label": "Go",
+"pc": [
+"memo = map of arguments -> result, limit 10,000",
+"function memoized(args):",
+"  if args in memo:                    # hit: seen before",
+"    move args to the front            # LRU: most recent first",
+"    return memo[args]",
+"  result = realWork(args)             # miss: ask the node once",
+"  memo[args] = result",
+"  if size(memo) > limit:              # bound the map",
+"    drop the least recently used entry",
+"  return result",
+"",
+"safe only when realWork is pure:",
+"    decimals(token)        yes, never changes",
+"    balance(addr)          no, changes every block",
+"    balance(addr, block)   yes, the block is an argument"
+],
+"real": [
+"type Memo[K comparable, V any] struct {",
+"\tlimit int",
+"\torder *list.List // front = most recently used",
+"\titems map[K]*list.Element",
+"}",
+"",
+"func (m *Memo[K, V]) Get(key K, load func(K) V) (V, bool) {",
+"\tif el, ok := m.items[key]; ok { // hit: seen before",
+"\t\tm.order.MoveToFront(el)",
+"\t\treturn el.Value.(entry[K, V]).val, true",
+"\t}",
+"\tv := load(key) // miss: do the real work once",
+"\tm.items[key] = m.order.PushFront(entry[K, V]{key, v})",
+"\tif m.order.Len() > m.limit { // bound the map",
+"\t\told := m.order.Remove(m.order.Back()).(entry[K, V])",
+"\t\tdelete(m.items, old.key)",
+"\t}",
+"\treturn v, false",
+"}",
+"",
+"// pure: the same token always gives the same decimals",
+"dec := NewMemo[string, int](10_000)",
+"v, hit := dec.Get(\"USDC\", n.Decimals)",
+"",
+"// not pure: the balance changes with every block",
+"bal := NewMemo[string, int](10_000)",
+"v, _ = bal.Get(\"0x18\", n.Balance)",
+"",
+"// fix: the block number joins the key",
+"byBlock := NewMemo[balanceKey, int](10_000) // the key holds the block",
+"v, _ = byBlock.Get(balanceKey{\"0x18\", 9506}, load)",
+"",
+"type balanceKey struct {",
+"\taddr  string",
+"\tblock int",
+"}"
+],
+"map": {
+"1": [
+1,
+2,
+3,
+4,
+22
+],
+"2": [
+7
+],
+"3": [
+8
+],
+"4": [
+9
+],
+"5": [
+10
+],
+"6": [
+12
+],
+"7": [
+13
+],
+"8": [
+14
+],
+"9": [
+15,
+16
+],
+"10": [
+18
+],
+"13": [
+22,
+23
+],
+"14": [
+26,
+27
+],
+"15": [
+30,
+31,
+33,
+34,
+35,
+36
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saga semantic lock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Saga isolation: semantic locks and countermeasures</h1>
+  <p class="lede">A saga commits each step at once, so other requests can see its half-done work. Saga 1 reserves the last phone for order 501 and later fails. Press <b>Next</b> to see what saga 2 tells its customer, with and without a semantic lock.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="none" id="tab-none">No isolation: a wrong sold out</button>
+    <button role="tab" aria-selected="false" data-mode="lock" id="tab-lock">Semantic lock</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Two sagas and one stock row exchanging messages</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-saga-semantic-lock/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">saga running</span>
+    <span style="--c:var(--wait)">pending: a saga is working on this row</span>
+    <span style="--c:var(--ok)">final, safe to use</span>
+    <span style="--c:var(--undo)">undone by compensation</span>
+    <span style="--c:var(--fail)">wrong answer, or stuck</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>An order in state <code>APPROVAL_PENDING</code> in a microservices order flow: the classic semantic lock. A wallet top-up marked <code>pending</code> until units are granted. Hotel and flight holds that expire after 15 minutes: a semantic lock with a timeout built in.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Add isolation in the data. Set a pending flag with the saga id and a timestamp, make other sagas wait or fail fast when they meet it, and clear it in the final step or the compensation. Run a sweeper that finishes or compensates sagas older than a limit.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>No countermeasure</th><th>Semantic lock</th><th>Commutative update</th></tr>
+      <tr><td>What others see</td><td>Half-done values as if final</td><td>A value marked pending</td><td>Only adds and subtracts</td></tr>
+      <tr><td>Wrong answers</td><td>Yes, from undone changes</td><td>No, others wait or fail fast</td><td>No, order does not matter</td></tr>
+      <tr><td>Cost</td><td>None</td><td>A flag, a timeout, a sweeper</td><td>Only fits counters</td></tr>
+      <tr><td>Risk</td><td>Dirty reads across services</td><td>A flag left by a crashed saga</td><td>Cannot enforce 'never below zero' alone</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"A saga has no isolation, so I add it in the data: a pending flag other sagas respect, cleared by the final step or by the compensation, with an expiry for crashed sagas."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const X={s1:150,row:450,s2:750},W=220,CHY=300,CW=240;
+const NAMES={s1:"Saga 1: order 501",row:"Stock row: phone",s2:"Saga 2: order 502"};
+const BOXC={s1:"var(--svc)",row:"var(--coord)",s2:"var(--svc)"};
+// Lifeline scene: s.st = chip per actor [text,kind], s.box = fill override, s.m = [a,b,y,text,kind] or ["note",0,y,text], s.cut = x of a network cut
+function scene(s){
+  let b="";
+  const names=Object.assign({},NAMES,s.names||{});
+  for(const k in X){
+    const f=(s.box&&s.box[k])||BOXC[k];
+    b+=BOX(X[k]-W/2,16,W,52,f,names[k]);
+    b+=`<line x1="${X[k]}" y1="68" x2="${X[k]}" y2="${CHY-6}" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;
+    const c=s.st[k];if(c)b+=CHIP(X[k],CHY,CW,c[0],c[1]==="n"?"var(--line)":KC[c[1]]||"var(--line)");
+  }
+  if(s.cut)b+=`<line x1="${s.cut}" y1="80" x2="${s.cut}" y2="${CHY-34}" stroke="var(--fail)" stroke-width="4" stroke-dasharray="10 6"/>`+T(s.cut,CHY-14,"network cut",{s:13,c:"var(--fail)"});
+  const msgs=(s.m||[]).map(([a,c,y,txt,kd])=>{
+    if(a==="note")return `<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--wait)" stroke-dasharray="6 4"/>`+T(450,y+1,txt,{c:"var(--fg)"});
+    const x1=X[a],x2=c==="cut"?s.cut-8:X[c],dx=x1<x2?6:-6;return ARROW(x1+dx,y,x2-dx,y,txt,KC[kd||"n"],{dash:kd==="lost"});});
+  if(s.ban)msgs.push(BANNER(CHY+52,s.ban));
+  return{base:b,msgs};
+}
+
+const run=["running","n"];
+const steps={
+none:[
+ {t:"One phone left",b:"Line 1: the stock row says 1 phone left. Two sagas are about to touch it: saga 1 for order 501, saga 2 for order 502.",w:"Inside one database, isolation would keep them apart. Across services, nothing does.",st:{s1:run,row:["1 left","ok"],s2:run},pc:[1]},
+ {t:"Saga 1 reserves the phone",b:"Line 2: saga 1's stock step lowers left from 1 to 0 and commits at once. No check stands in the way.",w:"A saga step is a normal committed transaction. Everyone can see it right away.",st:{s1:["step 2: reserved","ok"],row:["0 left","ok"],s2:run},m:[["s1","row",120,"reserve 1"],["row","s1",160,"done, 0 left","ok"]],pc:[2]},
+ {t:"Saga 2 reads 0 left",b:"Line 3: saga 2 reads left and gets 0. Line 4 asks: is left 0? Yes. So it tells its customer sold out and cancels order 502.",w:"Saga 2 trusted a value that belongs to a saga still in progress.",st:{s1:["step 3: shipping","n"],row:["0 left","ok"],s2:["told: sold out","wait"]},m:[["s2","row",120,"how many left?"],["row","s2",160,"0","wait"]],pc:[3,4]},
+ {t:"Saga 1 fails and compensates",b:"Saga 1's shipping step fails. Line 5, its compensation, raises left from 0 back to 1.",w:"The change that saga 2 acted on has been undone.",st:{s1:["cancelled","undo"],row:["1 left","undo"],s2:["told: sold out","wait"]},m:[["s1","row",120,"release 1","undo"],["row","s1",160,"done, 1 left","ok"]],pc:[5]},
+ {t:"The failure: a sale lost to a phantom",b:"Customer 502 was told sold out, and the phone sits in stock. Line 6 is the gap: nothing in the row said the 0 was not final, so line 4's check could not know.",w:"This is a dirty read across services. A saga has no I from ACID (atomic, consistent, isolated, durable) unless you add it yourself.",st:{s1:["cancelled","undo"],row:["1 left, unsold","fail"],s2:["sale lost","fail"]},ban:"Order 502 was refused because of a reservation that was later undone.",pc:[4,6]},
+ {t:"The fix: read a flag, not only the number",b:"Line 7: the row carries a status. Saga 2 now reads PENDING by 501 and gets the answer wait, not sold out. The next tab plays this through.",w:"The number alone cannot say whether it is final. The flag can.",st:{s1:["step 3: shipping","n"],row:["0 left, PENDING by 501","wait"],s2:["waiting","wait"]},m:[["s2","row",120,"how many left?"],["row","s2",160,"pending by 501, not final","wait"]],pc:[7]}
+],
+lock:[
+ {t:"Saga 1 reserves and sets a flag",b:"Line 2: is the status PENDING? No. Line 3: is left 0? No, it is 1. So line 4 lowers left to 0 and writes status PENDING, owner 501, since 09:00.",w:"The flag says: a saga is working on me, my value is not final.",st:{s1:["step 2: reserved","ok"],row:["0 left, PENDING by 501","wait"],s2:run},m:[["s1","row",120,"reserve, set PENDING 501"],["row","s1",160,"done","ok"]],pc:[1,2,3,4]},
+ {t:"Saga 2 meets the flag",b:"Saga 2 runs the same check. Line 2: status is PENDING, so it returns wait, pending by 501. Line 3, the sold-out answer, is never reached.",w:"The other choice is to fail fast with 'try again'. Either way, it never treats the pending value as final.",st:{s1:["step 3: shipping","n"],row:["0 left, PENDING by 501","wait"],s2:["waiting","wait"]},m:[["s2","row",120,"how many left?"],["row","s2",160,"pending by 501, not final","wait"]],pc:[1,2]},
+ {t:"Saga 1 fails and clears the flag",b:"Shipping fails. Line 5: the compensation checks that the flag is saga 501's own, raises left to 1 and clears status and owner.",w:"The compensating step owns the flag, just as the final step would.",st:{s1:["cancelled","undo"],row:["1 left","ok"],s2:["waiting","wait"]},m:[["s1","row",120,"release, clear PENDING","undo"],["row","s1",160,"done","ok"]],pc:[5]},
+ {t:"Saga 2 retries and reserves",b:"Saga 2 retries. Line 2: no flag. Line 3: left is 1. Line 4 lowers left to 0 and writes PENDING by 502. The program prints: saga 502 retries: reserved.",w:"Customer 502 gets the phone. No sale was lost.",st:{s1:["cancelled","undo"],row:["0 left, PENDING by 502","wait"],s2:["step 2: reserved","ok"]},m:[["s2","row",120,"reserve, set PENDING 502"],["row","s2",160,"done","ok"]],pc:[1,2,3,4]},
+ {t:"Saga 2 finishes and clears the flag",b:"Saga 2's last step succeeds. Line 6 replaces PENDING with SOLD, owner 502. The program prints: SOLD to 502, 0 left.",w:"Other countermeasures help too: commutative updates, re-reading a value before the final step, and putting the step that can fail before the ones that cannot be undone.",st:{s1:["cancelled","undo"],row:["sold to 502","ok"],s2:["completed","ok"]},m:[["s2","row",120,"confirm, clear PENDING"],["row","s2",160,"done","ok"]],pc:[6]},
+ {t:"The failure: a saga dies holding the flag",b:"Replay with saga 503. Line 4 sets PENDING by 503 since 09:00, and then its process crashes. Line 7: nobody will run line 5 or 6. Line 2 now answers wait to everyone, so the phone can never be sold.",w:"A semantic lock is still a lock. It needs an owner and an expiry.",names:{s1:"Saga 503"},box:{s1:"var(--fail)"},st:{s1:["crashed","fail"],row:["PENDING by 503 since 09:00","fail"],s2:["waits forever","fail"]},m:[["s2","row",130,"how many left?"],["row","s2",170,"pending by 503","fail"]],ban:"Saga 503 crashed. Its PENDING flag blocks the row forever.",pc:[2,4,7]},
+ {t:"The fix: a sweeper with a time limit",b:"Line 8: a sweeper job checks the row. At 09:14, line 9 is false: the flag is 14 minutes old and the limit is 15. At 09:15 it is true, so line 10 runs saga 503's compensation, line 5.",w:"Every flag has an owner and a timestamp, so a crashed saga is finished or undone, never left behind. The owner check on line 5 means a late wake-up undoes nothing twice.",names:{s1:"Sweeper job"},box:{s1:"var(--coord)"},st:{s1:["compensated 503","undo"],row:["1 left","ok"],s2:["can retry","ok"]},m:[["s1","row",120,"503 is 15 min old: release, clear","undo"],["row","s1",160,"done","ok"]],pc:[8,9,10,5]}
+]};
+const code={"none": {"label": "Go", "pc": ["row = {left: 1}", "saga 1, stock step: left = left - 1; commit     # visible at once", "saga 2, stock step: read left", "if left is 0: tell the customer sold out; cancel order 502", "saga 1, compensation: left = left + 1; commit", "missing: nothing says the 0 is not final", "fix: if status is PENDING: wait, never answer sold out"], "real": ["// Row is one stock row. Owner and Since say who set the flag and when.", "type Row struct {", "\tLeft   int", "\tStatus string", "\tOwner  int", "\tSince  int", "}", "", "// PlainReserve commits at once. Everyone sees the new number.", "func (r *Row) PlainReserve() { r.Left-- }", "", "// PlainRead returns the number, with nothing to say it is not final.", "func (r *Row) PlainRead() int { return r.Left }", "", "// PlainRelease is the compensation: the number goes back up.", "func (r *Row) PlainRelease() { r.Left++ }", "", "// Reserve refuses to treat a pending value as final.", "func (r *Row) Reserve(saga, now int) string {", "\tif r.Status == \"PENDING\" {", "\t\treturn fmt.Sprintf(\"wait, pending by %d\", r.Owner)", "\t}", "\tif r.Left == 0 {", "\t\treturn \"sold out\"", "\t}", "\tr.Left--", "\tr.Status, r.Owner, r.Since = \"PENDING\", saga, now", "\treturn \"reserved\"", "}"], "map": {"1": [3], "2": [10], "3": [13], "4": [13], "5": [16], "6": [12], "7": [20, 21]}}, "lock": {"label": "Go", "pc": ["reserve(row, saga, now):", "  if status is PENDING: return wait       # never read it as final", "  if left is 0: return sold out", "  left -= 1; status = PENDING; owner = saga; since = now", "compensation(saga): if owner is saga: left += 1; clear status and owner", "final step(saga): status = SOLD; owner = saga", "crash: nobody runs line 5 or line 6, so the flag stays", "sweeper job, on a timer:", "  if status is PENDING and now - since >= limit:", "    run the owner's compensation (line 5)"], "real": ["// Row is one stock row. Owner and Since say who set the flag and when.", "type Row struct {", "\tLeft   int", "\tStatus string", "\tOwner  int", "\tSince  int", "}", "", "// Reserve refuses to treat a pending value as final.", "func (r *Row) Reserve(saga, now int) string {", "\tif r.Status == \"PENDING\" {", "\t\treturn fmt.Sprintf(\"wait, pending by %d\", r.Owner)", "\t}", "\tif r.Left == 0 {", "\t\treturn \"sold out\"", "\t}", "\tr.Left--", "\tr.Status, r.Owner, r.Since = \"PENDING\", saga, now", "\treturn \"reserved\"", "}", "", "// Release is the compensation, and only the owner's flag is cleared.", "func (r *Row) Release(saga int) {", "\tif r.Status != \"PENDING\" || r.Owner != saga {", "\t\treturn", "\t}", "\tr.Left++", "\tr.Status, r.Owner = \"\", 0", "}", "", "// Confirm is the final step. A crashed saga runs neither Release nor Confirm.", "func (r *Row) Confirm(saga int) {", "\tr.Status, r.Owner = \"SOLD\", saga", "}", "", "// Sweep undoes a saga whose flag is older than the limit.", "func (r *Row) Sweep(now, limit int) bool {", "\tif r.Status == \"PENDING\" && now-r.Since >= limit {", "\t\tr.Release(r.Owner)", "\t\treturn true", "\t}", "\treturn false", "}"], "map": {"1": [10], "2": [11, 12], "3": [14, 15], "4": [17, 18], "5": [23, 24, 27, 28], "6": [33], "7": [31], "8": [37], "9": [38], "10": [39]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

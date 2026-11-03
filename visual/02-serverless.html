@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serverless functions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Serverless functions</h1>
+  <p class="lede">Users upload photos. A function makes a thumbnail for each upload. The cloud starts copies on demand, bills per call, and runs nothing when nobody uploads. Then someone tries to run an indexer the same way. The times and prices here are the values of a small model, not measurements. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="burst" id="tab-burst">Bursty work fits</button>
+    <button role="tab" aria-selected="false" data-mode="long" id="tab-long">Long, steady work does not</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Uploads triggering function copies, a storage bucket, and a database</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-sl">
+          <g class="node" id="n-up" data-c="m"><rect class="box" id="r-up" x="30" y="130" width="200" height="70" rx="8"/><text id="t-upl" x="130.0" y="162" text-anchor="middle" font-size="15">Photo uploads</text><text id="t-ups" x="130.0" y="178" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-f1" data-c="h"><rect class="box" id="r-f1" x="330" y="30" width="200" height="50" rx="8"/><text id="t-f1l" x="430.0" y="52" text-anchor="middle" font-size="13">thumbnail function</text><text id="t-f1s" x="430.0" y="68" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-f2" data-c="h"><rect class="box" id="r-f2" x="330" y="100" width="200" height="50" rx="8"/><text id="t-f2l" x="430.0" y="122" text-anchor="middle" font-size="13">thumbnail function</text><text id="t-f2s" x="430.0" y="138" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-f3" data-c="h"><rect class="box" id="r-f3" x="330" y="170" width="200" height="50" rx="8"/><text id="t-f3l" x="430.0" y="192" text-anchor="middle" font-size="13">thumbnail function</text><text id="t-f3s" x="430.0" y="208" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-f4" data-c="h"><rect class="box" id="r-f4" x="330" y="240" width="200" height="50" rx="8"/><text id="t-f4l" x="430.0" y="262" text-anchor="middle" font-size="13">thumbnail function</text><text id="t-f4s" x="430.0" y="278" text-anchor="middle" font-size="12" font-weight="400"></text></g>
+          <g class="node" id="n-bk" data-c="v"><rect class="box" id="r-bk" x="640" y="60" width="230" height="60" rx="8"/><text id="t-bkl" x="755.0" y="95" text-anchor="middle" font-size="15">Thumbnail bucket</text></g>
+          <g class="node" id="n-db" data-c="v"><rect class="box" id="r-db" x="640" y="220" width="230" height="60" rx="8"/><text id="t-dbl" x="755.0" y="246" text-anchor="middle" font-size="15">Database</text><text id="t-dbs" x="755.0" y="264" text-anchor="middle" font-size="12" font-weight="400">connections: few</text></g>
+          <g class="arrow" id="a-t1" data-c="x"><path class="route" d="M230 160 L326 55" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-t2" data-c="x"><path class="route" d="M230 165 L326 125" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-t3" data-c="x"><path class="route" d="M230 170 L326 195" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-t4" data-c="x"><path class="route" d="M230 175 L326 265" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-wb" data-c="x"><path class="route" d="M530 90 L636 90" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-wd" data-c="x"><path class="route" d="M530 250 L636 250" marker-end="url(#arr)"/></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-serverless/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--muted)">the trigger</span>
+    <span style="--c:var(--ok)">a copy doing work</span>
+    <span style="--c:var(--wait)">starting or waiting</span>
+    <span style="--c:var(--fail)">killed or refused</span>
+    <span style="--c:var(--svc)">storage</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: webhooks and file events</h2>
+      <p>A payment webhook, a thumbnail on upload, a nightly report: AWS Lambda, Google Cloud Functions or Azure Functions. Short work, triggered by an event, idle most of the day.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: what stays a service</h2>
+      <p>An indexer, a graph sync and a database stay long-running services. They hold state, connections and a position, and they run all day.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Serverless function</th><th>Long-running service</th></tr>
+      <tr><td>Billing</td><td>Per call</td><td>Per hour, running or not</td></tr>
+      <tr><td>Scale</td><td>To zero and out, automatic</td><td>Planned</td></tr>
+      <tr><td>Limits</td><td>Time limit, cold starts</td><td>None of those</td></tr>
+      <tr><td>State</td><td>None between calls</td><td>Kept in memory</td></tr>
+      <tr><td>Fit</td><td>Short, bursty, event-triggered</td><td>Long, steady, stateful</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Serverless fits short, bursty, stateless work that scales to zero, and punishes long, steady work with time limits, cold starts and connection storms."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+burst:[
+ {"t": "Nothing runs, nothing is billed", "b": "At night no one uploads, so invoke never runs. reap has already stopped every idle copy. That gives 0 copies, 0 calls and a bill of 0.", "w": "Serverless scales to zero: you pay per call, not per hour.", "x": {"ups": "0 per second"}, "m": "copies running: 0", "pc": [8]},
+ {"t": "An upload, and a cold start", "b": "A photo arrives, so invoke runs. It looks for an idle warm copy and finds none. So it starts a fresh copy. In this model the cold start takes 800 ms.", "w": "A cold start adds a delay to the first call on a new copy.", "n": {"f1": "w"}, "a": {"t1": "w"}, "x": {"ups": "1 upload", "f1s": "cold start"}, "m": "copies running: 1", "pc": [1, 2, 3]},
+ {"t": "The thumbnail is written", "b": "The handler resizes the photo in 600 ms and writes the thumbnail to the bucket. This first call took 800 + 600 = 1400 ms. The bill counts those 1.4 busy seconds.", "w": "Short, stateless work is the sweet spot.", "n": {"f1": "ok"}, "a": {"t1": "ok", "wb": "ok"}, "x": {"f1s": "done"}, "pc": [4, 5, 6]},
+ {"t": "A burst: copies scale out", "b": "A school uploads 30 class photos at once, so invoke runs 30 times. The 1 warm copy takes the first photo. The other 29 find no idle copy, so 29 fresh copies start, each with a cold start. The four boxes stand for the 30 copies.", "w": "No capacity plan needed for a burst.", "n": {"f2": "ok", "f3": "ok", "f4": "ok"}, "a": {"t2": "ok", "t3": "ok", "t4": "ok"}, "x": {"ups": "a burst of 30"}, "m": "copies running: 30", "pc": [7, 2, 3]},
+ {"t": "Back to zero", "b": "The burst ends. reap's check asks of each copy: idle for 10 minutes? Yes, so it stops all 30. The day cost 31 calls and 42.6 busy seconds, so 42.6 in this model's prices. A container running all day would cost 34560.", "w": "Event-driven, bursty, short work: serverless fits.", "n": {"f1": "h", "f2": "h", "f3": "h", "f4": "h"}, "a": {"t1": "x", "t2": "x", "t3": "x", "t4": "x", "wb": "x"}, "x": {"ups": "0 per second"}, "m": "copies running: 0", "pc": [8]}
+],
+long:[
+ {"t": "Try an indexer as a function", "b": "Someone moves a chain indexer into functions. Each call should walk a range of blocks and write rows. In this model one range needs 25 minutes. invoke starts it on a fresh copy, with a cold start.", "w": "An indexer runs all day at a steady rate. That is a different shape of work.", "n": {"f1": "w", "up": "m"}, "a": {"t1": "w"}, "x": {"upl": "Block ranges", "ups": "all day", "f1l": "indexer function", "f1s": "cold start"}, "pc": [1, 3]},
+ {"t": "The time limit", "b": "The check asks: does the call need more than the limit? AWS Lambda stops any call at 15 minutes, and 25 is more than 15. So the call is killed at 15, with 60 percent of the range done.", "w": "Functions have a hard time limit. Long work must be cut small or moved.", "n": {"f1": "f"}, "a": {"t1": "f"}, "x": {"f1s": "killed at the time limit"}, "pc": [10]},
+ {"t": "A connection storm", "b": "To catch up, the platform runs 40 copies. Each opens its own 5 database connections, so they want 200. The database allows 100. The check asks: in use + 5 > 100? It says no for the first 20 copies and yes for the other 20. Those 20 are refused.", "w": "Many short-lived copies each open their own connections. Fix: a connection proxy, or a long-running service.", "n": {"f2": "w", "f3": "w", "f4": "w", "db": "f"}, "a": {"t2": "w", "t3": "w", "t4": "w", "wd": "f"}, "x": {"dbs": "connections: refused", "f2l": "indexer function", "f3l": "indexer function", "f4l": "indexer function"}, "pc": [11]},
+ {"t": "The bill at steady load", "b": "Busy all day is 86400 busy seconds. In this model's prices a function costs 86400 x 1.0 = 86400. A container costs 86400 x 0.4 = 34560. The function costs 2.5 times more.", "w": "Per-call pricing wins for bursts and idle time, and loses for steady work.", "m": "steady load: function 86400, container 34560", "pc": [12, 13]},
+ {"t": "The fix: a long-running service", "b": "The indexer goes back to one container. It connects once and holds 5 connections, with no time limit. It keeps its state and its position. Functions keep the bursty jobs: webhooks, thumbnails, alerts.", "w": "Pick serverless for short, bursty, stateless work. Pick a service for long, steady, stateful work.", "n": {"f1": "h", "f2": "h", "f3": "h", "f4": "h", "db": "v"}, "a": {"t1": "x", "t2": "x", "t3": "x", "t4": "x", "wd": "x"}, "x": {"dbs": "connections: 5"}, "m": "indexer: one container, always on", "pc": [14]}
+]};
+const SCENE={"burst": "sl", "long": "sl"};
+const CODE={
+ burst:{label:"Go",why:"",
+  pc:[
+   "invoke(event):",
+   "  c = an idle warm copy, if any",
+   "  if none: c = a fresh copy, and add the cold start     # 800 ms in this model",
+   "  run the handler on c",
+   "  bill += busy time x price                             # per call, not per hour",
+   "handler(upload): resize the photo, write to the bucket  # 600 ms in this model",
+   "for each waiting event: invoke(event)                   # one copy each when none is idle",
+   "reap(now): stop every copy idle for 10 minutes          # scale to zero",
+   "# long, steady work",
+   "runLong(need): if need > 15 minutes: kill the call      # the time limit",
+   "connect(): if connections + 5 > 100: refuse             # each copy opens its own",
+   "function cost = busy seconds x 1.0",
+   "container cost = all seconds x 0.4                      # running or not",
+   "# the fix: one container keeps its state, connections and position"],
+  real:[
+   "func (p *Platform) invoke(workMs int) (cold bool, ms int) {",
+   "\tvar c *Copy",
+   "\tfor _, x := range p.copies {",
+   "\t\tif !x.busy { // an idle warm copy",
+   "\t\t\tc = x",
+   "\t\t\tbreak",
+   "\t\t}",
+   "\t}",
+   "\tif c == nil { // none idle: start a fresh copy",
+   "\t\tc = &Copy{}",
+   "\t\tp.copies = append(p.copies, c)",
+   "\t\tcold, ms = true, coldMs",
+   "\t}",
+   "\tc.busy = true",
+   "\tms += workMs",
+   "\tp.busyMs += ms // billed per call, for the busy time",
+   "\tp.calls++",
+   "\treturn cold, ms",
+   "}",
+   "",
+   "func (p *Platform) reap(now int) {",
+   "\tvar keep []*Copy",
+   "\tfor _, c := range p.copies {",
+   "\t\tif c.busy || now-c.idleFrom < idleStopMin {",
+   "\t\t\tkeep = append(keep, c)",
+   "\t\t}",
+   "\t}",
+   "\tp.copies = keep",
+   "}",
+   "",
+   "func runLong(needMin int) (ranMin int, killed bool) {",
+   "\tif needMin > limitMin {",
+   "\t\treturn limitMin, true // the call is cut off",
+   "\t}",
+   "\treturn needMin, false",
+   "}",
+   "",
+   "func (p *Platform) connect() bool {",
+   "\tif p.dbConns+connsCopy > dbMax {",
+   "\t\treturn false // refused",
+   "\t}",
+   "\tp.dbConns += connsCopy",
+   "\treturn true",
+   "}",
+   "fn, box := 86400*priceFn, 86400*priceBox",
+   "for i := 0; i < 30; i++ { // a school uploads 30 photos at once",
+   "\tif c, _ := p.invoke(thumbMs); c {",
+   "\t\tcolds++",
+   "\t}",
+   "}"],
+  map:{"1": [1], "2": [2, 3, 4, 5, 6, 7, 8], "3": [9, 10, 11, 12, 13], "4": [14, 15], "5": [16], "6": [15], "7": [46, 47, 48, 49, 50], "8": [21, 22, 23, 24, 25, 26, 27, 28, 29], "10": [31, 32, 33, 34, 35, 36], "11": [38, 39, 40, 41, 42, 43, 44], "12": [45], "13": [45], "14": [38, 39, 40, 41, 42, 43, 44]}},
+ long:{label:"Go",why:"",
+  pc:[
+   "invoke(event):",
+   "  c = an idle warm copy, if any",
+   "  if none: c = a fresh copy, and add the cold start     # 800 ms in this model",
+   "  run the handler on c",
+   "  bill += busy time x price                             # per call, not per hour",
+   "handler(upload): resize the photo, write to the bucket  # 600 ms in this model",
+   "for each waiting event: invoke(event)                   # one copy each when none is idle",
+   "reap(now): stop every copy idle for 10 minutes          # scale to zero",
+   "# long, steady work",
+   "runLong(need): if need > 15 minutes: kill the call      # the time limit",
+   "connect(): if connections + 5 > 100: refuse             # each copy opens its own",
+   "function cost = busy seconds x 1.0",
+   "container cost = all seconds x 0.4                      # running or not",
+   "# the fix: one container keeps its state, connections and position"],
+  real:[
+   "func (p *Platform) invoke(workMs int) (cold bool, ms int) {",
+   "\tvar c *Copy",
+   "\tfor _, x := range p.copies {",
+   "\t\tif !x.busy { // an idle warm copy",
+   "\t\t\tc = x",
+   "\t\t\tbreak",
+   "\t\t}",
+   "\t}",
+   "\tif c == nil { // none idle: start a fresh copy",
+   "\t\tc = &Copy{}",
+   "\t\tp.copies = append(p.copies, c)",
+   "\t\tcold, ms = true, coldMs",
+   "\t}",
+   "\tc.busy = true",
+   "\tms += workMs",
+   "\tp.busyMs += ms // billed per call, for the busy time",
+   "\tp.calls++",
+   "\treturn cold, ms",
+   "}",
+   "",
+   "func (p *Platform) reap(now int) {",
+   "\tvar keep []*Copy",
+   "\tfor _, c := range p.copies {",
+   "\t\tif c.busy || now-c.idleFrom < idleStopMin {",
+   "\t\t\tkeep = append(keep, c)",
+   "\t\t}",
+   "\t}",
+   "\tp.copies = keep",
+   "}",
+   "",
+   "func runLong(needMin int) (ranMin int, killed bool) {",
+   "\tif needMin > limitMin {",
+   "\t\treturn limitMin, true // the call is cut off",
+   "\t}",
+   "\treturn needMin, false",
+   "}",
+   "",
+   "func (p *Platform) connect() bool {",
+   "\tif p.dbConns+connsCopy > dbMax {",
+   "\t\treturn false // refused",
+   "\t}",
+   "\tp.dbConns += connsCopy",
+   "\treturn true",
+   "}",
+   "fn, box := 86400*priceFn, 86400*priceBox",
+   "for i := 0; i < 30; i++ { // a school uploads 30 photos at once",
+   "\tif c, _ := p.invoke(thumbMs); c {",
+   "\t\tcolds++",
+   "\t}",
+   "}"],
+  map:{"1": [1], "2": [2, 3, 4, 5, 6, 7, 8], "3": [9, 10, 11, 12, 13], "4": [14, 15], "5": [16], "6": [15], "7": [46, 47, 48, 49, 50], "8": [21, 22, 23, 24, 25, 26, 27, 28, 29], "10": [31, 32, 33, 34, 35, 36], "11": [38, 39, 40, 41, 42, 43, 44], "12": [45], "13": [45], "14": [38, 39, 40, 41, 42, 43, 44]}}};
+let mode="burst";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

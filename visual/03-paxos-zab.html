@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paxos and ZAB</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow:auto;max-height:440px;position:relative;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Paxos and ZAB</h1>
+  <p class="lede">Three servers must agree who holds a lock. A proposer picks ballot 5 and asks for promises. Press <b>Next</b> to see why it must re-propose a value someone already accepted, then watch two proposers block each other forever.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="paxos" id="tab-paxos">Paxos: carry the value forward</button>
+    <button role="tab" aria-selected="false" data-mode="duel" id="tab-duel">Duelling proposers</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 400" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Sequence of Paxos proposers and acceptors exchanging ballots</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene"></g>
+      <g id="msgs"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. Line numbers in the story are pseudo-code lines. The random back-off and the stable leader of Multi-Paxos are pseudo code only; the program shows the duel and the run after one proposer backs off. The full program, which replays this story and prints its numbers, is in <code>handbook/code/03-paxos-zab/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">proposer</span>
+    <span style="--c:var(--undo)">acceptor</span>
+    <span style="--c:var(--wait)">promise, or a value carried forward</span>
+    <span style="--c:var(--ok)">accepted, value chosen</span>
+    <span style="--c:var(--fail)">rejected</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Google Chubby and Spanner run Paxos. ZooKeeper runs ZAB (ZooKeeper Atomic Broadcast), under Kafka's older controller and many Hadoop systems. etcd and Consul run Raft, which is Multi-Paxos made easy to teach.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>In an interview, explain Raft first. Then say Paxos is the same idea with a harder explanation, and ZAB is ZooKeeper's version with epochs instead of ballots. In a system, run one stable leader so the prepare round happens once, not per value.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Basic Paxos</th><th>Multi-Paxos and Raft</th><th>ZAB</th></tr>
+      <tr><td>Rounds per value</td><td>Two: prepare, accept</td><td>One, while the leader is stable</td><td>One, while the leader is stable</td></tr>
+      <tr><td>Number that only grows</td><td>Ballot</td><td>Ballot, or term in Raft</td><td>Epoch</td></tr>
+      <tr><td>Leader</td><td>Any proposer</td><td>One stable leader</td><td>One leader</td></tr>
+      <tr><td>After a leader change</td><td>Carry forward accepted values</td><td>New leader brings logs up to date</td><td>Recovery phase syncs followers first</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"Paxos chooses one value in two rounds, prepare and accept, and a proposer must carry forward any value already accepted. Raft and ZAB are the same idea with a stable leader."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const NS="http://www.w3.org/2000/svg";
+const LIGHT=f=>f==="var(--line)"||f==="var(--panel)"||f==="none";
+const T=(x,y,s,o={})=>`<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" fill="${o.c||"var(--fg)"}" font-size="${o.s||14}" font-weight="${o.w||700}">${s}</text>`;
+const R=(x,y,w,h,f,o={})=>`<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??8}" fill="${f}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?` stroke-dasharray="6 4"`:""}/>`;
+const BOX=(x,y,w,h,f,label,sub)=>{const tc=LIGHT(f)?"var(--fg)":"#fff";return R(x,y,w,h,f)+T(x+w/2,sub?y+h/2-4:y+h/2+6,label,{c:tc,s:16})+(sub?T(x+w/2,y+h/2+16,sub,{c:tc,s:13,w:400}):"")};
+const CHIP=(cx,y,w,s,f)=>R(cx-w/2,y,w,26,f,{rx:13})+T(cx,y+18,s,{c:LIGHT(f)?"var(--fg)":"#fff",s:13});
+const ARROW=(x1,y1,x2,y2,label,col="var(--fg)",o={})=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" marker-end="url(#arr)"${o.dash?` stroke-dasharray="6 5"`:""}/>`+(label?T(o.lx??(x1+x2)/2,o.ly??((y1+y2)/2-7),label,{c:col,a:o.a,s:13}):"");
+const BANNER=(y,s)=>`<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/>`+T(450,y+1,s,{c:"var(--fail)"});
+const KC={n:"var(--fg)",ok:"var(--ok)",fail:"var(--fail)",wait:"var(--wait)",c:"var(--coord)",undo:"var(--undo)",lost:"var(--muted)"};
+const XP={P:110,A1:340,A2:570,A3:800},XD={P:90,A1:270,A2:450,A3:630,Q:810};
+const NM={P:"Proposer",A1:"Acceptor 1",A2:"Acceptor 2",A3:"Acceptor 3",Q:"Proposer 2"};
+function scene(s){
+  const X=mode==="paxos"?XP:XD,w=mode==="paxos"?170:150;let b="";
+  for(const k in X){b+=BOX(X[k]-w/2,16,w,52,k==="P"||k==="Q"?"var(--coord)":"var(--undo)",k==="P"&&mode==="duel"?"Proposer 1":NM[k]);
+    b+=`<line x1="${X[k]}" y1="68" x2="${X[k]}" y2="290" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>`;
+    if(s.st[k]&&s.st[k][0])b+=CHIP(X[k],300,w+10,s.st[k][0],s.st[k][1]==="n"?"var(--line)":KC[s.st[k][1]]);}
+  const msgs=(s.m||[]).map(([a,c,y,txt,kd])=>{
+    if(a==="note")return `<rect x="20" y="${y-18}" width="860" height="28" rx="6" fill="var(--panel)" stroke="var(--wait)" stroke-dasharray="6 4"/>`+T(450,y+1,txt,{});
+    const x1=X[a],x2=X[c],dx=x1<x2?6:-6;return ARROW(x1+dx,y,x2-dx,y,txt,KC[kd||"n"]);});
+  if(s.ban)msgs.push(BANNER(370,s.ban));
+  return{base:b,msgs};
+}
+const steps={
+paxos:[
+ {t:"Before: acceptor 2 already accepted a value",b:"An earlier proposer, with ballot 4, got 'leader = node 2' accepted by acceptor 2 (line 6 stored accepted = (4, node 2)) and then crashed. Our proposer wants 'leader = node 1'. Acceptor 3 is offline.",w:"Something may already be chosen, or half chosen. The protocol must find out before proposing.",st:{P:["wants node 1","n"],A1:["nothing yet","n"],A2:["accepted: node 2, ballot 4","wait"],A3:["offline","n"]},pc:[5, 6]},
+ {t:"Phase one: prepare, ballot 5",b:"Line 9: the proposer picks ballot 5, higher than the 4 it has seen. Line 10 sends prepare(5) to the acceptors it can reach: 1 and 2.",w:"Prepare asks two things: promise to ignore smaller ballots, and tell me what you already accepted.",st:{P:["ballot 5","c"],A1:["nothing yet","n"],A2:["accepted: node 2, ballot 4","wait"],A3:["offline","n"]},m:[["P","A1",110,"prepare, ballot 5"],["P","A2",150,"prepare, ballot 5"]],pc:[8, 9, 10]},
+ {t:"Promises come back",b:"Line 2 on acceptor 1: 5 > 0, so it promises 5 and reports nothing accepted. On acceptor 2: 5 > 4, so it promises 5 and line 3 reports (4, node 2). Two promises of three acceptors is a majority.",w:"Two of three is a majority of promises. The proposer may go on, but it now holds a reported value.",st:{P:["2 promises","c"],A1:["promised 5","wait"],A2:["promised 5, has node 2","wait"],A3:["offline","n"]},m:[["A1","P",120,"promise, nothing accepted","wait"],["A2","P",170,"promise, I accepted node 2 in ballot 4","wait"]],pc:[1, 2, 3]},
+ {t:"The rule: carry the value forward",b:"Line 11: a promise reported a value. Line 12 takes the one with the highest ballot, 4: 'node 2'. The proposer drops its own wish, 'node 1'.",w:"This single rule is why two different values can never both be chosen. If 'node 2' might already be chosen, nobody may choose anything else.",st:{P:["proposes node 2","wait"],A1:["promised 5","wait"],A2:["promised 5, has node 2","wait"],A3:["offline","n"]},m:[["note",0,200,"highest reported value wins: node 2, not node 1"]],pc:[11, 12]},
+ {t:"Phase two: accept",b:"Line 14 sends accept(5, node 2) to acceptors 1 and 2. Line 6 on each: is 5 at least its promise of 5? Yes.",w:"An acceptor accepts unless it has promised a higher ballot since.",st:{P:["ballot 5: node 2","c"],A1:["promised 5","wait"],A2:["promised 5, has node 2","wait"],A3:["offline","n"]},m:[["P","A1",110,"accept node 2, ballot 5"],["P","A2",150,"accept node 2, ballot 5"]],pc:[14, 5, 6]},
+ {t:"Accepted by a majority: chosen",b:"Both reply ok. Line 15: 2 of 3 accepted, a majority, so 'node 2' is chosen forever.",w:"Any later proposer will meet at least one of these two in its own prepare round and be forced to carry 'node 2' forward too.",st:{P:["chosen: node 2","ok"],A1:["accepted node 2, 5","ok"],A2:["accepted node 2, 5","ok"],A3:["learns later","n"]},m:[["A1","P",120,"accepted","ok"],["A2","P",160,"accepted: majority","ok"]],pc:[15]},
+ {t:"Multi-Paxos and ZAB: skip phase one",b:"Lines 17 and 18: a stable leader runs prepare once, then sends only accept (line 14) for each new value. ZAB does the same with epochs instead of ballots, and syncs followers before new writes.",w:"Raft is this design, written to be easy to teach. The ballot is Raft's term and ZAB's epoch.",st:{P:["stable leader","c"],A1:["accepts","ok"],A2:["accepts","ok"],A3:["back, synced","ok"]},m:[["P","A1",100,"accept value 2"],["P","A2",125,"accept value 2"],["P","A3",150,"accept value 2"],["P","A1",200,"accept value 3"],["P","A2",225,"accept value 3"],["P","A3",250,"accept value 3"]],pc:[17, 18, 14]}
+],
+duel:[
+ {t:"Proposer 1 prepares ballot 5",b:"Proposer 1 wants 'worker 1' as lock holder, proposer 2 wants 'worker 2'. Proposer 1 sends prepare(5) to acceptors 1 and 2. Line 2 on both: 5 > 0, so both promise 5.",w:"Nothing is wrong yet.",st:{P:["ballot 5","c"],A1:["promised 5","wait"],A2:["promised 5","wait"],A3:["","n"],Q:["waiting","n"]},m:[["P","A1",110,"prepare 5"],["P","A2",140,"prepare 5"],["A1","P",180,"promise","wait"],["A2","P",210,"promise","wait"]],pc:[1, 2, 9, 10]},
+ {t:"Proposer 2 prepares ballot 6",b:"Before proposer 1 sends accept, proposer 2 sends prepare(6) to acceptors 2 and 3. Line 2 on acceptor 2: 6 > 5, so its promise becomes 6.",w:"A higher ballot always wins a promise. That keeps Paxos safe, and it is also the trap.",st:{P:["ballot 5","c"],A1:["promised 5","wait"],A2:["promised 6","wait"],A3:["promised 6","wait"],Q:["ballot 6","c"]},m:[["Q","A3",110,"prepare 6"],["Q","A2",140,"prepare 6"],["A3","Q",180,"promise","wait"],["A2","Q",210,"promise","wait"]],pc:[1, 2, 10]},
+ {t:"Proposer 1's accept is rejected",b:"Proposer 1 sends accept(5). Acceptor 1 accepts, but line 6 on acceptor 2 asks: is 5 at least 6? No, so line 7 rejects. One of three is no majority (line 15), so line 16 retries with ballot 7.",w:"Nothing was chosen. Proposer 1 starts over, higher.",st:{P:["retry: ballot 7","c"],A1:["promised 7","wait"],A2:["promised 7","wait"],A3:["promised 6","wait"],Q:["ballot 6","c"]},m:[["P","A2",110,"accept, ballot 5"],["A2","P",140,"rejected: promised 6","fail"],["P","A1",190,"prepare 7"],["P","A2",220,"prepare 7"]],pc:[6, 7, 15, 16]},
+ {t:"Proposer 2's accept is rejected",b:"Proposer 1's prepare(7) moved acceptor 2's promise to 7. Proposer 2 sends accept(6): line 7 on acceptor 2 rejects it, since 6 < 7. Proposer 2 retries with ballot 8.",w:"Each proposer's prepare cancels the other's accept.",st:{P:["ballot 7","c"],A1:["promised 7","wait"],A2:["promised 8","wait"],A3:["promised 8","wait"],Q:["retry: ballot 8","c"]},m:[["Q","A2",110,"accept, ballot 6"],["A2","Q",140,"rejected: promised 7","fail"],["Q","A3",190,"prepare 8"],["Q","A2",220,"prepare 8"]],pc:[7, 16]},
+ {t:"The failure: nothing is ever chosen",b:"It goes on: 9, 10. Each prepare raises acceptor 2's promise (line 2) just before the other side's accept arrives, so line 7 rejects every accept. The program prints three such rounds.",w:"Paxos never chooses two values, but it may choose none. This is called duelling proposers, and it is the FLP limit in practice.",st:{P:["ballot 9...","fail"],A1:["promised 9","wait"],A2:["promised 10","wait"],A3:["promised 10","wait"],Q:["ballot 10...","fail"]},m:[["P","A2",110,"accept 9"],["A2","Q",150,"promise 10","wait"],["A2","P",190,"rejected","fail"]],ban:"Ballots climb forever. Safe, but no value is ever chosen.",pc:[2, 7, 16]},
+ {t:"The fix: one leader, random back-off",b:"Line 16's random back-off: proposer 2 waits. Proposer 1 alone runs prepare(11) and accept(11) on all three. Line 12 carries forward 'worker 1', which acceptor 1 already accepted. Three of three accept: chosen.",w:"The same fix as Raft: elect one leader and use random timeouts so two nodes rarely try at once.",st:{P:["leader: ballot 11","ok"],A1:["accepted 11","ok"],A2:["accepted 11","ok"],A3:["accepted 11","ok"],Q:["backing off","n"]},m:[["P","A1",110,"accept, ballot 11"],["P","A2",140,"accept, ballot 11"],["P","A3",170,"accept, ballot 11"],["A2","P",220,"accepted: chosen","ok"]],pc:[16, 10, 14, 15]}
+]};
+const code={"*": {"label": "Go", "pc": ["acceptor, on prepare(b):", "  if b > promised: promised = b", "    reply promise + (accepted ballot, accepted value)", "  else: reply reject", "acceptor, on accept(b, v):", "  if b >= promised: accepted = (b, v); reply ok", "  else: reply reject                     # promised a higher ballot", "proposer(want):", "  b = a ballot higher than any seen", "  send prepare(b); need promises from a majority", "  if a promise reported a value:", "    v = the value with the highest ballot   # carry it forward", "  else: v = want", "  send accept(b, v)", "  if a majority accepts: v is chosen forever", "  else: back off a random time, retry with a higher b", "Multi-Paxos, ZAB: a stable leader runs prepare once,", "  then sends only accept for each new value"], "real": ["// Prepare: promise to ignore smaller ballots, and report what was accepted.", "func (a *Acceptor) Prepare(b int) Promise {", "\tif !a.up || b <= a.promised {", "\t\treturn Promise{ok: false}", "\t}", "\ta.promised = b", "\treturn Promise{ok: true, accBallot: a.accBallot, accValue: a.accValue}", "}", "", "// Accept: take (b, v) unless a higher ballot was promised since.", "func (a *Acceptor) Accept(b int, v string) bool {", "\tif !a.up || b < a.promised {", "\t\treturn false // promised a higher ballot", "\t}", "\ta.promised, a.accBallot, a.accValue = b, b, v", "\treturn true", "}", "", "// Phase1 sends prepare to the acceptors it reaches and picks the value to", "// propose. It returns false without a majority of all n acceptors.", "func Phase1(acc []*Acceptor, n, b int, want string) (string, bool) {", "\tpromises, best, v := 0, 0, want", "\tfor _, a := range acc {", "\t\tp := a.Prepare(b)", "\t\tif !p.ok {", "\t\t\tcontinue", "\t\t}", "\t\tpromises++", "\t\tif p.accValue != \"\" && p.accBallot > best {", "\t\t\tbest, v = p.accBallot, p.accValue // carry the value forward", "\t\t}", "\t}", "\treturn v, promises > n/2", "}", "", "// Phase2 sends accept. The value is chosen if a majority of n accepts.", "func Phase2(acc []*Acceptor, n, b int, v string) bool {", "\toks := 0", "\tfor _, a := range acc {", "\t\tif a.Accept(b, v) {", "\t\t\toks++", "\t\t}", "\t}", "\treturn oks > n/2", "}"], "map": {"1": [2], "2": [6], "3": [7], "4": [4], "5": [11], "6": [15, 16], "7": [13], "8": [21], "9": [21], "10": [24, 33], "11": [29], "12": [30], "13": [22], "14": [40], "15": [44], "16": [44], "17": [37], "18": [37]}}};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const esc=t=>t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+function drawCode(){
+  if(typeof code==="undefined")return;
+  const c=code[mode]||code["*"],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Go";
+  document.getElementById("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+  const box=document.getElementById("codebox"),first=box.querySelector(".hl");
+  box.scrollTop=first?Math.max(0,first.offsetTop-60):0;
+}
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const r=scene(s);
+  $("scene").innerHTML=r.base;
+  const g=$("msgs");g.innerHTML="";
+  (r.msgs||[]).forEach((h,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");el.innerHTML=h;g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3000)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

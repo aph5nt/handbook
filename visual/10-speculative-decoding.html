@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Speculative decoding</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Speculative decoding: a small model guesses, the big model checks</h1>
+  <p class="lede">A big model writes a long answer one token at a time, and every step reads all its weights. Press <b>Next</b> and watch a small draft model guess four tokens ahead while the big model checks them all at once. The second tab shows the text where the guesses keep missing.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="spec">Guess and check</button>
+    <button role="tab" aria-selected="false" data-mode="fail">The failure: bad guesses</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A draft model guesses four tokens, the target model checks them in one pass, keeps the agreed ones and replaces the first wrong one</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-speculative-decoding/main.py</code> (<code>python3 main.py</code>). Toy models: the target knows its answer, the draft is a trigram counter. Draft cost 0.1 of a big step is an example.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--undo)">draft model: small, fast</span>
+    <span style="--c:var(--coord)">target model: big</span>
+    <span style="--c:var(--ok)">guess accepted</span>
+    <span style="--c:var(--fail)">guess rejected</span>
+    <span style="--c:var(--wait)">target&#x27;s own token</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Self-hosted serving where decode speed is the bottleneck: vLLM and similar servers support a draft model or extra guessing heads. Hosted APIs often use it out of sight, which is one reason speed varies with the kind of output.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Measure tokens per second on real traffic, with and without it. Pick a draft model trained on text like yours. Expect the biggest win on long, predictable output such as structured JSON, and little or none on hex strings and rare words.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Plain decoding</th><th>Speculative decoding</th></tr>
+      <tr><td>Big-model passes per token</td><td>One</td><td>Less than one, when guesses land</td></tr>
+      <tr><td>Output</td><td>The big model's</td><td>Exactly the same</td></tr>
+      <tr><td>Extra cost</td><td>None</td><td>A draft model, and wasted guesses</td></tr>
+      <tr><td>Best on</td><td>Anything</td><td>Predictable text with many easy tokens</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Speculative decoding lets a small model guess several tokens and the big model check them in one pass, so the answer is the same and comes faster."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={spec:{pc:["plain: one big step per token          # each step reads all weights",
+"guesses = draft.guess(context, k=4)     # cheap: 0.1 big step each",
+"target = big.check(guesses)             # one pass checks all four",
+"kept = count while guesses[i] == target[i]   # stop at the first miss",
+"out += guesses[:kept] + [target[kept]]  # big model's own token at the miss",
+"repeat from the new end of out",
+"cost = big passes + guesses * 0.1",
+"speed = tokens / cost                   # 1.00 = plain decoding",
+"if speed < 1 for this kind of output:   # hex: 0.82x",
+"  turn the draft off for it             # mix: 1.59x -> 1.77x"],real:["K = 4              # guesses per round",
+"DRAFT_COST = 0.1   # one draft step costs a tenth of a big step (example)",
+"",
+"def speculative(answer, model, before=(), show=False):",
+"    done, big, drafted = [], 0, 0",
+"    while len(done) < len(answer):",
+"        guesses = draft_guess(model, list(before) + done, K)",
+"        drafted += K",
+"        big += 1                         # one pass checks all K",
+"        target = answer[len(done):len(done) + K + 1]",
+"        kept = 0",
+"        while kept < len(guesses) and kept < len(target) and guesses[kept] == target[kept]:",
+"            kept += 1                    # keep up to the first miss",
+"        new = target[:kept + 1]          # plus the big model's own token",
+"        done += new",
+"    cost = big + drafted * DRAFT_COST",
+"    return done, big, cost",
+"",
+"out, big, cost = speculative(answer, model, before, show=True)",
+"assert out == answer        # same text as the big model alone",
+"speed = len(answer) / cost  # plain decoding: 1 token per big step",
+"# prose 2.86x, hex 0.82x, json 2.32x",
+"",
+"measured = sum(min(c, n) for n, c in runs.values())  # off where slower",
+"print(f\"  draft off for hex: {tokens / measured:.2f}x\")  # 1.77x, always on: 1.59x"],map:{"1": [21], "2": [1, 2, 7, 8], "3": [9, 10], "4": [11, 12, 13], "5": [14, 15], "6": [6], "7": [16], "8": [21, 22], "9": [22, 24], "10": [24, 25]}}};
+code.fail=code.spec;
+const steps={
+"spec":[
+ {t:"The cost of one token",b:"The big model writes one token per step. Each step reads all its weights from memory. Four tokens cost four big steps: the speed is 1.00x, the baseline.",w:"Decode is slow because of memory reads, not maths.",plain:4,pc:[1]},
+ {t:"The draft model guesses ahead",b:"A small draft model guesses K = 4 tokens ahead: the, swap, moved, 3. In this example each draft step costs 0.1 of a big step, so four guesses cost 0.4.",w:"The draft is cheap. Its guesses are often right on easy text.",g:["the","swap","moved","3"],st:[0,0,0,0],pc:[2]},
+ {t:"The big model checks all four at once",b:"The big target model checks the four guesses in one parallel pass, the same way prefill reads a prompt. It works out its own token at each of the four places.",w:"Checking four tokens costs about the same as writing one.",g:["the","swap","moved","3"],st:[0,0,0,0],check:1,pc:[3]},
+ {t:"Keep up to the first miss",b:"The rule: compare guess and target place by place, and stop at the first difference. the, swap and moved agree, so kept = 3. At place 4 the draft said \"3\" and the big model says \"tokens\".",w:"Everything after the first wrong guess is thrown away.",g:["the","swap","moved","3"],st:[1,1,1,2],check:1,pc:[4]},
+ {t:"Replace the miss with its own token",b:"At the miss, the big model's own token \"tokens\" goes in. Four tokens forward for 1 big pass + 0.4 of drafting = 1.4 big steps, instead of 4.",w:"The output is exactly what the big model alone would give. Only the speed changes.",g:["the","swap","moved","tokens"],st:[1,1,1,3],check:1,gain:1,pc:[5]},
+ {t:"The next round",b:"The draft guesses the next four from there: to, the, pool, \".\". All four agree. The whole answer took 2 big passes instead of 8: cost 2.8, speed 2.86x.",w:"The speed-up depends on how often the draft guesses right.",g:["to","the","pool","."],st:[0,0,0,0],prev:["the","swap","moved","tokens"],pc:[6, 7, 8]}
+],
+"fail":[
+ {t:"A hex address comes next",b:"The answer reaches an address after \"sent to\". The draft has seen one address in training, so it guesses its pieces: 0x, 9f, 3c, a1.",w:"Hex strings are rare text. The draft has little to go on.",g:["0x","9f","3c","a1"],st:[0,0,0,0],hex:1,pc:[2]},
+ {t:"Most guesses are rejected",b:"The same rule: \"0x\" agrees, \"9f\" does not, so kept = 1. The big model puts in \"4e\", and 3c and a1 are thrown away.",w:"One guess kept, three wasted.",g:["0x","4e","3c","a1"],st:[1,3,2,2],check:1,hex:1,pc:[3, 4, 5]},
+ {t:"The failure: slower than without",b:"In the next rounds no guess lands. 8 tokens cost 7 big passes plus 28 guesses x 0.1 = 9.8 big steps. Speed 8 / 9.8 = 0.82x: slower than plain decoding.",w:"A poor draft makes decoding slower, not faster.",bars:[1,.82],bad:1,pc:[7, 8]},
+ {t:"The fix: measure on real traffic",b:"Measure speed per kind of output. The check: is speed below 1.00x? For hex, yes, so the draft is turned off there. On one prose, one hex and one JSON answer: 1.59x always on, 1.77x with hex off.",w:"Never assume the speed-up. Measure it.",bars:[1,1.77],ok:1,pc:[9, 10]},
+ {t:"Where it shines: structured output",b:"A JSON report has many predictable tokens: braces, field names, colons. The first round keeps 4 of 4. 13 tokens take 4 big passes: speed 2.32x.",w:"The more predictable the text, the bigger the win.",g:["{","\"verdict\"",":","\""],st:[1,1,1,1],check:1,json:1,pc:[4, 5]}
+]};
+const CL=[null,"var(--ok)","var(--fail)","var(--wait)"];
+function scene(s){
+  let h="";
+  if(s.plain){h+=T(20,36,"Plain decoding: one big step per token",null,15,"start",1);
+    ["the","swap","moved","tokens"].forEach((t,k)=>{const x=40+k*210;h+=R(x,70,170,70,"var(--coord)","big step "+(k+1),"#fff",14)+R(x+25,170,120,44,"var(--line)",t,"var(--fg)",15);h+=A(x+85,142,x+85,166,"var(--fg)");});
+    h+=T(40,260,"each step reads all the big model's weights","var(--muted)",14);return h;}
+  if(s.bars){h+=T(20,40,"Tokens per second on real traffic",null,15,"start",1);
+    [["without",s.bars[0],"var(--line)"],["with",s.bars[1],s.bad?"var(--fail)":"var(--ok)"]].forEach(([l,v,c],k)=>{const y=80+k*70;h+=T(40,y+30,l,null,15,"start",1)+R(140,y,300*v,46,c,"","");h+=T(150+300*v,y+30,v<1?"slower":v>1?"faster":"baseline",v<1?"var(--fail)":v>1?"var(--ok)":"var(--muted)",14,"start",1);});
+    h+=T(40,260,s.bad?"hex answer: 0.82x, the draft's work is wasted":"draft off where it was measured slower: 1.77x",s.bad?"var(--fail)":"var(--ok)",14,"start",1);return h;}
+  if(s.prev){h+=T(20,30,"Kept so far:",null,14,"start",1);s.prev.forEach((t,k)=>h+=R(130+k*96,12,88,30,"var(--ok)",t,"#fff",13));}
+  h+=R(20,70,180,56,"var(--undo)","Draft model","#fff",15)+T(110,146,"small, fast","var(--undo)",13,"middle");
+  h+=R(20,220,180,56,s.check?"var(--coord)":"none","Target model",s.check?"#fff":"var(--muted)",15,s.check?"":'stroke="var(--line)" stroke-width="2"')+T(110,296,"big","var(--coord)",13,"middle");
+  s.g.forEach((t,k)=>{const x=260+k*150;const st=s.st[k];
+    h+=R(x,74,130,48,st===0?"var(--undo)":CL[st],t,"#fff",16);
+    if(st===2)h+=`<line x1="${x+10}" y1="98" x2="${x+120}" y2="98" stroke="#fff" stroke-width="3"/>`;
+    if(s.check)h+=A(x+65,214,x+65,172,"var(--coord)");
+    if(st)h+=T(x+65,150,st===1?"agree":st===2?"thrown away":"big model's own",CL[st],13,"middle",1);});
+  if(s.check)h+=R(260,220,580,56,"var(--coord)","one pass checks all four","#fff",15);
+  h+=A(202,98,256,98,"var(--undo)","guess");
+  if(s.gain)h+=T(260,330,"4 tokens forward in about one big step","var(--ok)",16,"start",1);
+  if(s.hex&&s.check)h+=T(260,330,"1 kept, 3 wasted: hex is hard to guess","var(--fail)",16,"start",1);
+  if(s.json)h+=T(260,330,"4 of 4 kept: predictable text","var(--ok)",16,"start",1);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

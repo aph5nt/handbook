@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OLTP versus OLAP</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.flash{animation:flash .9s ease-in-out 2}
+@keyframes flash{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.msg,.box{transition:none}.flash{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+
+</head>
+<body>
+<main>
+  <h1>OLTP versus OLAP: two workloads, opposite needs</h1>
+  <p class="lede">A shop's checkout reads one customer and writes one order, thousands of times a second. The finance team asks for revenue per region per month for three years. Same data, opposite needs. Press <b>Next</b>, then open the second tab to see what happens when the two share one database.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="two">Two workloads</button>
+    <button role="tab" aria-selected="false" data-mode="mix">The failure: mixing them</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">OLTP versus OLAP: animated scene</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <text id="lvl" x="888" y="22" text-anchor="end" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how" id="codehow"></p>
+    <div class="tabs" id="codetabs"></div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--svc)">a client</span>
+    <span style="--c:var(--ok)">rows or columns read, and needed</span>
+    <span style="--c:var(--wait)">waiting or behind</span>
+    <span style="--c:var(--line)">stored, not read</span>
+    <span style="--c:var(--fail)">the problem</span>
+  </div>
+
+  <div class="grid">
+<div class="card">
+      <h2>Where you meet it</h2>
+      <p>PostgreSQL holds orders, and a warehouse such as StarRocks, Snowflake or BigQuery holds the copy for reports. A chain indexer reads from the node, StarRocks holds the history for scans, and a graph database serves lookups by address.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Before naming any database, ask: many small requests by key, or few big scans? Keep the two apart and copy between them by CDC (change data capture) or batches. Pick an HTAP engine only when reports must be seconds fresh.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+<tr><th></th><th>OLTP (Online Transaction Processing)</th><th>OLAP (Online Analytical Processing)</th></tr>
+      <tr><td>Request</td><td>Read or write a few rows by key</td><td>Scan millions of rows, few columns</td></tr>
+      <tr><td>Rate and speed</td><td>Thousands per second, milliseconds each</td><td>A few per hour, seconds to minutes each</td></tr>
+      <tr><td>Storage</td><td>Row store, indexes, normalised tables</td><td>Column store, compression, wide tables</td></tr>
+      <tr><td>Examples</td><td>PostgreSQL, MySQL</td><td>StarRocks, Snowflake, BigQuery</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"OLTP is many small transactions by key and needs fast rows, OLAP is few big scans over few columns and needs columns, so I keep them apart and copy between them."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// Scene items: B box, A arrow, T text, F frame. Kinds: r read or key, s actor, w waiting or held, c done, u link or undo, x the problem, n plain, o outline, g gone.
+const col={r:"var(--coord)",s:"var(--svc)",w:"var(--wait)",c:"var(--ok)",u:"var(--undo)",x:"var(--fail)",n:"var(--line)",m:"var(--muted)",f:"var(--fg)"};
+const B=(x,y,w,l,k,h=34)=>["b",x,y,w,h,l,k],A=(x1,y1,x2,y2,l,k="f",d)=>["a",x1,y1,x2,y2,l||"",k,d?1:0],T=(x,y,l,k="m",a="start",z=13)=>["t",x,y,l,k,a,z],F=(x,y,w,h,l,k="n")=>["f",x,y,w,h,l,k];
+const NS="http://www.w3.org/2000/svg",RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const kindOf=it=>it[0]==="t"?it[4]:it[6];
+function draw(it){
+  if(it[0]==="b"){const[,x,y,w,h,l,k]=it,f=k==="n"?"var(--line)":k==="o"?"var(--panel)":k==="g"?"none":col[k],tc=k==="n"||k==="o"?"var(--fg)":k==="g"?"var(--muted)":"#fff",st=k==="o"||k==="g"?'stroke="var(--line)" stroke-width="2"':"";
+    return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="7" fill="${f}" ${st} ${k==="g"?'stroke-dasharray="5 4"':""}/><text x="${x+w/2}" y="${y+h/2+5}" text-anchor="middle" fill="${tc}">${esc(l)}</text>`;}
+  if(it[0]==="a"){const[,x1,y1,x2,y2,l,k,d]=it,c=col[k];
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" ${d?'stroke-dasharray="6 5"':""} marker-end="url(#arr)"/>`+(l?(Math.abs(x1-x2)<10?`<text x="${x1+10}" y="${(y1+y2)/2+5}" fill="${c}" font-size="13">${esc(l)}</text>`:`<text x="${(x1+x2)/2}" y="${Math.min(y1,y2)-8}" text-anchor="middle" fill="${c}" font-size="13">${esc(l)}</text>`):"");}
+  if(it[0]==="t"){const[,x,y,l,k,a,z]=it;return `<text x="${x}" y="${y}" text-anchor="${a}" font-size="${z}" font-weight="${z>=15?700:400}" fill="${col[k]}">${esc(l)}</text>`;}
+  const[,x,y,w,h,l,k]=it,c=k==="n"?"var(--line)":col[k];
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="${c}" stroke-width="2"/><text x="${x+10}" y="${y+18}" font-size="13" fill="${k==="n"?"var(--muted)":c}">${esc(l)}</text>`;
+}
+const cells=(x,kf)=>{const o=[];if(kf==="hide")return o;for(let r=0;r<5;r++)for(let c=0;c<5;c++)o.push(B(x+60*c,120+36*r,52,"",kf(r,c),28));return o;};
+const N=()=>"n";
+const base=(lk,rk,ex)=>[F(20,50,400,320,"checkout database (OLTP)"),F(480,50,400,320,"finance warehouse (OLAP)"),...cells(70,lk||N),...cells(530,rk||N)].concat(ex||[]);
+// CODE PANEL START
+const HOW="The lit lines are the ones the current step runs. The Go program <code>handbook/code/07-oltp-vs-olap/main.go</code> gives each database one disk that reads 1,000,000 values a second, runs checkouts and the report on it, and prints every time and count quoted here (<code>go run .</code>).";
+const CODE={
+two:{pc:["disk: reads 1,000,000 values a second, one job at a time",
+"checkout(): read 1 customer by key, write 1 order",
+"  row store and an index: the key finds one piece",
+"report(): every row, region and amount only",
+"  column store: rows x 2 values, not rows x 50",
+"copy new orders to the warehouse: change data capture or batches"],
+ views:[{v:"real",label:"Go",lines:[].concat(["const (", "\trows            = 1000000 // orders, standing for millions", "\tcols            = 50      // columns per order row", "\tvaluesPerSecond = 1000000 // what the disk reads in a second", ")"],[""],["// DB is one database with one disk. busyUntil is when the disk is free.", "type DB struct {", "\tname      string", "\tcolumnar  bool", "\tbusyUntil float64", "\tsegments  int", "}"],[""],["// run books the disk for a number of values, after whatever is queued.", "func (d *DB) run(at float64, values int) (wait, took float64) {", "\tstart := max(at, d.busyUntil)", "\ttook = float64(values) / valuesPerSecond", "\td.busyUntil = start + took", "\treturn start - at, took", "}"],[""],["// checkout reads one customer by key and writes one order.", "func (d *DB) checkout(at float64) (wait float64, values int) {", "\tvalues = 2 // row store: one piece read, one piece written", "\tif d.columnar {", "\t\tvalues = 2 * cols // one place per column file, for the read and the write", "\t\td.segments++      // a one-row insert makes its own segment", "\t}", "\twait, _ = d.run(at, values)", "\treturn wait, values", "}"],[""],["// report is revenue per region per month: every row, two columns.", "func (d *DB) report(at float64) (values int, took float64) {", "\tvalues = rows * cols // row store: whole rows come off disk", "\tif d.columnar {", "\t\tvalues = rows * 2 // column store: the region and amount files only", "\t}", "\t_, took = d.run(at, values)", "\treturn values, took", "}"],[""],["func twoWorkloads() {", "\tshop := &DB{name: \"checkout database\"}", "\t_, v := shop.checkout(0)", "\tfmt.Printf(\"OLTP checkout: %d values, by key\\n\", v)", "\tdw := &DB{name: \"warehouse\", columnar: true}", "\tv, took := dw.report(0)", "\tfmt.Printf(\"OLAP report on the warehouse: %s values, %.0f s\\n\", comma(v), took)", "}"]),
+  map:[["disk: reads 1,000,000","valuesPerSecond = 1000000","func (d *DB) run(..d.busyUntil = start + took"],["checkout(): read 1 customer","func (d *DB) checkout(","values = 2 // row store","OLTP checkout:"],
+   ["row store and an index","values = 2 // row store"],["report(): every row","func (d *DB) report(","values = rows * cols"],["column store: rows x 2","values = rows * 2","OLAP report on the warehouse"],["copy new orders","dw := &DB{"]]}]},
+mix:{pc:["report on the checkout database: rows x 50 values",
+"checkouts queue behind it: wait = disk free time - arrival",
+"checkout on the warehouse: one place per column file, one segment per order",
+"read replica: replay of the log waits while the scan runs",
+"  orders behind = scan seconds x orders per second",
+"fix: checkouts on the row store, the report on the warehouse copy",
+"HTAP: one system keeps both copies, on separate nodes"],
+ views:[{v:"real",label:"Go",lines:[].concat(["// run books the disk for a number of values, after whatever is queued.", "func (d *DB) run(at float64, values int) (wait, took float64) {", "\tstart := max(at, d.busyUntil)", "\ttook = float64(values) / valuesPerSecond", "\td.busyUntil = start + took", "\treturn start - at, took", "}"],[""],["// checkout reads one customer by key and writes one order.", "func (d *DB) checkout(at float64) (wait float64, values int) {", "\tvalues = 2 // row store: one piece read, one piece written", "\tif d.columnar {", "\t\tvalues = 2 * cols // one place per column file, for the read and the write", "\t\td.segments++      // a one-row insert makes its own segment", "\t}", "\twait, _ = d.run(at, values)", "\treturn wait, values", "}"],[""],["func mixed() {", "\tshop := &DB{name: \"checkout database\"}", "\tv, took := shop.report(0) // the year report lands on the checkout database", "\tfmt.Printf(\"report on the checkout database: %s values, %.0f s\\n\", comma(v), took)", "\tfor n := 1; n <= 4; n++ {", "\t\twait, _ := shop.checkout(float64(n)) // a customer pays at second n", "\t\tfmt.Printf(\"checkout %d at %d s waits %.0f s\\n\", n, n, wait)", "\t}", "", "\tdw := &DB{name: \"warehouse\", columnar: true}", "\tfor n := 0; n < 16; n++ {", "\t\t_, v = dw.checkout(0) // 16 orders, one row each", "\t}", "\tfmt.Printf(\"checkout on the warehouse: %d values per order, %d tiny segments\\n\", v, dw.segments)", "", "\tconst ordersPerSecond = 1000", "\treplica := &DB{name: \"read replica\"}", "\t_, scan := replica.report(0) // the report moves to the replica", "\tbehind := int(scan) * ordersPerSecond", "\tfmt.Printf(\"replica: replay waits for a %.0f s scan, %s orders behind\\n\", scan, comma(behind))", "}"],[""],["func twoSystems() {", "\tshop := &DB{name: \"checkout database\"}", "\tdw := &DB{name: \"warehouse\", columnar: true}", "\t_, took := dw.report(0) // the report runs on the copy", "\twait, _ := shop.checkout(1)", "\tfmt.Printf(\"two systems: checkout waits %.0f s, report takes %.0f s on the warehouse\\n\", wait, took)", "}"]),
+  map:[["report on the checkout database","v, took := shop.report(0)","report on the checkout database: %s"],["checkouts queue behind it","start := max(at, d.busyUntil)","return start - at, took","wait, _ := shop.checkout(float64(n))..checkout %d at"],
+   ["checkout on the warehouse","if d.columnar {..d.segments++","_, v = dw.checkout(0)","checkout on the warehouse:"],["read replica: replay","replica := &DB{","_, scan := replica.report(0)"],
+   ["orders behind =","const ordersPerSecond","behind := int(scan)","replica: replay waits"],["fix: checkouts on the row store","func twoSystems()..two systems:"],["HTAP: one system","func twoSystems()"]]}]}};
+// CODE PANEL END
+const S={
+two:{name:"one shop, two workloads",st:[
+ {t:"Start: one shop, two workloads",pc:["disk: reads 1,000,000"],b:"Left: the checkout's database. Right: the finance team's warehouse. Each grid is a table, five rows and five columns standing for millions and fifty.",w:"Same kind of data. The questions asked of it are opposite.",d:base()},
+ {t:"OLTP: one checkout touches two rows",pc:["checkout(): read 1 customer"],b:"A customer pays. The checkout reads one customer row by key and writes one order row: 2 values in the program. It takes milliseconds, and thousands run each second.",w:"OLTP work is many short transactions, each touching a few rows by key.",d:base((r,c)=>r===1||r===3?"c":"n",null,[B(70,310,290,"checkout: 2 rows, by key","s",36)])},
+ {t:"What OLTP needs",pc:["checkout(): read 1 customer", "row store and an index"],b:"An index to find the row, row storage to read it in one place, normalised tables so a write touches one row, and correct isolation between payments.",w:"Every choice is about one row, fast and correct.",d:base("hide",null,[B(70,120,290,"indexes","c",34),B(70,164,290,"row storage","c",34),B(70,208,290,"normalised tables","c",34),B(70,252,290,"correct isolation","c",34)])},
+ {t:"OLAP: one report scans two columns",pc:["report(): every row"],b:"Finance asks for revenue per region per month for three years. The query reads every row, but only the region and amount columns. In the program the warehouse reads 2,000,000 values in 2 s.",w:"OLAP work is few long queries, each scanning many rows and few columns.",d:base(null,(r,c)=>c===1||c===3?"c":"n",[B(530,310,290,"report: all rows, 2 columns","s",36)])},
+ {t:"What OLAP needs",pc:["report(): every row", "column store: rows x 2"],b:"Column storage to read only the named columns, compression, wide copied tables with no joins, and many cores scanning in parallel.",w:"Every choice is about reading a lot, once, as few bytes as possible.",d:base(null,"hide",[B(530,120,290,"column storage","c",34),B(530,164,290,"compression","c",34),B(530,208,290,"wide, copied tables","c",34),B(530,252,290,"parallel scans","c",34)])},
+ {t:"Copy from one to the other",pc:["copy new orders"],b:"Each new order flows from the checkout database to the warehouse, by change data capture from the log or by batch copies.",w:"Each side is tuned for its own work, and neither runs the other's.",d:base((r,c)=>r===4?"c":"n",(r,c)=>r===4?"c":"n",[A(422,264,526,264,"copy","f")])}
+]},
+mix:{name:"what goes wrong",st:[
+ {t:"The failure: the report on the checkout database",pc:["report on the checkout database", "checkouts queue behind it"],b:"Someone runs the three-year report on the checkout database. It reads every row and every column: 50,000,000 values, 50 s of disk in the program.",w:"The checkouts now queue behind the report. Checkout 1 arrives at second 1 and waits 49 s to pay.",d:[F(20,50,860,320,"checkout database (OLTP)"),...cells(70,()=> "x"),B(70,310,290,"report: full scan","x",36),...[0,1,2,3].map(j=>B(500,90+56*j,360,"checkout "+(j+1)+": waiting","w",40))]},
+ {t:"The mirror failure: lookups and single writes on the warehouse",pc:["checkout on the warehouse"],b:"Now the checkout is pointed at the column store. Each order is a single-row insert that makes a tiny segment, and each lookup reads every column file. In the program each order costs 100 values, and 16 orders leave 16 tiny segments.",w:"Column stores want big batches and big scans, not one row at a time.",d:[F(20,50,860,320,"finance warehouse (OLAP)"),...cells(70,(r,c)=>r===2?"x":"n"),T(70,330,"1 lookup = 5 column files","x","start",15),...Array.from({length:16},(_,j)=>B(480+48*(j%8),110+44*Math.floor(j/8),40,"","x",34)),T(480,230,"one tiny segment per order","x","start",15)]},
+ {t:"A read replica is a half step",pc:["read replica: replay", "orders behind ="],b:"Reports move to a read replica of the checkout database. The primary is free again. But replay of the log waits while a long scan runs. In the program the 50 s scan leaves the replica 50,000 orders behind.",w:"The report reads old data, and the replica can stop keeping up. It helps a little, it does not fix the mismatch.",d:[B(40,90,330,"primary: checkouts","c",44),A(372,112,496,112,"log","f"),B(500,90,360,"replica: long scans","w",44),T(500,180,"replica falls behind","w","start",16),...[0,1,2].map(j=>B(40,170+50*j,330,"checkout "+(j+1)+": fast","c",38))]},
+ {t:"Fix: two systems, one copy",pc:["fix: checkouts on the row store"],b:"The checkout keeps its row store. A copy goes to the warehouse. The report runs there in 2 s, and a checkout waits 0 s.",w:"Each engine does the work its layout is built for.",d:base((r,c)=>r===1?"c":"n",(r,c)=>c===1||c===3?"c":"n",[A(422,264,526,264,"copy","f"),B(70,310,290,"checkout: fast","c",36),B(530,310,290,"report: 2 columns","c",36)])},
+ {t:"When fresh matters: HTAP",pc:["HTAP: one system"],b:"If reports must see orders from seconds ago, an HTAP (Hybrid Transactional and Analytical Processing) engine keeps a row copy and a column copy in one system.",w:"It removes the copy pipeline, but the two copies must run on separate nodes or they fight again.",d:[F(20,50,860,320,"one HTAP system"),B(60,110,360,"row copy: checkouts","c",44),A(422,132,476,132,"same log","f"),B(480,110,360,"column copy: reports","c",44),T(450,260,"separate nodes, seconds behind","c","middle",16)]}
+]}};
+const curPc=()=>S[mode].st[i].pc||[];
+// Code panel. CODE[tab] = {pc:[pseudo lines], views:[{v, label, lines, map:[[pseudo text, real text, ...]]}]}.
+// A step names its pseudo lines by text; the map turns them into real lines, also by text.
+let view="pc";
+const cpEsc=t=>String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function cpAt(lines,sub){
+  let n=1;const m=/^(.*)#(\d+)$/.exec(sub);if(m){sub=m[1];n=+m[2];}
+  const ex=sub.startsWith("="),w=ex?sub.slice(1):sub,hits=[];lines.forEach((l,k)=>{if(ex?l.trim()===w:l.includes(w))hits.push(k+1)});
+  if(hits.length<n)throw new Error("code line not found: "+sub);
+  if(!m&&hits.length>1)throw new Error("code line not unique: "+sub);
+  return hits[n-1];
+}
+// "a..b": from the line matching a to the next line containing b, both lit.
+function cpRange(lines,s){
+  const k=s.indexOf("..");if(k<0)return [cpAt(lines,s)];
+  const a=cpAt(lines,s.slice(0,k)),b=s.slice(k+2);
+  for(let n=a;n<=lines.length;n++)if(lines[n-1].includes(b))return Array.from({length:n-a+1},(_,j)=>a+j);
+  throw new Error("code range end not found: "+s);
+}
+function drawCode(){
+  if(!$("codehow").innerHTML)$("codehow").innerHTML=HOW;
+  const c=CODE[mode];if(!c)throw new Error("no code for tab "+mode);
+  const tabs=$("codetabs"),key=["pc"].concat(c.views.map(v=>v.v+v.label)).join("|");
+  if(tabs.dataset.k!==key){tabs.dataset.k=key;
+    tabs.innerHTML=`<button data-v="pc">Pseudo code</button>`+c.views.map(v=>`<button data-v="${v.v}">${cpEsc(v.label)}</button>`).join("");
+    tabs.querySelectorAll("button").forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});}
+  if(view!=="pc"&&!c.views.some(v=>v.v===view))view="pc";
+  tabs.querySelectorAll("button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.v===view));
+  const pcs=curPc().map(x=>typeof x==="number"?x:cpAt(c.pc,x));
+  let lines=c.pc,hl=new Set(pcs);
+  if(view!=="pc"){const v=c.views.find(v=>v.v===view);lines=v.lines;hl=new Set();
+    v.map.forEach(([p,...r])=>{if(pcs.includes(cpAt(c.pc,p)))r.forEach(s=>cpRange(lines,s).forEach(n=>hl.add(n)))});}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=cpEsc(l.replace(/\t/g,"    "));
+    t=t.replace(/(\s#\s.*|^\s*#.*|\/\/.*|\s--\s.*|^\s*--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+
+let mode=Object.keys(S)[0],i=0,timer=null,seen=new Set();
+const $=id=>document.getElementById(id);
+function render(){
+  const sc=S[mode],s=sc.st[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${sc.st.length}`;$("lvl").textContent=sc.name;
+  const g=$("scene");g.innerHTML="";const now=new Set();let n=0;const gap=Math.min(60,700/Math.max(1,s.d.filter(it=>!seen.has(JSON.stringify(it))).length));
+  s.d.forEach(it=>{const key=JSON.stringify(it);now.add(key);
+    const el=document.createElementNS(NS,"g");el.innerHTML=draw(it);
+    if(!seen.has(key)){if(kindOf(it)==="x")el.classList.add("flash");
+      if(!RM){el.classList.add("msg");const d=40+gap*n++;setTimeout(()=>el.classList.add("on"),d);}}
+    g.appendChild(el);});
+  seen=now;drawCode();$("prev").disabled=i===0;$("next").disabled=i===sc.st.length-1;
+}
+function go(k){i=Math.max(0,Math.min(S[mode].st.length-1,k));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();seen=new Set();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=S[mode].st.length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;seen=new Set();document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

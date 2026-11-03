@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partition pruning</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.bar{transition:width .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.bar{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Partition pruning: read 3 days, not 30</h1>
+  <p class="lede">A warehouse table <b>transfers</b> is split into one partition per day of October 2026: 30 boxes. Inside each partition, every column is its own file: 12 columns. An analyst wants three days of totals. Watch the <b>scanned</b> bar.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="prune">Pruning works</button>
+    <button role="tab" aria-selected="false" data-mode="fn">A cast kills it</button>
+    <button role="tab" aria-selected="false" data-mode="cols">Read 2 of 12 columns</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Thirty day partitions, twelve column files, and a bar of bytes scanned</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14">
+        <text x="30" y="30" font-weight="700">partitions: one per day, October 2026</text>
+        <text x="30" y="160" font-weight="700">inside each partition read: column files</text>
+      </g>
+      <g id="parts" font-family="Atkinson Hyperlegible,system-ui" font-size="12" font-weight="700"></g>
+      <g id="cols" font-family="Atkinson Hyperlegible,system-ui" font-size="12" font-weight="700"></g>
+      <text id="sql" x="450" y="278" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="14" fill="var(--muted)"></text>
+      <rect x="30" y="296" width="600" height="28" rx="6" fill="var(--line)"/>
+      <rect id="bar" class="bar box" x="30" y="296" width="600" height="28" rx="6" fill="var(--coord)"/>
+      <text id="pct" x="650" y="316" font-family="Atkinson Hyperlegible,system-ui" font-size="17" font-weight="700"></text>
+      <text id="detail" x="30" y="356" font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)"></text>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. A runnable model of this story is in <code>handbook/code/08-partition-pruning/main.go</code> (<code>go run .</code>). The program models the table metadata in memory and counts the files each plan opens.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">SQL</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">read</span>
+    <span style="--c:var(--wait)">checked from metadata only</span>
+    <span style="--c:var(--ok)">pruned read, the small set</span>
+    <span style="--c:var(--fail)">read for nothing</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>StarRocks and ClickHouse tables partitioned by day: an indexer writes into today's partition, and every report names a day range. BigQuery bills per byte scanned, so <code>SELECT *</code> on a terabyte table costs a terabyte. PostgreSQL range partitions prune the same way.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Name the partition column bare, with constants of the same type: <code>day BETWEEN '2026-10-10' AND '2026-10-12'</code>. Put the filter on the partitioned table itself, not only on a joined one. Name only the columns you need. Check the plan's partition count and scan bytes before you ship the query.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Query</th><th>Partitions</th><th>Columns</th><th>Scanned</th></tr>
+      <tr><td><code>SELECT *</code>, no filter</td><td>30 of 30</td><td>12 of 12</td><td>100%</td></tr>
+      <tr><td><code>SELECT *</code>, <code>day BETWEEN</code> 3 days</td><td>3 of 30</td><td>12 of 12</td><td>10%</td></tr>
+      <tr><td>Same, with a cast on <code>day</code></td><td>30 of 30</td><td>12 of 12</td><td>100%</td></tr>
+      <tr><td>Two named columns, 3 days</td><td>3 of 30</td><td>2 of 12</td><td>about 1.7%</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"In a warehouse the cost is bytes scanned. Partition pruning cuts the rows, projection cuts the columns, and both only work when the partition column is bare in the filter and the select list is named."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const NS="http://www.w3.org/2000/svg";
+const C=["day","block_height","tx_hash","log_index","from_address","to_address","token","amount","amount_usd","pool","dex","fee"];
+const PXp=k=>30+k*28, PXc=k=>30+k*71;
+const $=id=>document.getElementById(id);
+(function(){let p="",c="";
+  for(let k=0;k<30;k++){p+=`<rect id="d${k}" class="box" x="${PXp(k)}" y="44" width="25" height="60" rx="4" fill="var(--line)"/>`;
+    if(k%3===0||k===29)p+=`<text x="${PXp(k)+12.5}" y="124" text-anchor="middle" fill="var(--muted)">${k+1}</text>`;}
+  C.forEach((n,k)=>{c+=`<rect id="c${k}" class="box" x="${PXc(k)}" y="172" width="64" height="60" rx="4" fill="var(--line)"/><text x="${PXc(k)+32}" y="250" text-anchor="middle" fill="var(--muted)" font-size="${n.length>9?10:12}">${n}</text>`;});
+  $("parts").innerHTML=p;$("cols").innerHTML=c;})();
+const ALL=[0,30],R3=[9,12],AC=[...C.keys()];
+const steps={
+prune:[
+ {t:"Start: no filter",b:"The analyst runs SELECT * FROM transfers with no WHERE. There is no filter to check, so all 30 partitions stay, and all 12 columns are named: 360 files.",w:"This is the whole table. Every other step is measured against it.",q:"SELECT * FROM transfers",pr:ALL,pk:"r",cl:AC},
+ {t:"Add a day range",b:"The question is really about 10 to 12 October. The analyst adds WHERE day BETWEEN '2026-10-10' AND '2026-10-12'.",w:"The filter names the partition column, bare, with constants of the same type.",q:"... WHERE day BETWEEN '2026-10-10' AND '2026-10-12'",pr:ALL,pk:"m",cl:AC},
+ {t:"The planner checks metadata",b:"Before reading any data, the planner runs one check per partition: is its day between 10 and 12 October? The day is in the table's metadata, so no file is opened to answer.",w:"27 partitions cannot match. They are never opened.",q:"... WHERE day BETWEEN '2026-10-10' AND '2026-10-12'",pr:R3,pk:"ok",cl:AC,rest:"m"},
+ {t:"Read 3 partitions",b:"Only 10, 11 and 12 October are read, 36 files of 360. The answer is the same, because the other 27 failed a check that proves they cannot match.",w:"10% of the bytes. Over two years of days it would be 3 out of 730.",q:"... WHERE day BETWEEN '2026-10-10' AND '2026-10-12'",pr:R3,pk:"ok",cl:AC},
+ {t:"Why the hot partition matters",b:"An indexer writes every new transfer into today's partition, 30 October. Live queries read it too. The other 29 are cold.",w:"Pruning keeps old days cold and cheap. Give the hot partition more buckets so its writes spread out.",q:"... WHERE day = '2026-10-30'",pr:[29,30],pk:"ok",cl:AC}
+],
+fn:[
+ {t:"Same question, written with a cast",b:"Someone writes the filter as WHERE CAST(day AS VARCHAR) BETWEEN '2026-10-10' AND '2026-10-12'. It returns the same rows.",w:"The partition column is now inside a function.",q:"... WHERE CAST(day AS VARCHAR) BETWEEN '2026-10-10' AND '2026-10-12'",pr:ALL,pk:"m",cl:AC},
+ {t:"The planner cannot prune",b:"The check starts with: is the partition column bare in the filter? No. The metadata holds dates, the filter compares strings, and many planners cannot prove which days fit. An unproved partition must stay.",w:"No pruning. Every partition must be opened and every row cast and tested.",q:"... WHERE CAST(day AS VARCHAR) BETWEEN '2026-10-10' AND '2026-10-12'",pr:ALL,pk:"bad",cl:AC,hit:R3},
+ {t:"Read all 30 for 3 days of answer",b:"All 360 files are read, not 36. 27 partitions are read for nothing. The answer is right and costs ten times more.",w:"Nothing fails. The query is just ten times slower, and on BigQuery ten times more expensive.",q:"... WHERE CAST(day AS VARCHAR) BETWEEN ...",pr:ALL,pk:"bad",cl:AC,hit:R3},
+ {t:"Same trap: the filter on the other table",b:"transfers JOIN blocks ON block_height, with WHERE b.day BETWEEN .... The day filter sits on blocks. The check for transfers looks for a filter on transfers.day, and finds none, unless the planner can carry it through the join key. Here it cannot.",w:"Put the partition filter on the partitioned table itself, even if it looks repeated.",q:"... JOIN blocks b ... WHERE b.day BETWEEN ...",pr:ALL,pk:"bad",cl:AC,hit:R3},
+ {t:"Fix: bare column, same type",b:"Back to WHERE t.day BETWEEN '2026-10-10' AND '2026-10-12', on transfers. Three partitions light up again.",w:"Keep the partition column bare. Move any function to the constant side.",q:"... WHERE t.day BETWEEN '2026-10-10' AND '2026-10-12'",pr:R3,pk:"ok",cl:AC}
+],
+cols:[
+ {t:"Three days, every column",b:"Pruning left 3 partitions. The second rule is: open a column only if the query names it. SELECT * names all 12, so 3 × 12 = 36 files.",w:"In a column store each column is a separate file. Naming columns decides how many you open.",q:"SELECT * ... WHERE day BETWEEN (3 days)",pr:R3,pk:"ok",cl:AC},
+ {t:"Name only what you need",b:"The real question: total amount per receiver. SELECT to_address, SUM(amount) ... GROUP BY to_address.",w:"The query names two columns. The other ten are never needed.",q:"SELECT to_address, SUM(amount) ... GROUP BY to_address",pr:R3,pk:"ok",cl:AC,ck:"m"},
+ {t:"Projection pushdown: open 2 of 12",b:"The engine opens only to_address and amount, in 3 partitions: 3 × 2 = 6 files. The other files stay on disk.",w:"6 files of 360: 1.7% of the table.",q:"SELECT to_address, SUM(amount) ... GROUP BY to_address",pr:R3,pk:"ok",cl:[5,7]},
+ {t:"The failure: SELECT * on the whole table",b:"A dashboard runs SELECT * FROM transfers with no day filter, to show ten rows. There is no filter and no column list, so the plan opens 30 × 12 = 360 files. The LIMIT applies later, to the rows.",w:"BigQuery bills per byte scanned: a SELECT * on a terabyte table costs a terabyte, even with LIMIT 10.",q:"SELECT * FROM transfers LIMIT 10",pr:ALL,pk:"bad",cl:AC,ck:"bad"},
+ {t:"Both together",b:"Pruning cuts the days. Projection cuts the columns. Zone maps on the sort key can then skip blocks inside each file.",w:"From 100% to about 1.7% with two habits: a bare partition filter and a named column list.",q:"SELECT to_address, SUM(amount) ... WHERE day BETWEEN (3 days)",pr:R3,pk:"ok",cl:[5,7]}
+]};
+const col={r:"var(--coord)",m:"var(--wait)",ok:"var(--ok)",bad:"var(--fail)"};
+let mode="prune",i=0,timer=null;
+const code={
+"prune":{
+ label:"SQL",
+ pc:["plan(query):", "  for each partition of the table:", "    if the filter names the partition column, bare:", "      keep the partition only if its day fits the range   # from metadata", "    else:", "      keep it: nothing can be proved                       # a cast, a join", "  columns = columns the query names                        # SELECT * names all", "  open files = kept partitions x columns", "execute:", "  read only the open files; run the filter on the rows", "hot partition: today gets all writes, the old days stay cold"],
+ real:["-- one partition per day", "SELECT *", "FROM   transfers", "WHERE  day BETWEEN '2026-10-10' AND '2026-10-12';", "", "-- StarRocks EXPLAIN", "-- OlapScanNode  TABLE: transfers", "--   partitions=3/30", "--   PREDICATES: day >= '2026-10-10', day <= '2026-10-12'", "", "-- today's partition, the hot one", "SELECT * FROM transfers WHERE day = '2026-10-30';"],
+ map:{"1": [2, 3, 4], "2": [8], "3": [4, 9], "4": [8, 9], "7": [2], "8": [8], "9": [7], "10": [7], "11": [12]}},
+"fn":{
+ label:"SQL",
+ pc:["plan(query):", "  for each partition of the table:", "    if the filter names the partition column, bare:", "      keep the partition only if its day fits the range   # from metadata", "    else:", "      keep it: nothing can be proved                       # a cast, a join", "  columns = columns the query names                        # SELECT * names all", "  open files = kept partitions x columns", "execute:", "  read only the open files; run the filter on the rows", "hot partition: today gets all writes, the old days stay cold"],
+ real:["-- a cast on the partition column", "SELECT * FROM transfers", "WHERE  CAST(day AS VARCHAR) BETWEEN '2026-10-10' AND '2026-10-12';", "-- OlapScanNode   partitions=30/30", "", "-- the filter on the other table", "SELECT * FROM transfers t JOIN blocks b ON b.block_height = t.block_height", "WHERE  b.day BETWEEN '2026-10-10' AND '2026-10-12';", "-- OlapScanNode TABLE: transfers   partitions=30/30", "", "-- fix: bare column, same type, on the partitioned table", "SELECT * FROM transfers t JOIN blocks b ON b.block_height = t.block_height", "WHERE  t.day BETWEEN '2026-10-10' AND '2026-10-12';", "-- OlapScanNode TABLE: transfers   partitions=3/30"],
+ map:{"1": [2, 3], "2": [4], "3": [3, 13], "4": [13, 14], "5": [3, 8], "6": [4, 9], "8": [4, 9], "10": [4]}},
+"cols":{
+ label:"SQL",
+ pc:["plan(query):", "  for each partition of the table:", "    if the filter names the partition column, bare:", "      keep the partition only if its day fits the range   # from metadata", "    else:", "      keep it: nothing can be proved                       # a cast, a join", "  columns = columns the query names                        # SELECT * names all", "  open files = kept partitions x columns", "execute:", "  read only the open files; run the filter on the rows", "hot partition: today gets all writes, the old days stay cold"],
+ real:["SELECT * FROM transfers", "WHERE  day BETWEEN '2026-10-10' AND '2026-10-12';   -- 3 x 12 = 36 files", "", "SELECT to_address, sum(amount)", "FROM   transfers", "WHERE  day BETWEEN '2026-10-10' AND '2026-10-12'", "GROUP  BY to_address;                               -- 3 x 2 = 6 files", "", "-- the failure: LIMIT does not cut the files", "SELECT * FROM transfers LIMIT 10;                   -- 30 x 12 = 360 files"],
+ map:{"1": [4, 5, 6], "4": [6], "6": [10], "7": [1, 4], "8": [2, 7, 10], "10": [2, 7, 10]}}
+};
+const PCS={"prune": [[1, 7, 8], [3], [2, 3, 4], [9, 10], [11]], "fn": [[3, 5], [5, 6], [6, 8, 10], [5, 6], [3, 4]], "cols": [[7, 8], [7], [7, 8, 10], [6, 7, 8], [4, 7, 8]]};
+for(const m in PCS)PCS[m].forEach((p,k)=>{steps[m][k].pc=p});
+const RLS={"prune": [[2, 3], null, null, [7, 8], null], "fn": [[2, 3], [3, 4], [4], [6, 7, 8, 9], [11, 12, 13, 14]], "cols": [[1, 2], [4, 5, 6, 7], [4, 7], [9, 10], [4, 5, 6, 7]]};
+for(const m in RLS)RLS[m].forEach((r,k)=>{if(r)steps[m][k].rl=r});
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function codeFor(m){let c=code[m]||code[Object.keys(code)[0]];if(typeof c==="string")c=code[c];return c}
+function drawCode(){
+  const c=codeFor(mode),s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pc=s.pc||[];
+  let hl=new Set(pc);
+  if(view==="real"&&s.rl)hl=new Set(s.rl);else if(view==="real"){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    const re=view==="pc"?/(#.*)$/:c.label==="SQL"?/(--.*)$/:/((?:^|\s)\/\/.*)$/;t=t.replace(re,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;$("sql").textContent=s.q;
+  for(let k=0;k<30;k++){let f=s.rest?col[s.rest]:"var(--line)";
+    if(k>=s.pr[0]&&k<s.pr[1])f=col[s.pk];
+    if(s.hit&&k>=s.hit[0]&&k<s.hit[1])f="var(--coord)";
+    $("d"+k).setAttribute("fill",f);}
+  C.forEach((_,k)=>$("c"+k).setAttribute("fill",s.cl.includes(k)?col[s.ck||(s.cl.length<12?"ok":"r")]:"var(--line)"));
+  const np=s.pr[1]-s.pr[0],nc=s.cl.length,pct=np/30*nc/12*100;
+  $("bar").setAttribute("width",Math.max(4,600*pct/100));
+  $("bar").setAttribute("fill",s.pk==="bad"?"var(--fail)":pct<100?"var(--ok)":"var(--coord)");
+  $("pct").textContent=`scanned: ${pct>=10?Math.round(pct):pct.toFixed(1)}%`;
+  $("detail").textContent=`partitions read: ${np} of 30 · columns read: ${nc} of 12`;
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

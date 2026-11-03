@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Constrained decoding</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+</style>
+<style>
+#scene{opacity:.25;transition:opacity .35s}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+#scene.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#scene,.box{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Constrained decoding: only valid tokens can be drawn</h1>
+  <p class="lede">An address classifier must return JSON with a field <code>kind</code> set to exchange, mixer or unknown. Press <b>Next</b> and watch an unconstrained run break the parser, then watch the server mask every token the schema does not allow. The second tab shows what the mask cannot fix.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="mask">The mask at work</button>
+    <button role="tab" aria-selected="false" data-mode="limits">Valid shape, wrong content</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">Next-token probabilities masked by a JSON schema so the classifier output always parses</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui" font-size="14"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and real Python. The full program replays this story and prints the same numbers: <code>handbook/code/10-constrained-decoding/main.py</code> (<code>python3 main.py</code>). The API call tab shows the Anthropic Messages API request for reference; it is not run. Structured output is requested with output_config.format. Forcing a tool with tool_choice returns a 400 on current models.</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+      <button data-v="api" aria-pressed="false" id="apitab">API call</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">allowed token probability</span>
+    <span style="--c:var(--fail)">masked out, or broken output</span>
+    <span style="--c:var(--ok)">valid output</span>
+    <span style="--c:var(--wait)">valid shape, content still needs a check</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Structured output in the Claude, OpenAI and Gemini APIs, and grammar or JSON-schema modes in self-hosted servers such as vLLM and llama.cpp. Tool call arguments use the same idea, so a call never fails on malformed JSON.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use an enum for labels and a schema for records that code reads next. Always include an "unknown" or "not found" value, so the model is never forced into a wrong one. Check the values against the data after parsing.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Prompt says &quot;answer in JSON&quot;</th><th>Constrained decoding</th></tr>
+      <tr><td>Output parses</td><td>Almost always: one in a few hundred breaks</td><td>Always</td></tr>
+      <tr><td>Label outside the list</td><td>Possible: "probably a mixer"</td><td>Impossible</td></tr>
+      <tr><td>Content true</td><td>Not guaranteed</td><td>Not guaranteed either</td></tr>
+      <tr><td>Missing answer</td><td>Model may invent</td><td>Needs an unknown value in the schema</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Constrained decoding masks every token that would break the schema, so the shape is always valid, and I still check that the content is true."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function R(x,y,w,h,f,t,tc,fs,ex){fs=fs||14;tc=tc||"#fff";return `<rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="8" fill="${f}" ${ex||""}/>`+(t?`<text x="${x+w/2}" y="${y+h/2+fs*.36}" text-anchor="middle" fill="${tc}" font-size="${fs}" font-weight="700">${esc(t)}</text>`:"");}
+function O(x,y,w,h,c,t,fs,dash){return R(x,y,w,h,"none",t,"var(--fg)",fs,`stroke="${c||"var(--line)"}" stroke-width="2" ${dash?'stroke-dasharray="6 4"':""}`);}
+function A(x1,y1,x2,y2,c,l,dash){c=c||"var(--fg)";return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="2.5" marker-end="url(#arr)" ${dash?'stroke-dasharray="6 4"':""}/>`+(l?`<text x="${(x1+x2)/2+(x1===x2?10:0)}" y="${(y1+y2)/2-(x1===x2?-4:7)}" text-anchor="${x1===x2?"start":"middle"}" fill="${c}" font-size="13" font-weight="700">${esc(l)}</text>`:"");}
+function T(x,y,t,c,fs,a,b){return `<text x="${x}" y="${y}" fill="${c||"var(--fg)"}" font-size="${fs||14}" text-anchor="${a||"start"}" ${b?'font-weight="700"':""}>${esc(t)}</text>`;}
+const code={mask:{
+ pc:["enum = [exchange, mixer, unknown]          # from the JSON schema",
+"allowed = grammar(schema, output_so_far)   # after {\"kind\": \" only the enum",
+"probs = model(output_so_far)               # every token gets a probability",
+"for token in probs:",
+"  if token not in allowed:",
+"    probs[token] = 0                       # the mask",
+"normalise(probs)                           # the allowed tokens share the weight",
+"token = draw(probs)                        # exchange, mixer or unknown",
+"output += token; repeat until the grammar says done",
+"if output.kind != graph_mark(address):     # shape is not truth",
+"  flag_for_review(output)",
+"# keep a valid way to say not found:",
+"assert \"unknown\" in enum"],
+ real:["NEXT = {\"exchange\": 0.523, \"mixer\": 0.371, \"unknown\": 0.103,",
+"        \"probably\": 0.002, \"maybe\": 0.0006, \"a mixer\": 0.0004}",
+"",
+"def grammar(enum):",
+"    \"\"\"The tokens that keep the output valid for the schema {kind: one of enum}.\"\"\"",
+"    return set(enum)",
+"",
+"def mask(probs, allowed):",
+"    \"\"\"Zero every token outside the grammar, then share the weight among the rest.\"\"\"",
+"    kept = {t: p for t, p in probs.items() if t in allowed}",
+"    total = sum(kept.values())",
+"    return {t: p / total for t, p in kept.items()}",
+"",
+"def draw(probs, rng):",
+"    r, acc = rng.random(), 0.0",
+"    for token, p in probs.items():",
+"        acc += p",
+"        if r < acc:",
+"            return token",
+"    return token",
+"",
+"def parses(text, enum):",
+"    try:",
+"        return json.loads(text)[\"kind\"] in enum",
+"    except ValueError:",
+"        return False",
+"",
+"ENUM = [\"exchange\", \"mixer\", \"unknown\"]",
+"masked = mask(NEXT, grammar(ENUM))   # exchange 52.5%, mixer 37.2%, unknown 10.3%",
+"print(\"content check:\", \"agrees\" if label == graph_mark else f\"flagged: graph says {graph_mark.capitalize()}\")"],
+ map:{1:[28],2:[4,5,6],3:[1,2],4:[10],5:[10],6:[10],7:[11,12,29],8:[14,15,16,17,18,19],9:[22,23,24],10:[30],11:[30],12:[28],13:[28]},
+ api:["# Anthropic Messages API, for reference (not run)",
+"msg = client.messages.create(",
+"    model=\"claude-opus-5-5\", max_tokens=256,",
+"    output_config={\"format\": {\"type\": \"json_schema\",",
+"        \"schema\": {\"type\": \"object\",",
+"            \"additionalProperties\": False,",
+"            \"properties\": {\"kind\": {\"type\": \"string\", \"enum\": [\"exchange\", \"mixer\", \"unknown\"]}},",
+"            \"required\": [\"kind\"]}}},   # answer through the schema",
+"    messages=[{\"role\": \"user\", \"content\": f\"Classify {address}\"}],",
+")",
+"text = next(b.text for b in msg.content if b.type == \"text\")   # after checking stop_reason",
+"kind = json.loads(text)[\"kind\"]     # still check it against the graph's mark"],
+ amap:{1:[7],2:[7,8],10:[12],11:[12],12:[7],13:[7]}}};
+code.limits=code.mask;
+//ENDCODE
+const C=[["exchange",.523],["mixer",.371],["probably",.002],["unknown",.103],["maybe",.0006],["a mixer",.0004]];
+const OKS=[0,1,3];
+const steps={
+"mask":[
+ {t:"The output so far",b:"The classifier has written {\"kind\": \" and must now pick the label. The schema allows exchange, mixer or unknown.",w:"The next token decides whether the JSON will parse.",out:'{"kind": "',raw:1,pc:[1, 2]},
+ {t:"The model gives a list",b:"The model gives every token a probability as usual: exchange 52.3%, mixer 37.1%, unknown 10.3%, and a thin tail: probably 0.2%, maybe 0.06%, a mixer 0.04%. Nothing stops the tail yet.",w:"The model does not know the schema. It only predicts likely text.",out:'{"kind": "',raw:1,pc:[3]},
+ {t:"The failure without constraints",b:"The tail adds up to 0.3%: one run in a few hundred. The program draws 10,000 runs and 28 break the schema. One reads \"kind\": \"probably a mixer\", and the parser rejects it. The mask lines are missing.",w:"A prompt that says \"answer in JSON\" works almost always. Almost is a bug at a million calls.",out:'{"kind": "probably a mixer"}',raw:1,bad:1,pc:[3, 5, 6, 8]},
+ {t:"The server builds a grammar",b:"With constrained decoding, the server turns the JSON schema into a grammar. After \"kind\": \", only the three allowed labels can follow.",w:"The grammar tracks what is valid at every point of the output.",out:'{"kind": "',grammar:1,pc:[1, 2]},
+ {t:"Mask the rest",b:"The mask checks each token: is it in the grammar's allowed set? probably, maybe and a mixer are not, so each gets probability zero. The kept three, 99.7% together, are divided by 0.997: exchange 52.5%, mixer 37.2%, unknown 10.3%.",w:"This is the mask. The model's own preferences among the allowed tokens stay the same.",out:'{"kind": "',mask:1,pc:[4, 5, 6, 7]},
+ {t:"Draw and close",b:"The sampler draws exchange. The grammar now allows only the closing quote and brace. Over 10,000 masked runs, 0 break the schema.",w:"Every step is masked the same way, so the whole output always parses.",out:'{"kind": "exchange"}',mask:1,ok:1,pc:[8, 9]}
+],
+"limits":[
+ {t:"A mixer address",b:"Now the classifier sees an address that the graph labels as a mixer. The mask still allows all three labels.",w:"The schema controls the shape, not the truth.",out:'{"kind": "',mask:1,p:[.55,.35,.10],pc:[2, 3]},
+ {t:"Valid but wrong",b:"The sampler draws exchange. The JSON parses perfectly. The label is wrong.",w:"Valid shape, wrong content. The parser cannot see it.",out:'{"kind": "exchange"}',mask:1,p:[.55,.35,.10],warn:1,pc:[8, 9]},
+ {t:"Check the value against the data",b:"The content check compares the label with the graph's own mark for this address: exchange against Mixer. They differ, so the answer is flagged for review.",w:"Constrained decoding plus a content check: one guards the shape, the other the truth.",out:'{"kind": "exchange"}',mask:1,p:[.55,.35,.10],check:"flagged: graph says Mixer",pc:[10, 11]},
+ {t:"The failure: no way to say unknown",b:"A team removes unknown from the enum to \"force a decision\". An address with no evidence must now be exchange or mixer. The model picks one.",w:"A schema too tight forces a wrong value when the right answer is missing.",out:'{"kind": "mixer"}',p:[.5,.5],two:1,bad:1,pc:[12, 13]},
+ {t:"The fix: keep an unknown value",b:"Unknown goes back into the enum. The no-evidence address gets unknown, which is the honest answer.",w:"Always leave the model a valid way to say not found.",out:'{"kind": "unknown"}',mask:1,p:[.15,.15,.70],ok:1,pc:[13]}
+]};
+function scene(s){
+  let h=T(30,28,"Next-token probabilities",null,15,"start",1);
+  const list=s.two?[["exchange",.5],["mixer",.5]]:s.p?OKS.map((k,j)=>[C[k][0],s.p[j]]):C;
+  const keptSum=OKS.reduce((a,k)=>a+C[k][1],0);
+  list.forEach((c,k)=>{const y=46+k*38;const allowed=s.p||s.two||OKS.includes(k);
+    const masked=(s.mask||s.grammar)&&!allowed;
+    let v=c[1];if(s.mask&&!s.p)v=masked?0:c[1]/keptSum;
+    h+=T(30,y+22,c[0],masked?"var(--fail)":"var(--fg)",14,"start",1);
+    h+=`<rect x="130" y="${y+6}" width="${300*c[1]}" height="22" rx="4" fill="none" stroke="var(--line)" stroke-width="2"/>`;
+    h+=`<rect class="box" x="130" y="${y+6}" width="${300*v}" height="22" rx="4" fill="${masked?"var(--fail)":"var(--coord)"}"/>`;
+    h+=T(480,y+22,masked&&s.mask?"masked":(v<0.01?(v*100).toFixed(2).replace(/0$/,""):(v*100).toFixed(1))+"%",masked?"var(--fail)":"var(--fg)",13,"end",1);
+    if(s.grammar)h+=T(490,y+22,allowed?"allowed":"breaks schema",allowed?"var(--ok)":"var(--fail)",13,"start",1);});
+  h+=T(30,300,"Output so far",null,14,"start",1);
+  const c=s.bad?"var(--fail)":s.warn||s.check?"var(--wait)":s.ok?"var(--ok)":"var(--line)";
+  h+=O(30,310,560,40,c);h+=`<text x="44" y="336" font-family="ui-monospace,Menlo,monospace" font-size="15" fill="${s.bad?"var(--fail)":"var(--fg)"}">${esc(s.out)}</text>`;
+  h+=T(620,46,"Schema",null,14,"start",1);
+  h+=O(620,56,260,96,"var(--line)");
+  h+=T(634,82,"kind: one of",null,14);h+=T(634,106,s.two?"exchange, mixer":"exchange, mixer, unknown",s.two?"var(--fail)":"var(--fg)",14,"start",1);
+  if(s.two)h+=T(634,132,"unknown removed","var(--fail)",13,"start",1);
+  let res=null;
+  if(s.bad&&!s.two)res=["Parser: rejected","var(--fail)"];
+  else if(s.bad)res=["Forced wrong value","var(--fail)"];
+  else if(s.check)res=[s.check,"var(--wait)"];
+  else if(s.warn)res=["Parses. Wrong label.","var(--wait)"];
+  else if(s.ok)res=["Parser: valid","var(--ok)"];
+  if(res)h+=R(620,180,260,50,res[1],res[0],"#fff",14);
+  return h;
+}
+
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+function drawCode(){
+  if(typeof code==="undefined"||!$("codebox"))return;
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],pcs=s.pc||[];
+  if(view==="api"&&!c.api)view="pc";
+  const lines=view==="pc"?c.pc:view==="real"?c.real:c.api;
+  let hl=new Set(pcs);
+  if(view!=="pc"){const m=view==="real"?c.map:(c.amap||{});hl=new Set();pcs.forEach(n=>(m[n]||[]).forEach(x=>hl.add(x)));}
+  document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===view));
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;drawCode()});
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  const g=$("scene");g.innerHTML=scene(s,mode);
+  if(!reduce){g.classList.remove("on");requestAnimationFrame(()=>g.classList.add("on"));}else g.classList.add("on");
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

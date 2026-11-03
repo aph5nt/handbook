@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prompt caching</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box,.edge{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.edge{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Prompt caching: pay once for the stable prefix</h1>
+  <p class="lede">A Claude Code session sends the same system prompt, tools and skills on every call, then a growing history and a new turn. The provider can keep the processed prefix and reuse it. Watch call 2 read the prefix from the cache. Then switch tabs to see one reordered tool list break it.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="ok">Same prefix, cache hit</button>
+    <button role="tab" aria-selected="false" data-mode="bad">One change breaks the match</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 420" aria-labelledby="stage-title" font-family="Atkinson Hyperlegible,system-ui">
+      <title id="stage-title">Two calls drawn as rows of parts, a cache breakpoint after the skills, and the provider cache</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <path id="bp" class="edge msg" d="M455 28 L455 202" fill="none" stroke="var(--line)" stroke-width="3" stroke-dasharray="7 5"/>
+      <text x="30" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">call 1</text>
+      <text x="30" y="170" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">call 2</text>
+      <text id="bpl" class="msg" x="455" y="222" text-anchor="middle" font-size="12" font-weight="700" fill="var(--wait)">cache breakpoint</text>
+      <g><rect id="c1s" class="box" x="60" y="40" width="150" height="50" rx="6" fill="var(--line)"/><text id="c1s-l" x="135.0" y="69.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">System prompt</text></g>
+      <g><rect id="c1t" class="box" x="220" y="40" width="110" height="50" rx="6" fill="var(--line)"/><text id="c1t-l" x="275.0" y="69.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Tools</text></g>
+      <g><rect id="c1k" class="box" x="340" y="40" width="110" height="50" rx="6" fill="var(--line)"/><text id="c1k-l" x="395.0" y="69.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Skills</text></g>
+      <g><rect id="c1h" class="box" x="460" y="40" width="150" height="50" rx="6" fill="var(--line)"/><text id="c1h-l" x="535.0" y="69.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">History</text></g>
+      <g><rect id="c1n" class="box" x="620" y="40" width="110" height="50" rx="6" fill="var(--line)"/><text id="c1n-l" x="675.0" y="69.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">New turn</text></g>
+      <g><rect id="c2s" class="box" x="60" y="140" width="150" height="50" rx="6" fill="var(--line)"/><text id="c2s-l" x="135.0" y="169.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">System prompt</text></g>
+      <g><rect id="c2t" class="box" x="220" y="140" width="110" height="50" rx="6" fill="var(--line)"/><text id="c2t-l" x="275.0" y="169.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Tools</text></g>
+      <g><rect id="c2k" class="box" x="340" y="140" width="110" height="50" rx="6" fill="var(--line)"/><text id="c2k-l" x="395.0" y="169.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">Skills</text></g>
+      <g><rect id="c2h" class="box" x="460" y="140" width="150" height="50" rx="6" fill="var(--line)"/><text id="c2h-l" x="535.0" y="169.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">History</text></g>
+      <g><rect id="c2n" class="box" x="620" y="140" width="110" height="50" rx="6" fill="var(--line)"/><text id="c2n-l" x="675.0" y="169.55" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">New turn</text></g>
+      <g><rect id="cache" class="box" x="750" y="40" width="140" height="150" rx="10" fill="var(--line)"/><text id="cache-l" x="820.0" y="111.5" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"><tspan x="820.0" dy="0">Provider</tspan><tspan x="820.0" dy="16.8">cache</tspan></text></g>
+      <text x="10" y="240" font-size="14" font-weight="700" fill="var(--fg)">What this call pays for</text>
+      <rect x="10" y="250" width="880" height="160" rx="6" fill="none" stroke="var(--line)" stroke-width="2"/><g id="rows"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program replays this story offline, with a fake model function: <code>handbook/code/09-prompt-caching/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">processed fresh, full price</span>
+    <span style="--c:var(--wait)">written to the cache</span>
+    <span style="--c:var(--ok)">read from the cache, cheaper and faster</span>
+    <span style="--c:var(--fail)">changed, so the cache misses from here on</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Claude Code and other agent harnesses resend a long system prompt, tool list and skills on every call. Anthropic prompt caching with cache breakpoints, and automatic prefix caching at OpenAI and in vLLM. Chat products with a long fixed system prompt.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Order the request from most stable to least stable: system prompt, tools, skills, then history, then the new turn. Put the breakpoint after the stable part. Keep tool order fixed and skills frozen for a session. Watch the cache-read token count in the usage report.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Cache hit</th><th>Cache miss</th></tr>
+      <tr><td>Prefix bytes</td><td>Identical to an earlier call, from the start</td><td>Different somewhere, so the match ends there</td></tr>
+      <tr><td>Prefix cost</td><td>A fraction of the normal input price</td><td>Full price, plus the cost of writing the cache</td></tr>
+      <tr><td>Time to first token</td><td>Shorter</td><td>Normal</td></tr>
+      <tr><td>Common causes of a miss</td><td>None</td><td>A timestamp, a reordered tool list, an edited skill, an idle gap</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Prompt caching reuses the processed prefix only when it matches byte for byte from the start, so stable text goes first and changing text goes last."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const D={"steps":{
+"ok":[
+{"pc": [1, 2, 3, 6], "t": "Call 1 writes the cache", "b": "Call 1 at 0 s finds nothing in the cache. The prefix (system 2,000 + tools 3,000 + skills 4,000 = 9,000 tokens, example sizes) is processed in full and written, each start of it keyed by a hash of its exact bytes.", "w": "Writing the cache costs a little extra once.", "box": {"c1s": "wait", "c1t": "wait", "c1k": "wait", "c1h": "coord", "c1n": "coord", "cache": "wait"}, "show": ["bp", "bpl"], "rows": [["call 1: prefix processed in full and written to the cache", "wait"]]},
+{"pc": [4, 5, 7], "t": "Call 2 reads it", "b": "Call 2 at 30 s hashes the same bytes and finds all three keys, none expired. 9,000 tokens are read from the cache. Only the history and the new turn, 2,200 tokens, are processed fresh.", "w": "Cached input costs a fraction of the normal price, and the answer starts sooner.", "box": {"c1s": "wait", "c1t": "wait", "c1k": "wait", "c2s": "ok", "c2t": "ok", "c2k": "ok", "c2h": "coord", "c2n": "coord", "cache": "ok"}, "show": ["bp", "bpl"], "rows": ["clear", ["call 2: prefix read from the cache", "ok"], ["history and the new turn: processed fresh", "coord"]]},
+{"pc": [2], "t": "The breakpoint marks the stable part", "b": "The breakpoint sits after the last part that never changes in a session. Everything after it may change on every call.", "w": "Put the breakpoint where stability ends, not before.", "box": {"c2s": "ok", "c2t": "ok", "c2k": "ok"}, "show": ["bp", "bpl"], "rows": [["breakpoint: after the skills, before the history", "coord"]]},
+{"pc": [4, 5, 8], "t": "Every later call hits", "b": "Each hit renews the entry for another 300 s. Calls come 30 s apart, so calls 3 to 20 all read 9,000 tokens from the cache. Only the growing history is fresh: 20,200 tokens by call 20.", "w": "The longer the stable prefix and the more calls, the bigger the saving.", "box": {"c2s": "ok", "c2t": "ok", "c2k": "ok", "cache": "ok"}, "show": ["bp", "bpl"], "rows": [["calls 3 to 20: every one a cache hit", "ok"]]},
+{"pc": [8, 6], "t": "An idle gap", "b": "The engineer is away for an hour. The last use was at 570 s, so every entry expired at 870 s. The call at 4,200 s matches nothing and writes all 9,000 tokens again.", "w": "The cache has a short lifetime. Long pauses pay the write again.", "box": {"c2s": "wait", "c2t": "wait", "c2k": "wait", "cache": "wait"}, "show": ["bp", "bpl"], "rows": [["idle past the cache lifetime: the next call writes again", "wait"]]}],
+"bad":[
+{"pc": [3, 6], "t": "Call 1 writes the cache", "b": "As before, the first call writes the processed prefix to the cache.", "w": "So far, so good.", "box": {"c1s": "wait", "c1t": "wait", "c1k": "wait", "c1h": "coord", "c1n": "coord", "cache": "wait"}, "show": ["bp", "bpl"], "rows": [["call 1: prefix written to the cache", "wait"]]},
+{"pc": [9], "t": "The tool list comes back in a new order", "b": "Suppose line 9 is off: tools go in the order the server lists them. The MCP server reconnects and lists the same 4 tools in reverse order. The system prompt bytes are the same, the tools bytes are not.", "w": "Same tools, same meaning, different bytes.", "box": {"c2s": "ok", "c2t": "fail"}, "show": ["bp", "bpl"], "rows": ["clear", ["tools listed in a new order", "fail"]]},
+{"pc": [4, 6], "t": "Everything after the change misses", "b": "The system prompt's hash matches: 2,000 tokens read. The system-plus-tools hash does not, so the match stops there. Tools and skills, 7,000 tokens, are processed at full price.", "w": "One change early in the prefix throws away everything after it.", "box": {"c2s": "ok", "c2t": "fail", "c2k": "fail", "c2h": "coord", "c2n": "coord", "cache": "fail"}, "show": ["bp", "bpl"], "rows": [["prefix match ends at the tools: the rest at full price", "fail"]]},
+{"pc": [4, 6], "t": "An edited skill does the same", "b": "Editing a skill file changes the skills bytes. System and tools still match (5,000 tokens read). The skills, now 4,001 tokens, miss and are written again.", "w": "Anything in the prefix that changes is a cache breaker.", "box": {"c2s": "ok", "c2t": "ok", "c2k": "fail", "cache": "fail"}, "show": ["bp", "bpl"], "rows": [["skill edited mid-session: miss from the skills on", "fail"]]},
+{"pc": [9], "t": "The fix: a frozen, ordered prefix", "b": "Line 9 on: tools are sorted by name before the prefix is built. The reordered list becomes the same bytes, and call 2 reads all 9,000 tokens from the cache. Check cache-read tokens in the usage report.", "w": "Treat the prefix like a build artifact: same input, same bytes.", "box": {"c2s": "ok", "c2t": "ok", "c2k": "ok", "c2h": "coord", "c2n": "coord", "cache": "ok"}, "show": ["bp", "bpl"], "rows": ["clear", ["sorted tools, frozen skills: hits again", "ok"]]}]},
+"T0":{},"panel":{"x": 10, "y": 250, "w": 880, "h": 160, "title": "What this call pays for", "rh": 30, "fs": 13},"code":{"_": {"label": "Python", "pc": ["prefix = system + tools + skills             # the stable part", "breakpoint after skills                      # history and the turn come after it", "on each call:", "  match = longest start of the prefix in the cache, not expired", "  read the match from the cache              # cheaper, faster first token", "  process the rest of the prefix in full, write it to the cache", "  process history + new turn in full         # they change every call", "  an entry expires 300 s after its last use  # an idle gap pays the write again", "build the prefix: tools sorted by name, skills frozen, no timestamps"], "real": ["TTL = 300  # seconds an unused entry lives", "", "", "def build_prefix(tools, skills, sort_tools=True):  # the stable part", "    if sort_tools:", "        tools = sorted(tools)  # same order, same bytes", "    return [(\"system\", SYSTEM), (\"tools\", tool_block(tools)), (\"skills\", skills)]  # breakpoint after skills", "", "", "class ProviderCache:", "    def __init__(self):", "        self.expires = {}                                # prefix hash -> expiry time", "", "    def call(self, prefix, tail, now):", "        read = written = 0", "        matching, seen = True, b\"\"", "        for name, text in prefix:", "            seen += text.encode()", "            key = hashlib.sha256(seen).hexdigest()  # the exact bytes so far", "            if matching and self.expires.get(key, -1) >= now:  # found, not expired", "                read += tok(text)  # cheap and fast", "            else:", "                matching = False  # the match stops here", "                written += tok(text)  # full price, then cached", "            self.expires[key] = now + TTL  # each use renews it", "        fresh = sum(tok(t) for t in tail)  # history and turn, always fresh", "        return read, written, fresh"], "map": {"8": [1, 25], "1": [4, 7], "9": [5, 6], "2": [7], "3": [14], "4": [19, 20], "5": [21], "6": [23, 24, 25], "7": [26]}, "path": "handbook/code/09-prompt-caching/main.py", "cmd": "python3 main.py", "note": ""}}};
+const steps=D.steps,T0=D.T0,P=D.panel,CODE=D.code,NS="http://www.w3.org/2000/svg";
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function paintRows(list){
+  if(!P)return;const g=$("rows");g.innerHTML="";let n=0;const rh=P.rh||28;
+  for(let k=0;k<=i;k++)for(const r of (list[k].rows||[])){
+    if(r==="clear"){g.innerHTML="";n=0;continue;}
+    const y=P.y+6+n*rh;n++;const col=`var(--${r[1]})`;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg"+(k<i?" on":""));
+    el.innerHTML=`<rect x="${P.x+6}" y="${y}" width="${P.w-12}" height="${rh-4}" rx="4" fill="${col}" opacity=".18"/><rect x="${P.x+6}" y="${y}" width="5" height="${rh-4}" fill="${col}"/><text x="${P.x+18}" y="${y+rh/2+2}" font-size="${P.fs||12}" fill="var(--fg)">${r[0]}</text>`;
+    g.appendChild(el);
+    if(k===i){const show=()=>el.classList.add("on");reduce()?show():setTimeout(show,60);}
+  }
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  if(!CODE)return;const c=CODE[mode]||CODE._,s=steps[mode][i],pc=s.pc||[];
+  const v=(view==="alt"&&!c.alt)?"real":view;
+  const lines=v==="pc"?c.pc:v==="alt"?c.alt.lines:c.real,mp=v==="alt"?c.alt.map:c.map;
+  let hl=new Set(pc);
+  if(v!=="pc"){hl=new Set();pc.forEach(n=>(mp[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l);
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const list=steps[mode],s=list[i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("rect.box").forEach(r=>{r.setAttribute("fill","var(--line)");$(r.id+"-l").setAttribute("fill","var(--fg)");});
+  for(const k in s.box||{}){$(k).setAttribute("fill",`var(--${s.box[k]})`);$(k+"-l").setAttribute("fill","#fff");}
+  document.querySelectorAll(".edge").forEach(e=>e.setAttribute("stroke","var(--line)"));
+  for(const k in s.ed||{})$(k).setAttribute("stroke",`var(--${s.ed[k]})`);
+  const show=s.show||[];
+  document.querySelectorAll("svg .msg").forEach(m=>{if(m.closest("#rows"))return;const id=m.id.replace(/-g$/,"");m.classList.toggle("on",show.includes(id)||show.includes(m.id));});
+  const tx=Object.assign({},T0);for(let k=0;k<=i;k++)Object.assign(tx,list[k].txt||{});
+  for(const k in tx){const el=$(k);if(el.querySelector("tspan")){el.textContent=tx[k];}else el.textContent=tx[k];}
+  paintRows(list);drawCode();
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+if(CODE)document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

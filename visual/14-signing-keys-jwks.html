@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signing Keys and JWKS</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+@media (prefers-reduced-motion:reduce){.msg{transition:none}.box{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.code .tabs button{font-size:15px}
+.code .tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Signing keys: HS256, RS256 and JWKS</h1>
+  <p class="lede">Ten internal APIs verify the same tokens. Press <b>Next</b> to see why a shared secret is dangerous there, how a key pair and a JWKS URL fix it, and the trick that beats a careless library.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="keys">Shared secret versus key pair</button>
+    <button role="tab" aria-selected="false" data-mode="rotate">Rotation and confusion</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 360" aria-labelledby="stage-title">
+      <title id="stage-title">A shared secret versus a key pair, key rotation through a JWKS URL, and algorithm confusion</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="16" font-weight="700">
+        <rect id="bx-0" class="box" x="30" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-0" x="110" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-1" class="box" x="260" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-1" x="340" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-2" class="box" x="490" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-2" x="570" y="52" text-anchor="middle" fill="#fff"></text>
+        <rect id="bx-3" class="box" x="720" y="20" width="160" height="52" rx="8" fill="var(--svc)"/>
+        <text id="lb-3" x="800" y="52" text-anchor="middle" fill="#fff"></text>
+      </g>
+      <g stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6">
+        <line x1="110" y1="72" x2="110" y2="290"/><line x1="340" y1="72" x2="340" y2="290"/>
+        <line x1="570" y1="72" x2="570" y2="290"/><line x1="800" y1="72" x2="800" y2="290"/>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle">
+        <rect id="st-0" class="box" x="35" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-0" x="110" y="319" fill="var(--fg)"></text>
+        <rect id="st-1" class="box" x="265" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-1" x="340" y="319" fill="var(--fg)"></text>
+        <rect id="st-2" class="box" x="495" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-2" x="570" y="319" fill="var(--fg)"></text>
+        <rect id="st-3" class="box" x="725" y="300" width="150" height="28" rx="14" fill="var(--line)"/><text id="tx-3" x="800" y="319" fill="var(--fg)"></text>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui" font-size="14" stroke-width="2.5"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/14-signing-keys-jwks/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--wait)">held, or still being checked</span>
+    <span style="--c:var(--ok)">checked and allowed, or a defence that held</span>
+    <span style="--c:var(--fail)">attacker, refused, or a hole</span>
+    <span style="--c:var(--undo)">rotated, revoked or replaced</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet key pairs</h2>
+      <p>Any token read by more than one service, and every OIDC provider: RS256 or ES256, with keys at a JWKS URL found through the provider's discovery document.</p>
+    </div>
+    <div class="card">
+      <h2>Where a shared secret is fine</h2>
+      <p>One service that signs and checks its own cookies or tokens, with nobody else verifying. HS256 is simple and fast there.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>HS256</th><th>RS256 or ES256</th></tr>
+      <tr><td>Keys</td><td>One shared secret</td><td>Private key signs, public key verifies</td></tr>
+      <tr><td>A verifier leaks</td><td>Attacker can mint tokens</td><td>Nothing useful leaks</td></tr>
+      <tr><td>Rotation</td><td>Change the secret everywhere at once</td><td>Add to JWKS, switch, wait, remove</td></tr>
+      <tr><td>Fits</td><td>One service, own tokens</td><td>Many verifiers</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"Asymmetric keys let many services verify without any of them being able to sign, and the JWKS URL makes rotation a non-event."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const actors={
+"keys":[["i", "Issuer", "coord"], ["j", "JWKS URL", "svc"], ["a", "Cases API", "svc"], ["x", "Attacker", "fail"]],
+"rotate":[["i", "Issuer", "coord"], ["j", "JWKS URL", "svc"], ["a", "Cases API", "svc"], ["x", "Attacker", "fail"]]
+};
+const code={
+"keys": {
+"label": "Go",
+"pc": [
+"HS256: sign = HMAC(secret, claims); every API holds the secret",
+"verifyHS(token): HMAC(secret, claims) == token.sig",
+"# one leaked secret signs anything, and every API accepts it",
+"RS256: sign with the private key, which never leaves the issuer",
+"JWKS: the issuer publishes public keys by kid (key id)",
+"verify(token):",
+"  pub = jwks[token.kid]",
+"  check the RSA signature over the claims with pub",
+"  if it fails: 401",
+"  return 200"
+],
+"real": [
+"func hs256(secret []byte, msg string) []byte {",
+"\tm := hmac.New(sha256.New, secret)",
+"\tm.Write([]byte(msg))",
+"\treturn m.Sum(nil)",
+"}",
+"",
+"func rs256(k *rsa.PrivateKey, msg string) []byte {",
+"\th := sha256.Sum256([]byte(msg))",
+"\tsig, _ := rsa.SignPKCS1v15(rand.Reader, k, crypto.SHA256, h[:])",
+"\treturn sig",
+"}",
+"",
+"// verifyHS is the shared-secret API: anyone holding the secret can sign too.",
+"func verifyHS(secret []byte, t token) bool {",
+"\treturn hmac.Equal(hs256(secret, t.claims), t.sig)",
+"}",
+"",
+"// verify picks the algorithm itself: every key here is RS256 only. An",
+"// unknown kid causes one rate-limited refetch of the JWKS.",
+"func (a *api) verify(t token) (int, string) {",
+"\tpub, ok := a.jwks[t.kid]",
+"\tif !ok && a.refetches == 0 {",
+"\t\ta.refetches++",
+"\t\ta.jwks = a.fetch()",
+"\t\tpub, ok = a.jwks[t.kid]",
+"\t}",
+"\tif !ok {",
+"\t\treturn 401, \"unknown key \" + t.kid",
+"\t}",
+"\tif t.alg != \"RS256\" {",
+"\t\treturn 401, t.kid + \" is RS256 only\"",
+"\t}",
+"\th := sha256.Sum256([]byte(t.claims))",
+"\tif rsa.VerifyPKCS1v15(pub, crypto.SHA256, h[:], t.sig) != nil {",
+"\t\treturn 401, \"bad signature\"",
+"\t}",
+"\treturn 200, \"verified with \" + t.kid",
+"}"
+],
+"map": {
+"1": [
+1
+],
+"2": [
+14,
+15
+],
+"3": [
+14
+],
+"4": [
+7,
+9
+],
+"5": [
+21
+],
+"6": [
+20
+],
+"7": [
+21
+],
+"8": [
+34
+],
+"9": [
+34,
+35
+],
+"10": [
+37
+]
+}
+},
+"rotate": {
+"label": "Go",
+"pc": [
+"step 1: publish k2 in the JWKS, keep signing with k1",
+"step 2: sign new tokens with k2; k1 tokens still verify",
+"step 3: after the last k1 token expired, remove k1",
+"verify(token):",
+"  if kid is unknown and no refetch yet: refetch the JWKS once",
+"  if kid is still unknown: 401",
+"  if token.alg != RS256: 401                # the API picks, not the token",
+"  check the RSA signature",
+"careless verify: if token.alg == HS256,",
+"  HMAC with the public key's bytes as the secret  # anyone can compute it"
+],
+"real": [
+"type api struct {",
+"\tjwks      map[string]*rsa.PublicKey // cached keys by kid",
+"\trefetches int",
+"\tfetch     func() map[string]*rsa.PublicKey",
+"}",
+"",
+"// verifyCareless obeys the token's alg: an HS256 claim makes it use the",
+"// public key's bytes as if they were a shared secret.",
+"func (a *api) verifyCareless(t token) bool {",
+"\tpub := a.jwks[t.kid]",
+"\tif t.alg == \"HS256\" {",
+"\t\tder, _ := x509.MarshalPKIXPublicKey(pub)",
+"\t\treturn hmac.Equal(hs256(der, t.claims), t.sig)",
+"\t}",
+"\th := sha256.Sum256([]byte(t.claims))",
+"\treturn rsa.VerifyPKCS1v15(pub, crypto.SHA256, h[:], t.sig) == nil",
+"}",
+"",
+"// verify picks the algorithm itself: every key here is RS256 only. An",
+"// unknown kid causes one rate-limited refetch of the JWKS.",
+"func (a *api) verify(t token) (int, string) {",
+"\tpub, ok := a.jwks[t.kid]",
+"\tif !ok && a.refetches == 0 {",
+"\t\ta.refetches++",
+"\t\ta.jwks = a.fetch()",
+"\t\tpub, ok = a.jwks[t.kid]",
+"\t}",
+"\tif !ok {",
+"\t\treturn 401, \"unknown key \" + t.kid",
+"\t}",
+"\tif t.alg != \"RS256\" {",
+"\t\treturn 401, t.kid + \" is RS256 only\"",
+"\t}",
+"\th := sha256.Sum256([]byte(t.claims))",
+"\tif rsa.VerifyPKCS1v15(pub, crypto.SHA256, h[:], t.sig) != nil {",
+"\t\treturn 401, \"bad signature\"",
+"\t}",
+"\treturn 200, \"verified with \" + t.kid",
+"}"
+],
+"map": {
+"1": [
+2,
+25
+],
+"2": [
+22
+],
+"3": [
+2,
+25
+],
+"4": [
+21
+],
+"5": [
+23,
+25
+],
+"6": [
+29
+],
+"7": [
+31,
+19
+],
+"8": [
+35
+],
+"9": [
+9,
+11
+],
+"10": [
+12,
+13
+]
+}
+}
+};
+const steps={
+"keys":[
+ {"t": "HS256: one shared secret", "b": "HS256 (HMAC with SHA-256) signs with one secret, K. To check a token, an API computes the same HMAC, so every API must hold K. Whoever can check can also sign.", "w": "HS256 is an HMAC (Hash-based Message Authentication Code). Whoever can verify can also sign.", "m": [["i", "a", 130, "secret K, copied"]], "st": {"i": ["signs with K", "wait"], "a": ["holds K", "wait"]}, "pc": [1, 2]},
+ {"t": "One API leaks K", "b": "A bug in the cases API exposes its config. The attacker now has K.", "w": "One weak verifier is enough.", "m": [["a", "x", 130, "config with K", "fail"]], "st": {"a": ["leaked K", "fail"], "x": ["holds K", "fail"]}, "pc": [3]},
+ {"t": "The attacker mints tokens", "b": "The attacker computes HMAC(K, {role: admin}). verifyHS computes the same value and answers true. No API can tell this token from a real one.", "w": "With a shared secret, a leak anywhere is a leak everywhere.", "m": [["x", "a", 130, "role: admin, signed with K", "fail"], ["a", "x", 165, "200", "fail"]], "st": {"a": ["accepts it", "fail"], "x": ["admin", "fail"]}, "pc": [1, 2, 3]},
+ {"t": "RS256: a key pair", "b": "RS256 signs with a private key that never leaves the issuer. The public keys are published at a JWKS (JSON Web Key Set) URL. Checking needs only a public key, and that cannot sign.", "w": "Only the private key can sign. The public key can only verify.", "m": [["i", "j", 130, "public key, kid k1"], ["j", "a", 165, "fetch and cache keys"]], "st": {"i": ["private key", "ok"], "j": ["k1 public", "ok"], "a": ["public keys only", "ok"]}, "pc": [4, 5]},
+ {"t": "The token names its key", "b": "The token header says kid k1. The API takes k1 from its cached JWKS and checks the RSA signature over the claims. It passes: 200 verified with k1.", "w": "Many APIs can verify, none can sign.", "m": [["i", "a", 130, "token, kid k1, RS256"], ["band", 0, 175, "verified with the public key k1", "ok"]], "st": {"j": ["k1 public", "ok"], "a": ["verified", "ok"]}, "pc": [6, 7, 8, 10]},
+ {"t": "A leak now is harmless", "b": "The leak now exposes only public keys. The attacker signs with their own key. The check with k1 fails: 401 bad signature.", "w": "The worst bug in a verifier no longer lets anyone mint tokens.", "m": [["a", "x", 130, "public keys only"], ["x", "a", 165, "forged token", "fail"], ["a", "x", 195, "401", "ok"]], "st": {"a": ["refuses forgery", "ok"], "x": ["nothing useful", "ok"]}, "pc": [8, 9]}
+],
+"rotate":[
+ {"t": "Publish the new key first", "b": "The issuer adds k2 first and keeps signing with k1. The API refreshes its cache and holds 2 keys, before any token needs k2.", "w": "APIs pick up k2 on their next fetch, before any token uses it.", "m": [["i", "j", 130, "add k2"], ["j", "a", 165, "keys k1, k2"]], "st": {"i": ["signs with k1", "wait"], "j": ["k1, k2", "ok"], "a": ["knows k1, k2", "ok"]}, "pc": [1]},
+ {"t": "Switch signing", "b": "New tokens say kid k2 and verify with k2. Older tokens say kid k1, and k1 is still in the JWKS, so both answer 200.", "w": "No API sees a key it has never heard of.", "m": [["i", "a", 130, "token, kid k2"], ["i", "a", 170, "older token, kid k1"]], "st": {"i": ["signs with k2", "undo"], "a": ["both verify", "ok"]}, "pc": [2, 8]},
+ {"t": "Retire the old key", "b": "Once the last k1 token has expired, k1 is removed. A leftover k1 token now gets 401 unknown key k1.", "w": "Rotation without downtime: add, switch, wait, remove.", "m": [["i", "j", 130, "remove k1", "undo"]], "st": {"i": ["signs with k2", "ok"], "j": ["k2 only", "undo"]}, "pc": [3]},
+ {"t": "An unknown kid", "b": "A token says kid k9, which the cache does not hold. The API refetches the JWKS once, limited so attackers cannot make it hammer the issuer. k9 is still missing: 401 unknown key k9.", "w": "The rate limit stops an attacker from making you hammer the issuer.", "m": [["x", "a", 120, "token, kid k9", "fail"], ["a", "j", 155, "refetch, rate-limited"], ["a", "x", 190, "401: unknown key"]], "st": {"a": ["refuses k9", "ok"]}, "pc": [5, 6]},
+ {"t": "Algorithm confusion", "b": "The header says HS256 with kid k2. The careless verifier obeys, and uses k2's public bytes as the HMAC secret. Those bytes are public, so the attacker computed the same HMAC. It answers true.", "w": "The public key is public. So the attacker could sign anything.", "m": [["x", "a", 130, "HS256, public key as secret", "fail"], ["a", "x", 165, "200", "fail"]], "st": {"a": ["obeyed the header", "fail"], "x": ["forged", "fail"]}, "ac": {"a": "fail"}, "pc": [9, 10]},
+ {"t": "The fix: the API picks the algorithm", "b": "The fixed verifier compares alg with RS256 first. HS256 is not RS256, so the same token gets 401 k2 is RS256 only. The token never chooses its check.", "w": "The verifier decides how to verify. Each key is tied to one algorithm.", "m": [["x", "a", 130, "alg: HS256, public key", "fail"], ["a", "x", 165, "401: k2 is RS256 only"]], "st": {"a": ["RS256 pinned", "ok"], "x": ["refused", "ok"]}, "pc": [7]}
+]};
+const X=[110,340,570,800];
+const fillFor={idle:"var(--line)",wait:"var(--wait)",ok:"var(--ok)",fail:"var(--fail)",undo:"var(--undo)",coord:"var(--coord)",svc:"var(--svc)"};
+const lineFor={fail:"var(--fail)",undo:"var(--undo)",ok:"var(--ok)"};
+let mode=Object.keys(steps)[0],i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const reduce=()=>matchMedia("(prefers-reduced-motion: reduce)").matches;
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc||[]);
+  if(view==="real"){hl=new Set();(s.pc||[]).forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(^|\s)((#|\/\/) .*|(#|\/\/)$)$/,'$1<span class="c">$2</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const A=actors[mode],s=steps[mode][i],keys=A.map(a=>a[0]);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  A.forEach(([k,label,col],n)=>{
+    $("lb-"+n).textContent=label;
+    $("bx-"+n).setAttribute("fill",fillFor[(s.ac&&s.ac[k])||col]);
+    const [v,c]=(s.st&&s.st[k])||["","idle"];
+    $("tx-"+n).textContent=v;$("st-"+n).setAttribute("fill",fillFor[c]);
+    $("st-"+n).setAttribute("opacity",v?"1":"0.4");$("tx-"+n).setAttribute("fill",c==="idle"?"var(--fg)":"#fff");
+  });
+  const g=$("msgs");g.innerHTML="";
+  s.m.forEach((m,k)=>{
+    const el=document.createElementNS("http://www.w3.org/2000/svg","g");el.setAttribute("class","msg");
+    if(m[0]==="band"){
+      const col=m[4]==="fail"?"var(--fail)":m[4]==="ok"?"var(--ok)":"var(--wait)";
+      el.innerHTML=`<rect x="20" y="${m[2]-16}" width="860" height="26" fill="var(--panel)" stroke="${col}" stroke-dasharray="6 4"/><text x="450" y="${m[2]+3}" text-anchor="middle" fill="var(--fg)" font-weight="700">${m[3]}</text>`;
+    }else{
+      const [a,b,y,txt,kind]=m;const x1=X[keys.indexOf(a)],x2=X[keys.indexOf(b)];
+      const col=lineFor[kind]||"var(--fg)";
+      el.innerHTML=`<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="${col}" marker-end="url(#arr)"/><text x="${(x1+x2)/2}" y="${y-6}" text-anchor="middle" fill="${col}" font-weight="700">${txt}</text>`;
+    }
+    g.appendChild(el);
+    const show=()=>el.classList.add("on");
+    reduce()?show():setTimeout(show,140*k+30);
+  });
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

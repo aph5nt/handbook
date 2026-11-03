@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autoscaling</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.box,.dot,.dim{transition:fill .35s,stroke .35s,transform .45s,opacity .35s}
+.sm{font-size:13px}
+@media (prefers-reduced-motion:reduce){.msg,.box,.dot,.dim{transition:none}}
+/*CODE-CSS*/
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+/*END-CODE-CSS*/
+</style>
+</head>
+<body>
+<main>
+  <h1>Autoscaling and the cool-down: add copies on a signal</h1>
+  <p class="lede">A graph sync worker pool drains a queue of block ranges. The line is the queue depth per worker, the squares are the workers. Watch the autoscaler add and remove workers, then watch a wrong metric and a missing cool-down break it. Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="good">Queue depth with a cool-down</button>
+    <button role="tab" aria-selected="false" data-mode="bad">Wrong metric and flapping: the failures</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">Workers, a queue depth line and a target line over time</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700" text-anchor="middle">
+        <text id="wk-t" x="20" y="34" text-anchor="start" fill="var(--fg)"></text>
+        <text id="st-t" x="880" y="34" text-anchor="end" fill="var(--fg)"></text>
+        <line x1="60" y1="300" x2="860" y2="300" stroke="var(--muted)" stroke-width="1.5"/>
+        <line x1="60" y1="110" x2="60" y2="300" stroke="var(--muted)" stroke-width="1.5"/>
+        <g class="sm" fill="var(--muted)"><text x="40" y="304">0</text><text x="40" y="241">20</text><text x="40" y="178">40</text><text x="40" y="115">60</text><text x="460" y="322">time, one mark per reading</text></g>
+        <line x1="60" y1="237" x2="860" y2="237" stroke="var(--wait)" stroke-width="2" stroke-dasharray="6 5"/>
+        <text x="856" y="230" text-anchor="end" class="sm" fill="var(--wait)">target: 20 per worker</text>
+        <text id="cap" x="450" y="352" class="sm" fill="var(--muted)"></text>
+      </g>
+      <g id="dyn" font-family="Atkinson Hyperlegible,system-ui"></g>
+      <g id="msgs" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <!--CODE-PANEL-->
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints its numbers, is in <code>handbook/code/12-autoscaling/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+<!--END-CODE-PANEL-->
+  <div class="legend">
+    <span style="--c:var(--coord)">queue depth per worker</span>
+    <span style="--c:var(--ok)">a worker serving</span>
+    <span style="--c:var(--wait)">a worker starting up, or the target</span>
+    <span style="--c:var(--fail)">the queue out of control</span>
+    <span style="--c:var(--undo)">CPU use, the wrong signal</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Kubernetes HPA (Horizontal Pod Autoscaler) on a custom metric such as queue depth through KEDA (Kubernetes Event-Driven Autoscaling). Cloud autoscaling groups behind a load balancer. Scale-to-zero batch workers. Never a database primary: adding a copy of state is resharding.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choices</h2>
+      <p>Scale on the signal that tracks the work: queue depth or requests in flight for an I/O-bound service, CPU only for CPU-bound work. Set a min that survives the start-up lag of a sudden spike, a max that protects the database behind, and a cool-down longer than the warm-up.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Scale on queue depth</th><th>Scale on CPU</th></tr>
+      <tr><td>Tracks</td><td>Work waiting to be done</td><td>How busy the processor is</td></tr>
+      <tr><td>I/O-bound worker</td><td>Rises with the backlog</td><td>Stays low while users wait</td></tr>
+      <tr><td>CPU-bound worker</td><td>Works</td><td>Works</td></tr>
+      <tr><td>Typical trap</td><td>No cool-down: flapping</td><td>Never scales up at all</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"I autoscale on the metric that tracks the work, usually queue depth, with a min that covers the start-up lag and a cool-down that stops flapping."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const N="var(--line)",C="var(--coord)",G="var(--ok)",Y="var(--wait)",R="var(--fail)",PN="var(--panel)",S="var(--svc)",U="var(--undo)";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const G1={q:[10,35,35,30,30,20,8,8,8],w:[2,2,4,4,4,4,4,4,3],s:[0,0,2,2,0,0,0,0,0]};
+const B1={q:[10,30,45,55,60,60],w:[2,2,2,2,2,2],cpu:[15,15,15,15,15,15]};
+const B2={q:[10,60,6,60,6,60,6],w:[2,6,2,6,2,6,2],s:[0,4,0,4,0,4,0]};
+const B3={q:[10,60,60,60,40,22],w:[2,2,8,8,8,8],s:[0,0,6,6,0,0]};
+const steps={
+good:[
+ {t:"A quiet night",b:"Every 30 s the autoscaler reads the queue per worker and applies one rule: desired = workers × queue per worker ÷ target, rounded up. Now 2 × 10 ÷ 20 = 1. The min of 2 wins, so 2 workers stay.",w:"The min is 2, so a sudden spike always finds at least two warm workers.",ser:G1,up:0,x:{"st-t":"min 2, max 8"}},
+ {t:"A busy hour: the queue climbs",b:"A busy market hour fills the chain with blocks. At t=30 s the queue per worker reads 35, so desired is 4. The rule says wait until it has been above target for 60 s. At t=60 s it is only 30 s: wait.",w:"The autoscaler waits a short while to be sure this is not a blip, then acts.",ser:G1,up:1,x:{"st-t":"above target"}},
+ {t:"Scale up: two more workers",b:"At t=90 s the queue has stayed at 35 for 60 s. Desired = 2 × 35 ÷ 20 = 3.5, rounded up to 4. The autoscaler adds 2 workers. They are yellow: they load their state for 180 s and are ready at t=270 s.",w:"A new worker helps only once it is ready. The gap between deciding and helping is the scale-up lag.",ser:G1,up:2,x:{"st-t":"adding 2, starting"}},
+ {t:"Cool-down: wait before the next change",b:"At t=120 s the queue reads 30, so the rule would now want 6. But a change happened at t=90 s, and the cool-down is 300 s. Until t=390 s every reading is ignored.",w:"Without the wait it would add more workers on a signal that is already about to fall.",ser:G1,up:4,x:{"st-t":"cool-down 5 min"}},
+ {t:"The queue drains",b:"At t=390 s the cool-down ends. Four ready workers have brought the queue per worker down to 8. Desired = 4 × 8 ÷ 20 = 2. The below-target clock starts.",w:"The metric now reflects the new capacity. Only now is it safe to decide again.",ser:G1,up:6,x:{"st-t":"below target"}},
+ {t:"Scale down slowly",b:"Scale-down needs 600 s below target, and then removes 1 worker, not all at once. At t=990 s the pool goes from 4 to 3.",w:"Scaling down slowly keeps a spare in case the burst comes back. It never goes below the min of 2.",ser:G1,up:8,x:{"st-t":"removed 1, min 2 kept"}}
+],
+bad:[
+ {t:"The wrong metric: CPU",b:"This pool runs the same rule on CPU, target 70%. The workers spend their time waiting on StarRocks writes, so CPU reads 15%. Desired = 2 × 15 ÷ 70 = 0.4, rounded up to 1, and the min keeps 2.",w:"An I/O-bound worker waits, it does not compute. CPU says all is well.",ser:B1,up:2,cpu:1,x:{"st-t":"CPU 15%: no action"}},
+ {t:"The failure that matters: the queue grows, nothing scales",b:"Over 10 minutes the queue per worker climbs from 10 to 60. The rule never sees the queue. It sees 15% CPU, so desired stays 2, and the data falls hours behind.",w:"Scale on queue depth or requests in flight for I/O-bound work. CPU only for work that is CPU-bound.",ser:B1,up:5,cpu:1,x:{"st-t":"CPU 15%: still no action","cap":"the purple line is CPU percent: low the whole time"}},
+ {t:"Flapping: no cool-down",b:"Another pool uses the queue rule with no 60 s wait and no cool-down. A reading of 60 gives desired 2 × 60 ÷ 20 = 6, so it adds 4. The next reading is 6, so desired = 6 × 6 ÷ 20 = 2, and it removes 4.",w:"Each start costs a warm-up. The pool spends its time starting and stopping instead of working.",ser:B2,up:3,x:{"st-t":"2, 6, 2, 6..."}},
+ {t:"Flapping, continued",b:"The sizes go 2, 6, 2, 6 every minute: 16 worker starts in 4 minutes, each with 180 s of warm-up that never finishes. Every removed worker drops its half-done ranges back on the queue.",w:"Fix: a cool-down longer than the warm-up, and scale down more slowly than up.",ser:B2,up:6,x:{"st-t":"2, 6, 2, 6..."}},
+ {t:"Scale-up lag: a spike faster than start-up",b:"A burst fills the queue at t=0. The good rule waits its 60 s, then scales to the max of 8 at t=60 s. Each new worker needs 180 s to be ready, so the queue sits full until t=240 s: 4 minutes.",w:"Autoscaling cannot catch a spike faster than a start. Keep the min high enough, or keep warm spares, for the spikes you know about.",ser:B3,up:5,x:{"st-t":"min 2 too low"}}
+]};
+function draw(s,g){
+  const ser=s.ser,n=s.up,X=k=>80+k*95,Y=q=>300-q*190/60;let h="";
+  const pts=ser.q.slice(0,n+1).map((q,k)=>`${X(k)},${Y(q)}`).join(" ");
+  h+=`<polyline points="${pts}" fill="none" stroke="var(--coord)" stroke-width="3"/>`;
+  ser.q.slice(0,n+1).forEach((q,k)=>h+=`<circle class="dot" cx="${X(k)}" cy="${Y(q)}" r="6" fill="${q>=55?R:C}"/>`);
+  if(s.cpu){const cp=ser.cpu.slice(0,n+1).map((c,k)=>`${X(k)},${Y(c*60/100)}`).join(" ");h+=`<polyline points="${cp}" fill="none" stroke="var(--undo)" stroke-width="3" stroke-dasharray="5 4"/>`;}
+  const w=ser.w[n],st=(ser.s&&ser.s[n])||0;$("cap").textContent=(s.x&&s.x.cap)||"";
+  for(let k=0;k<8;k++){const c=k<w-st?G:k<w?Y:N;h+=`<rect class="dot" x="${260+k*44}" y="52" width="34" height="34" rx="6" fill="${c}"/>`;}
+  g.innerHTML=h;$("wk-t").textContent=`Workers: ${w}`;
+}
+const modes=Object.keys(steps);let mode=modes[0],i=0,timer=null;
+const plain=c=>/--line|--panel|--bg/.test(c);
+function render(){
+  const s=steps[mode][i],d=(typeof D!=="undefined"&&D[mode])||{};
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll("[data-scene]").forEach(g=>g.style.display=g.dataset.scene.split(" ").includes(mode)?"":"none");
+  const f=Object.assign({},d.f,s.f),x=Object.assign({},d.x,s.x);
+  for(const k in f){const e=$(k);if(!e)continue;e.setAttribute("fill",f[k]);for(const suf of["-t","-l"]){const t=$(k+suf);if(t)t.setAttribute("fill",plain(f[k])?"var(--fg)":"#fff");}}
+  for(const k in x){const e=$(k);if(e)e.textContent=x[k];}
+  const dim=[...(d.dim||[]),...(s.dim||[])];
+  document.querySelectorAll(".dim").forEach(e=>e.style.opacity=dim.includes(e.id)?".18":"1");
+  const on=[];
+  const g=$("msgs");g.innerHTML="";
+  (s.m||[]).forEach(m=>{const[x1,y1,x2,y2,txt,c,dash,lx,ly]=m;const col=c||"var(--fg)";
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const v=Math.abs(x2-x1)<4,tx=v?x1+8:(x1+x2)/2,ty=v?(y1+y2)/2:Math.min(y1,y2)-6;
+    const X0=lx??tx,Y0=ly??ty;el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}" stroke-width="2.5" ${dash?'stroke-dasharray="6 4"':''} marker-end="url(#arr)"/><text x="${X0}" y="${Y0}" text-anchor="${v&&lx==null?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="5" paint-order="stroke" font-weight="700" font-size="14">${txt||""}</text>`;
+    g.appendChild(el);on.push(el);});
+  on.forEach((el,k)=>RM?el.classList.add("on"):setTimeout(()=>el.classList.add("on"),110*k+30));
+  $("dyn").innerHTML="";
+  if(typeof draw==="function")draw(s,$("dyn"));
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2800)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+//CODE-JS
+const CODE={"*": {"label": "Go", "pc": ["desired(workers, metric):", "  d = ceil(workers * metric / target)      # target 20 per worker", "  return clamp(d, min 2, max 8)", "every 30 s: tick(now, workers, metric):", "  if now - lastChange < coolDown: keep workers   # 300 s", "  want = desired(workers, metric)", "  if want > workers:", "    if above target for less than window: wait   # 60 s", "    lastChange = now; return want", "  if want < workers:", "    if below target for less than downAfter: wait # 600 s", "    lastChange = now", "    if oneByOne: return workers - 1", "    return want", "  return workers"], "real": ["func (s *Scaler) Desired(cur int, metric float64) int {", "\td := int(math.Ceil(float64(cur) * metric / s.Target))", "\treturn max(s.Min, min(s.Max, d))", "}", "", "func (s *Scaler) Tick(now, cur int, metric float64) int {", "\tif now-s.last < s.CoolDown {", "\t\treturn cur // cool-down: let the last change show in the metric", "\t}", "\twant := s.Desired(cur, metric)", "\tswitch {", "\tcase want > cur:", "\t\ts.below = -1", "\t\tif s.above < 0 {", "\t\t\ts.above = now", "\t\t}", "\t\tif now-s.above < s.Window {", "\t\t\treturn cur // maybe a blip: wait", "\t\t}", "\t\ts.last, s.above = now, -1", "\t\treturn want", "\tcase want < cur:", "\t\ts.above = -1", "\t\tif s.below < 0 {", "\t\t\ts.below = now", "\t\t}", "\t\tif now-s.below < s.DownAfter {", "\t\t\treturn cur", "\t\t}", "\t\ts.last, s.below = now, -1", "\t\tif s.OneByOne {", "\t\t\treturn cur - 1 // keep spares in case the burst comes back", "\t\t}", "\t\treturn want", "\t}", "\ts.above, s.below = -1, -1", "\treturn cur", "}"], "map": {"1": [1], "2": [2], "3": [3], "4": [6], "5": [7, 8], "6": [10], "7": [12], "8": [14, 15, 16, 17, 18], "9": [20, 21], "10": [22], "11": [24, 25, 26, 27, 28], "12": [30], "13": [31, 32], "14": [34], "15": [37]}}},PCS={"good": [[1, 2, 3], [6, 7, 8], [2, 7, 9], [5], [5, 6, 10], [11, 12, 13]], "bad": [[1, 2, 3], [2, 3, 15], [5, 7, 9, 10, 14], [5, 13], [8, 9]]};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE["*"],pc=((PCS[mode]||[])[i])||[];
+  const v=(view==="real"&&c.real)?"real":"pc",lines=v==="pc"?c.pc:c.real;
+  let hl=new Set(pc);
+  if(v==="real"){hl=new Set();pc.forEach(n=>((c.map||{})[n]||[]).forEach(k=>hl.add(k)));}
+  const rt=$("realtab");if(rt){rt.textContent=c.label||"Go";rt.disabled=!c.real;}
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+const _render0=render;render=function(){_render0();drawCode();};
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+drawCode();
+//END-CODE-JS
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

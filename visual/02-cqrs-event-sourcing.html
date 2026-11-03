@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CQRS and event sourcing</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,width .5s}
+.node,.arrow{transition:opacity .35s}
+.route{fill:none;stroke-width:3;transition:stroke .35s}
+@media (prefers-reduced-motion:reduce){.box,.route,.node,.arrow{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.arrow text{paint-order:stroke;stroke:var(--panel);stroke-width:5px;stroke-linejoin:round}
+[hidden]{display:none!important}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+#codenote:empty{display:none}
+#codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>CQRS and event sourcing</h1>
+  <p class="lede">One event source, the chain, feeds two read models. The warehouse answers "all swaps of this pool on this day". The graph answers "where did this address's money go". Press <b>Next</b>.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="two" id="tab-two">Two read models</button>
+    <button role="tab" aria-selected="false" data-mode="bug" id="tab-bug">A projection bug</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">The chain feeds the indexer and the warehouse, and the graph sync builds the graph from the warehouse</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700">
+        <g class="scene" id="scene-cq">
+          <g class="node" id="n-ch" data-c="o"><rect class="box" id="r-ch" x="20" y="150" width="130" height="70" rx="8"/><text id="t-chl" x="85.0" y="182" text-anchor="middle" font-size="15">Chain</text><text id="t-chs" x="85.0" y="198" text-anchor="middle" font-size="12" font-weight="400">event log</text></g>
+          <g class="node" id="n-ix" data-c="o"><rect class="box" id="r-ix" x="190" y="150" width="120" height="70" rx="8"/><text id="t-ixl" x="250.0" y="182" text-anchor="middle" font-size="15">Indexer</text><text id="t-ixs" x="250.0" y="198" text-anchor="middle" font-size="12" font-weight="400">folds events</text></g>
+          <g class="node" id="n-wh" data-c="o"><rect class="box" id="r-wh" x="350" y="140" width="170" height="90" rx="8"/><text id="t-whl" x="435.0" y="182" text-anchor="middle" font-size="15">Warehouse</text><text id="t-whs" x="435.0" y="198" text-anchor="middle" font-size="12" font-weight="400">swaps by pool and day</text></g>
+          <g class="node" id="n-gs" data-c="o"><rect class="box" id="r-gs" x="560" y="150" width="120" height="70" rx="8"/><text id="t-gsl" x="620.0" y="182" text-anchor="middle" font-size="15">Graph sync</text><text id="t-gss" x="620.0" y="198" text-anchor="middle" font-size="12" font-weight="400">projects</text></g>
+          <g class="node" id="n-gr" data-c="o"><rect class="box" id="r-gr" x="720" y="140" width="160" height="90" rx="8"/><text id="t-grl" x="800.0" y="182" text-anchor="middle" font-size="15">Graph</text><text id="t-grs" x="800.0" y="198" text-anchor="middle" font-size="12" font-weight="400">links by address</text></g>
+          <g class="arrow" id="a-e1" data-c="x"><path class="route" d="M150 185 L186 185" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-e2" data-c="x"><path class="route" d="M310 185 L346 185" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-e3" data-c="x"><path class="route" d="M520 185 L556 185" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-e4" data-c="x"><path class="route" d="M680 185 L716 185" marker-end="url(#arr)"/></g>
+          <g class="node" id="n-q1" data-c="h"><rect class="box" id="r-q1" x="330" y="20" width="210" height="56" rx="8"/><text id="t-q1l" x="435.0" y="44" text-anchor="middle" font-size="15">All swaps of pool P</text><text id="t-q1s" x="435.0" y="62" text-anchor="middle" font-size="12" font-weight="400">on 2026-10-06</text></g>
+          <g class="node" id="n-q2" data-c="h"><rect class="box" id="r-q2" x="680" y="20" width="200" height="56" rx="8"/><text id="t-q2l" x="780.0" y="44" text-anchor="middle" font-size="15">Where did it go?</text><text id="t-q2s" x="780.0" y="62" text-anchor="middle" font-size="12" font-weight="400">money from one address</text></g>
+          <g class="arrow" id="a-aq1" data-c="x"><path class="route" d="M435 76 L435 136" marker-end="url(#arr)"/></g>
+          <g class="arrow" id="a-aq2" data-c="x"><path class="route" d="M800 76 L800 136" marker-end="url(#arr)"/></g>
+          <text id="t-lag" x="620" y="128" text-anchor="middle" font-size="14" font-weight="400" fill="var(--muted)"></text>
+          <g class="arrow" id="a-rb" data-c="x"><path class="route" d="M435 230 C435 320 800 320 800 234" stroke-dasharray="6 5" marker-end="url(#arr)"/><text id="t-rbl" x="617" y="312" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">rebuild from the tables</text></g>
+          <g class="arrow" id="a-rp" data-c="x"><path class="route" d="M85 220 C85 300 250 300 250 224" stroke-dasharray="6 5" marker-end="url(#arr)"/><text id="t-rpl" x="168" y="314" text-anchor="middle" font-size="13" font-weight="400" fill="var(--fg)">replay from block 1</text></g>
+        </g>
+        <text id="t-meter" x="450" y="366" text-anchor="middle" fill="var(--muted)" font-weight="400" font-size="14"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and Go. The full program, which replays this story and prints its numbers, is in <code>handbook/code/02-cqrs-event-sourcing/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <p class="how" id="codenote"></p>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">the event source, or a write that flows</span>
+    <span style="--c:var(--coord)">code that builds a model, or a question</span>
+    <span style="--c:var(--svc)">a read model</span>
+    <span style="--c:var(--wait)">lagging or hand-patched</span>
+    <span style="--c:var(--fail)">wrong answer</span>
+    <span style="--c:var(--undo)">rebuilding</span>
+    <span style="--c:var(--line)">not built yet, or dropped</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it: money tracing</h2>
+      <p>Money tracing and audit are where history is the product. The warehouse answers questions by pool and day. The graph answers questions by address and hop. Both are built from the same chain events.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet it: a search index</h2>
+      <p>A search index or a graph built from a warehouse is CQRS without the name. The practical choice: after every change in its shape, rebuild it from the tables. Use CQRS only when reads differ from writes, or history is the product.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>CQRS with projections</th><th>One model (CRUD: create, read, update, delete)</th></tr>
+      <tr><td>Models</td><td>One write, many read</td><td>One for both</td></tr>
+      <tr><td>Fit</td><td>Reads differ from writes, or history matters</td><td>Forms that read what they wrote</td></tr>
+      <tr><td>A bug in a read</td><td>Rebuild the projection</td><td>Repair the rows</td></tr>
+      <tr><td>Freshness</td><td>Reads lag; show the lag</td><td>Read your own write at once</td></tr>
+      <tr><td>Cost</td><td>Double the surface, plus the lag</td><td>Low</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"CQRS gives each question its own read model, and event sourcing lets you rebuild any of them by replay."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* Each step lists only what changes: n = box colour, a = arrow colour, x = text, wd = width, m = meter. Steps add up from step 1 of the tab. */
+const steps={
+two:[
+ {"t": "The chain is the event log", "b": "Every block adds events. In this story each block holds one swap and one transfer, so blocks 1 to 120 hold 240 events. Nothing is ever edited.", "w": "Event sourcing stores events, not state. State is a fold over the events, and the chain already works this way.", "n": {"ch": "ok"}, "pc": [2]},
+ {"t": "The indexer builds the first read model", "b": "fold walks the events after its checkpoint. A swap goes to swaps[pool, day]. A transfer goes to transfers. Blocks 1 to 120 give 120 swap rows and 120 transfer rows. The checkpoint becomes 120.", "w": "CQRS (Command Query Responsibility Segregation): the model that takes writes and the model that answers reads are separate.", "n": {"ix": "c", "wh": "v"}, "a": {"e1": "ok", "e2": "ok"}, "pc": [1, 2, 3, 4, 5]},
+ {"t": "Question one: the warehouse answers", "b": "An analyst asks for every swap of pool P on 2026-10-06. The warehouse looks up one key: P and that day. It reads 30 rows of 120.", "w": "A read model shaped for its question answers it with a narrow read.", "n": {"q1": "c"}, "a": {"aq1": "ok"}, "m": "rows read: 30 of 120", "pc": [6]},
+ {"t": "The graph sync builds a second read model", "b": "project walks the transfer rows after its own position. Each row adds its amount to the link from the sender to the receiver. It has reached block 112.", "w": "Each read model is a projection. Same facts, a different shape.", "n": {"gs": "c", "gr": "v"}, "a": {"e3": "ok", "e4": "ok"}, "pc": [7, 8, 9, 11]},
+ {"t": "Question two: the graph answers", "b": "An investigator asks where the money of address A went. walk reads A's links: B and C. Then their links: D and E. That is one lookup per hop. The tables would need one join per hop.", "w": "Different questions want different shapes. That is why there are two read models.", "n": {"q2": "c"}, "a": {"aq2": "ok"}, "m": "hop 1: B, C. hop 2: D, E", "pc": [12]},
+ {"t": "Reads lag behind writes", "b": "The graph sync runs after the indexer. The warehouse is at block 120. The graph is at block 112. The answer says so: graph is 8 blocks behind.", "w": "Show the lag as freshness. Hidden lag makes a correct answer look wrong.", "n": {"gs": "w"}, "x": {"lag": "graph is 8 blocks behind"}, "m": "freshness shown with every answer", "pc": [13]}
+],
+bug:[
+ {"t": "A bug in a projection", "b": "The rule in project adds a transfer twice when it sits inside a swap. Up to block 120, the warehouse says A sent 84. The graph says A sent 107.", "w": "Only the projection is wrong. The facts underneath are fine.", "n": {"ch": "ok", "ix": "c", "wh": "v", "gs": "c", "gr": "f"}, "a": {"e1": "ok", "e2": "ok", "e3": "ok", "e4": "f"}, "x": {"grs": "links counted twice"}, "m": "A sent: warehouse 84, graph 107", "pc": [10]},
+ {"t": "Tempting: repair the graph by hand", "b": "A one-off script subtracts the extra from the links that exist now. The graph shows 84 for A again. The rule in project is unchanged.", "w": "The rule is still wrong. A hand repair treats the symptom.", "n": {"gr": "w"}, "x": {"grs": "patched by hand"}, "m": "A sent: graph 84", "pc": [14, 10]},
+ {"t": "The next sync breaks it again", "b": "fold takes blocks 121 to 150. project runs over them with the same rule. The warehouse says A sent 90. The graph says 91. The patch never touched the new links.", "w": "The bug lives in the projection code, not in the data.", "n": {"gs": "f", "gr": "f"}, "x": {"grs": "wrong again"}, "m": "A sent: warehouse 90, graph 91", "pc": [8, 9, 10]},
+ {"t": "Fix the rule, drop the graph", "b": "The double add is removed from the rule in project. The old graph is thrown away.", "w": "A read model is disposable. It can always be built again from the facts.", "n": {"gs": "c", "gr": "o"}, "a": {"e4": "x"}, "x": {"gss": "rule fixed", "grs": "dropped"}, "pc": [15]},
+ {"t": "Rebuild from the tables", "b": "rebuild starts an empty graph and runs project from the first warehouse row. It reads 150 transfer rows with the fixed rule.", "w": "Fixing a projection means rebuilding it, not repairing its data.", "n": {"gr": "u"}, "a": {"rb": "u"}, "x": {"grs": "rebuilding"}, "pc": [15, 8, 9]},
+ {"t": "The graph is right again", "b": "The rebuilt graph says A sent 90. The warehouse says 90. No hand-written patch exists to go stale.", "w": "The facts were never touched, so the rebuild is safe to run at any time.", "n": {"gr": "v"}, "a": {"rb": "x", "e4": "ok"}, "x": {"grs": "links by address"}, "m": "A sent: warehouse 90, graph 90", "pc": [15]},
+ {"t": "The trap: replay with no snapshot", "b": "Pure event sourcing would decode every chain event again, from block 1. At block 150 that is 300 events. At block 300 it is 600. The warehouse acts as the snapshot: a saved state to rebuild from, here 150 rows.", "w": "Event sourcing without snapshots makes replay time grow forever. And for an ordinary form app, all of this doubles the work for nothing.", "n": {"ch": "w"}, "a": {"rp": "w"}, "x": {"chs": "grows with every block"}, "m": "replay from block 1: 300 events at 150, 600 at 300", "pc": [16]}
+]};
+const SCENE={"two": "cq", "bug": "cq"};
+const CODE={
+ two:{label:"Go",why:"",
+  pc:[
+   "fold(events, to):                             # the indexer",
+   "  for each event after the checkpoint, up to to:",
+   "    a swap: append to swaps[pool, day]        # shaped for question one",
+   "    a transfer: append to transfers",
+   "  checkpoint = to",
+   "question one = swaps[P, 2026-10-06]           # one key, a narrow read",
+   "project(warehouse, to):                       # the graph sync",
+   "  for each transfer row after my position, up to to:",
+   "    links[from][to] += amount",
+   "    if bug and the transfer is inside a swap: add it again",
+   "  position = to",
+   "walk(a, hops): follow links one hop at a time # question two, no join",
+   "lag = warehouse checkpoint - graph position   # shown as freshness",
+   "# hand patch: subtract the extra from today's links, the rule stays wrong",
+   "rebuild: fix the rule, drop the graph, project from the first warehouse row",
+   "replay from block 1 = decode every chain event again  # grows every block"],
+  real:[
+   "func (w *Warehouse) fold(ev []Event, to int) {",
+   "\tfor _, e := range ev {",
+   "\t\tif e.block <= w.checkpoint || e.block > to {",
+   "\t\t\tcontinue",
+   "\t\t}",
+   "\t\tif e.kind == \"swap\" {",
+   "\t\t\tk := e.pool + \"|\" + day(e.block) // one key per pool and day",
+   "\t\t\tw.swaps[k] = append(w.swaps[k], e)",
+   "\t\t} else {",
+   "\t\t\tw.transfers = append(w.transfers, e)",
+   "\t\t}",
+   "\t}",
+   "\tw.checkpoint = to // folded up to here",
+   "}",
+   "",
+   "func (g *Graph) project(w *Warehouse, to int) {",
+   "\tfor _, t := range w.transfers {",
+   "\t\tif t.block <= g.position || t.block > to {",
+   "\t\t\tcontinue",
+   "\t\t}",
+   "\t\tg.links[t.from][t.to] += t.amount",
+   "\t\tif g.bug && t.viaSwap {",
+   "\t\t\tg.links[t.from][t.to] += t.amount // the bug: counted twice",
+   "\t\t}",
+   "\t}",
+   "\tg.position = to",
+   "}",
+   "",
+   "func rebuild(w *Warehouse) *Graph {",
+   "\tg := newGraph(false)       // the old graph is dropped, the rule is fixed",
+   "\tg.project(w, w.checkpoint) // from the first warehouse row",
+   "\treturn g",
+   "}",
+   "",
+   "func (g *Graph) walk(a string, hops int) (out [][]string) {",
+   "\tseen, frontier := map[string]bool{a: true}, []string{a}",
+   "\tfor h := 0; h < hops; h++ {",
+   "\t\tvar next []string",
+   "\t\tfor _, f := range frontier {",
+   "\t\t\tfor to := range g.links[f] { // one lookup per hop, no join",
+   "\t\t\t\tif !seen[to] {",
+   "\t\t\t\t\tseen[to], next = true, append(next, to)",
+   "\t\t\t\t}",
+   "\t\t\t}",
+   "\t\t}",
+   "\t\tout, frontier = append(out, next), next",
+   "\t}",
+   "\treturn",
+   "}"],
+  map:{"13": [13, 26], "16": [1, 2], "1": [1], "2": [2, 3, 4, 5], "3": [6, 7, 8], "4": [9, 10, 11], "5": [13], "6": [7], "7": [16], "8": [17, 18, 19, 20], "9": [21], "10": [22, 23, 24], "11": [26], "12": [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49], "15": [29, 30, 31, 32, 33]}},
+ bug:{label:"Go",why:"",
+  pc:[
+   "fold(events, to):                             # the indexer",
+   "  for each event after the checkpoint, up to to:",
+   "    a swap: append to swaps[pool, day]        # shaped for question one",
+   "    a transfer: append to transfers",
+   "  checkpoint = to",
+   "question one = swaps[P, 2026-10-06]           # one key, a narrow read",
+   "project(warehouse, to):                       # the graph sync",
+   "  for each transfer row after my position, up to to:",
+   "    links[from][to] += amount",
+   "    if bug and the transfer is inside a swap: add it again",
+   "  position = to",
+   "walk(a, hops): follow links one hop at a time # question two, no join",
+   "lag = warehouse checkpoint - graph position   # shown as freshness",
+   "# hand patch: subtract the extra from today's links, the rule stays wrong",
+   "rebuild: fix the rule, drop the graph, project from the first warehouse row",
+   "replay from block 1 = decode every chain event again  # grows every block"],
+  real:[
+   "func (w *Warehouse) fold(ev []Event, to int) {",
+   "\tfor _, e := range ev {",
+   "\t\tif e.block <= w.checkpoint || e.block > to {",
+   "\t\t\tcontinue",
+   "\t\t}",
+   "\t\tif e.kind == \"swap\" {",
+   "\t\t\tk := e.pool + \"|\" + day(e.block) // one key per pool and day",
+   "\t\t\tw.swaps[k] = append(w.swaps[k], e)",
+   "\t\t} else {",
+   "\t\t\tw.transfers = append(w.transfers, e)",
+   "\t\t}",
+   "\t}",
+   "\tw.checkpoint = to // folded up to here",
+   "}",
+   "",
+   "func (g *Graph) project(w *Warehouse, to int) {",
+   "\tfor _, t := range w.transfers {",
+   "\t\tif t.block <= g.position || t.block > to {",
+   "\t\t\tcontinue",
+   "\t\t}",
+   "\t\tg.links[t.from][t.to] += t.amount",
+   "\t\tif g.bug && t.viaSwap {",
+   "\t\t\tg.links[t.from][t.to] += t.amount // the bug: counted twice",
+   "\t\t}",
+   "\t}",
+   "\tg.position = to",
+   "}",
+   "",
+   "func rebuild(w *Warehouse) *Graph {",
+   "\tg := newGraph(false)       // the old graph is dropped, the rule is fixed",
+   "\tg.project(w, w.checkpoint) // from the first warehouse row",
+   "\treturn g",
+   "}",
+   "",
+   "func (g *Graph) walk(a string, hops int) (out [][]string) {",
+   "\tseen, frontier := map[string]bool{a: true}, []string{a}",
+   "\tfor h := 0; h < hops; h++ {",
+   "\t\tvar next []string",
+   "\t\tfor _, f := range frontier {",
+   "\t\t\tfor to := range g.links[f] { // one lookup per hop, no join",
+   "\t\t\t\tif !seen[to] {",
+   "\t\t\t\t\tseen[to], next = true, append(next, to)",
+   "\t\t\t\t}",
+   "\t\t\t}",
+   "\t\t}",
+   "\t\tout, frontier = append(out, next), next",
+   "\t}",
+   "\treturn",
+   "}"],
+  map:{"13": [13, 26], "16": [1, 2], "1": [1], "2": [2, 3, 4, 5], "3": [6, 7, 8], "4": [9, 10, 11], "5": [13], "6": [7], "7": [16], "8": [17, 18, 19, 20], "9": [21], "10": [22, 23, 24], "11": [26], "12": [35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49], "15": [29, 30, 31, 32, 33]}}};
+let mode="two";
+const COL={c:"var(--coord)",v:"var(--svc)",ok:"var(--ok)",f:"var(--fail)",w:"var(--wait)",u:"var(--undo)",o:"var(--line)",m:"var(--muted)",h:"var(--line)",x:"var(--line)"};
+const INK={o:"var(--fg)",w:"#1f2320",h:"var(--fg)"};
+let i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+document.querySelectorAll("text[id]").forEach(t=>t.dataset.orig=t.textContent);
+document.querySelectorAll("rect[id]").forEach(r=>r.dataset.w0=r.getAttribute("width"));
+function at(){const st={n:{},a:{},x:{},wd:{}};for(let k=0;k<=i;k++){const s=steps[mode][k];for(const key in st)Object.assign(st[key],s[key]||{});if(s.m!==undefined)st.x.meter=s.m;}return st;}
+function render(){
+  const s=steps[mode][i],st=at();
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  document.querySelectorAll(".scene").forEach(g=>g.style.display=g.id==="scene-"+SCENE[mode]?"":"none");
+  document.querySelectorAll("g.node").forEach(g=>{const c=st.n[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="h"?0:1;
+    g.querySelector("rect").setAttribute("fill",COL[c]);g.querySelectorAll("text").forEach(t=>t.setAttribute("fill",INK[c]||"#fff"));});
+  document.querySelectorAll("g.arrow").forEach(g=>{const c=st.a[g.id.slice(2)]||g.dataset.c;g.style.opacity=c==="x"?0:1;g.querySelector("path").setAttribute("stroke",COL[c]);});
+  document.querySelectorAll("text[id]").forEach(t=>{const k=t.id.slice(2);t.textContent=k in st.x?st.x[k]:t.dataset.orig;});
+  document.querySelectorAll("rect[id]").forEach(r=>{const k=r.id.slice(2);r.setAttribute("width",k in st.wd?st.wd[k]:r.dataset.w0);});
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=CODE[mode]||CODE[Object.keys(CODE)[0]],s=steps[mode][i],pc=s.pc||[];
+  const real=view==="real"&&c.real.length;
+  const lines=real?c.real:c.pc;
+  let hl=new Set(pc);
+  if(real){hl=new Set();pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codenote").textContent=view==="real"&&!c.real.length?c.why:"";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

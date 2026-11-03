@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch, stream, watermarks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"],.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.stage svg{min-width:720px}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s}
+.wm{transition:transform .5s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.wm{transition:none}}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Batch versus stream, and the late event</h1>
+  <p class="lede">An exchange board shows the number of swaps per minute. Each swap has an <b>event time</b> (when it happened on the chain) and an <b>arrival time</b> (when the counter saw it). A slow node can deliver a swap a minute late. Press <b>Next</b>: watch two lines move, and watch the code line that runs light up below.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="stream">Stream: how a late swap is handled</button>
+    <button role="tab" aria-selected="false" data-mode="clock">Failure: one bad clock</button>
+    <button role="tab" aria-selected="false" data-mode="batch">Batch at day end</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 430" aria-labelledby="stage-title">
+      <title id="stage-title">Swaps placed by event time into one-minute windows, with the watermark and the grace line</title>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="14" fill="var(--muted)" text-anchor="middle">
+        <rect x="80" y="40" width="240" height="210" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <rect x="320" y="40" width="240" height="210" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <rect x="560" y="40" width="240" height="210" fill="none" stroke="var(--line)" stroke-width="2"/>
+        <text x="200" y="30" font-weight="700" fill="var(--fg)">window 12:00</text>
+        <text x="440" y="30" font-weight="700" fill="var(--fg)">window 12:01</text>
+        <text x="680" y="30" font-weight="700" fill="var(--fg)">window 12:02</text>
+        <text x="80" y="268">12:00</text><text x="320" y="268">12:01</text><text x="560" y="268">12:02</text><text x="800" y="268">12:03</text>
+        <text x="450" y="290">event time, when the swap happened</text>
+      </g>
+      <g id="chips" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" text-anchor="middle"></g>
+      <g id="dots" font-family="Atkinson Hyperlegible,system-ui" font-size="12"></g>
+      <g id="pg" class="wm">
+        <line x1="0" y1="36" x2="0" y2="254" stroke="var(--undo)" stroke-width="3" stroke-dasharray="3 4"/>
+        <text id="pg-t" x="6" y="74" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" fill="var(--undo)"></text>
+      </g>
+      <g id="wm" class="wm">
+        <line x1="0" y1="36" x2="0" y2="254" stroke="var(--coord)" stroke-width="3" stroke-dasharray="8 5"/>
+        <text id="wm-t" x="6" y="54" font-family="Atkinson Hyperlegible,system-ui" font-size="13" font-weight="700" fill="var(--coord)"></text>
+      </g>
+      <g font-family="Atkinson Hyperlegible,system-ui" font-size="15">
+        <text x="20" y="362" fill="var(--muted)">board (the sink, one row per minute):</text>
+        <text id="board" x="300" y="362" font-weight="700" fill="var(--ok)"></text>
+        <text x="20" y="388" fill="var(--muted)">side output late_swaps:</text>
+        <text id="side" x="300" y="388" font-weight="700" fill="var(--fail)"></text>
+        <text id="log" x="20" y="418" font-weight="700" fill="var(--fg)"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, with a run of these exact swaps, is in <code>handbook/code/16-watermarks/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--fg)">swap on time</span>
+    <span style="--c:var(--undo)">swap late, inside the grace</span>
+    <span style="--c:var(--fail)">swap too late, or a bad clock</span>
+    <span style="--c:var(--coord)">watermark: newest event time minus 10 s</span>
+    <span style="--c:var(--undo)">grace line: watermark minus 60 s</span>
+    <span style="--c:var(--wait)">window open</span>
+    <span style="--c:var(--ok)">window fired, state kept</span>
+  </div>
+
+  <div class="card">
+    <h2>The two numbers you choose</h2>
+    <p><b>Watermark delay, 10 s here.</b> How long the counter waits for stragglers before the first answer. Bigger means fewer late swaps, and a slower board.</p>
+    <p><b>Allowed lateness, 60 s here.</b> How long a fired window keeps its count in memory, so a late swap can still correct it. Bigger means more corrections, and more memory.</p>
+    <p><b>After both.</b> The swap goes to a side output. A nightly batch job recounts the day from storage, so the final numbers are exact.</p>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet a stream</h2>
+      <p>Flink, Kafka Streams or Spark Structured Streaming counting events per window. Flink names the same two knobs: <code>forBoundedOutOfOrderness(10 s)</code> and <code>allowedLateness(60 s)</code>, plus <code>sideOutputLateData</code>. A Go chain indexer is a stream too: it reads up to the head minus a safety depth, so that depth is its watermark and it never sees late data.</p>
+    </div>
+    <div class="card">
+      <h2>Where you meet a batch</h2>
+      <p>A nightly job that sums the day, moves old partitions to cheaper disks, or writes a quality report. A rerun replaces the whole day partition, so it is idempotent. It is also the safety net that catches everything the stream sent to the side output.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Batch</th><th>Stream</th></tr>
+      <tr><td>When you get the answer</td><td>After the run: hours</td><td>As the watermark passes: seconds</td></tr>
+      <tr><td>Late data</td><td>No problem, it is in storage before the run</td><td>Inside the grace: update and overwrite. After it: side output</td></tr>
+      <tr><td>State</td><td>None between runs</td><td>Each window is kept until the grace line passes it</td></tr>
+      <tr><td>The sink</td><td>Replace the partition</td><td>Upsert by window key, never append</td></tr>
+      <tr><td>Fits</td><td>Reports, tiering, nightly quality</td><td>Live boards, alerts, chain follow</td></tr>
+      <tr><td>Interview line</td><td colspan="2">"A window fires when the watermark passes its end, keeps its state for an allowed lateness so a late event can overwrite the result by key, and anything later goes to a side output that a batch job reconciles."</td></tr>
+    </table></div>
+  </div>
+</main>
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+// event time in seconds after 12:00:00. x = 80 + 4 * seconds
+const X=s=>80+4*s;
+const fmt=s=>{const m=Math.floor(s/60),r=s%60;return `12:0${m}:${String(r).padStart(2,"0")}`;};
+const E=(et,st)=>({et,st:st||"on"});
+const W=(c,s)=>({c,s});
+const code={
+ stream:{label:"Go",
+  pc:["on each swap s, arriving at time now:",
+"  if s.eventTime > now + 5s: quarantine(s); return   # a bad clock",
+"  maxSeen = max(maxSeen, s.eventTime)",
+"  watermark = maxSeen - 10s               # wait 10 s for stragglers",
+"  w = window of s.eventTime               # 12:00:40 -> window 12:00",
+"  if watermark >= w.end + 60s:            # the grace is over, state is gone",
+"    sideOutput(\"late_swaps\", s); return  # the nightly batch fixes it",
+"  state[w].count += 1                     # open, or fired and still kept",
+"  if state[w].fired:",
+"    board.upsert(w, state[w].count)       # same key: 3 becomes 4",
+"  for each window v in state:",
+"    if not v.fired and watermark >= v.end:",
+"      board.upsert(v, v.count); v.fired = true   # the on-time answer",
+"    if watermark >= v.end + 60s:",
+"      delete state[v]                     # free the memory"],
+  real:["const (",
+"\toutOfOrder      = 10 * time.Second // the watermark trails the newest swap",
+"\tallowedLateness = 60 * time.Second // a fired window keeps its state this long",
+"\tmaxClockSkew    = 5 * time.Second  // further ahead than this is a bad clock",
+")",
+"",
+"func (c *Counter) OnSwap(eventTime, arrival time.Time) {",
+"\tif eventTime.After(arrival.Add(maxClockSkew)) {",
+"\t\tc.quarantine = append(c.quarantine, eventTime)",
+"\t\treturn",
+"\t}",
+"\tif eventTime.After(c.maxSeen) {",
+"\t\tc.maxSeen = eventTime",
+"\t}",
+"\twatermark := c.maxSeen.Add(-outOfOrder)",
+"\tstart := eventTime.Truncate(time.Minute)",
+"\tend := start.Add(time.Minute)",
+"",
+"\tif !watermark.Before(end.Add(allowedLateness)) {",
+"\t\tc.late = append(c.late, eventTime) // its state is gone",
+"\t\treturn",
+"\t}",
+"\tw, ok := c.windows[start]",
+"\tif !ok {",
+"\t\tw = &Window{}",
+"\t\tc.windows[start] = w",
+"\t}",
+"\tw.Count++",
+"\tif w.Fired {",
+"\t\tc.board[start] = w.Count // late, inside the grace: overwrite the same key",
+"\t}",
+"\tfor s, v := range c.windows {",
+"\t\tvEnd := s.Add(time.Minute)",
+"\t\tif !v.Fired && !watermark.Before(vEnd) {",
+"\t\t\tc.board[s] = v.Count // the on-time answer",
+"\t\t\tv.Fired = true",
+"\t\t}",
+"\t\tif !watermark.Before(vEnd.Add(allowedLateness)) {",
+"\t\t\tdelete(c.windows, s) // grace over: free the memory",
+"\t\t}",
+"\t}",
+"}"],
+  map:{1:[7],2:[8,9,10,11],3:[12,13,14],4:[15],5:[16,17],6:[19],7:[20,21],8:[23,24,25,26,27,28],9:[29],10:[30],11:[32,33],12:[34],13:[35,36],14:[38],15:[39]}},
+ batch:{label:"SQL",
+  pc:["on every arrival: append s to partition(day of s.eventTime)   # no counting yet",
+"every night at 00:05:",
+"  rows = read partition(yesterday)            # every swap, late ones too",
+"  counts = group rows by minute(eventTime), count them",
+"  replace partition(yesterday) with counts    # a rerun gives the same answer"],
+  real:["-- on every arrival: append, no counting",
+"INSERT INTO swaps (event_time, day, pool) VALUES (?, ?, ?);",
+"-- every night at 00:05, for yesterday",
+"INSERT OVERWRITE swaps_per_minute PARTITION (day = '2026-09-24')",
+"SELECT date_trunc('minute', event_time) AS minute,",
+"       count(*)                          AS swaps",
+"FROM   swaps",
+"WHERE  day = '2026-09-24'",
+"GROUP  BY 1;"],
+  map:{1:[1,2],2:[3],3:[7,8],4:[5,6,9],5:[4]}}
+};
+code.clock=code.stream;
+const steps={
+"stream":[
+ {t:"Two lines decide everything",b:"Swaps are counted per minute of event time. The blue watermark is the newest event time seen, minus 10 seconds. The purple grace line is the watermark minus 60 seconds. A window fires when the watermark passes its end. It keeps its count until the grace line passes its end.",w:"Watch where each swap lands against the two lines. That position is the whole decision.",ev:[],wm:null,win:[W(0,"open"),W(0,"open"),W(0,"open")],board:"",side:"",log:"",pc:[4,6]},
+ {t:"Three swaps arrive on time",b:"Swaps made at 12:00:10, 12:00:30 and 12:00:50 arrive a second or two later. Each one moves maxSeen forward. maxSeen is 12:00:50, so the watermark is 12:00:40. Each swap adds 1 to the state of window 12:00.",w:"Window 12:00 holds 3, but the watermark has not passed 12:01. More swaps for 12:00 may still be on the way, so nothing is shown yet.",ev:[E(10),E(30),E(50)],wm:40,win:[W(3,"open"),W(0,"open"),W(0,"open")],board:"",side:"",log:"arrived 12:00:52: swap at 12:00:50",pc:[3,4,5,8]},
+ {t:"The watermark passes 12:01: window 12:00 fires",b:"A swap made at 12:01:15 arrives. The watermark moves to 12:01:05, past the end of window 12:00. The loop finds window 12:00 not fired with the watermark past its end. It writes 3 to the board and marks the window fired.",w:"The board shows 3. The window's state is not deleted: the grace line is still at 12:00:05, far left of 12:01.",ev:[E(10),E(30),E(50),E(75)],wm:65,win:[W(3,"fired"),W(1,"open"),W(0,"open")],board:"12:00 = 3",side:"",log:"arrived 12:01:16: swap at 12:01:15",pc:[11,12,13]},
+ {t:"More swaps in 12:01",b:"Swaps at 12:01:20 and 12:01:40 arrive on time. Window 12:01 holds 3. The watermark is 12:01:30, the grace line 12:00:30.",w:"Window 12:00 still sits in memory, fired and waiting, in case a straggler shows up.",ev:[E(10),E(30),E(50),E(75),E(80),E(100)],wm:90,win:[W(3,"fired"),W(3,"open"),W(0,"open")],board:"12:00 = 3",side:"",log:"arrived 12:01:41: swap at 12:01:40",pc:[3,4,8]},
+ {t:"A late swap arrives",b:"A swap made at 12:00:40 arrives at 12:01:45. A slow node held it. Its window is 12:00. The check asks: has the watermark reached 12:00's end plus 60 seconds, that is 12:02:00? The watermark is 12:01:30. No.",w:"The swap sits right of the purple grace line. Its window's state still exists, so the swap can be counted.",ev:[E(10),E(30),E(40,"late"),E(50),E(75),E(80),E(100)],wm:90,win:[W(3,"fired"),W(3,"open"),W(0,"open")],board:"12:00 = 3",side:"",log:"arrived 12:01:45: swap at 12:00:40, LATE but inside the grace",pc:[5,6]},
+ {t:"Update the state, overwrite the board",b:"The count of window 12:00 goes from 3 to 4. The window is already fired, so the counter sends the new value again, with the same key: minute 12:00. The board upserts. It replaces the row 12:00 = 3 with 12:00 = 4.",w:"This is why the sink must upsert by window key. A sink that appends would now hold 3 and 4, and a sum over it would say 7.",ev:[E(10),E(30),E(40,"late"),E(50),E(75),E(80),E(100)],wm:90,win:[W(4,"updated"),W(3,"open"),W(0,"open")],board:"12:00 = 4 (overwrote 3)",side:"",log:"upsert 12:00 = 4",pc:[8,9,10]},
+ {t:"The grace ends for 12:00",b:"A swap made at 12:02:10 arrives. The watermark jumps to 12:02:00. Window 12:01 fires with 3. The grace line reaches 12:01:00, the end of window 12:00, so the counter deletes that window's state.",w:"Memory is freed. From now on window 12:00 can never change in the stream. Its final stream answer is 4.",ev:[E(10),E(30),E(40,"late"),E(50),E(75),E(80),E(100),E(130)],wm:120,win:[W(4,"purged"),W(3,"fired"),W(1,"open")],board:"12:00 = 4 · 12:01 = 3",side:"",log:"arrived 12:02:11: swap at 12:02:10",pc:[11,12,13,14,15]},
+ {t:"A swap that is too late",b:"A swap made at 12:00:20 arrives at 12:02:20. The check: the watermark 12:02:00 has reached 12:00's end plus 60 seconds. Yes. There is no state to add it to, so it goes to the side output late_swaps.",w:"The board keeps 4. The nightly batch job reads the whole day from storage and writes 5. Nothing is lost, it is only corrected later.",ev:[E(10),E(20,"too"),E(30),E(40,"late"),E(50),E(75),E(80),E(100),E(130)],wm:120,win:[W(4,"purged"),W(3,"fired"),W(1,"open")],board:"12:00 = 4 · 12:01 = 3",side:"swap at 12:00:20",log:"arrived 12:02:20: swap at 12:00:20, TOO LATE, state gone",pc:[6,7]}
+],
+"clock":[
+ {t:"Three swaps, the same start",b:"The same three swaps arrive. The watermark is 12:00:40 and window 12:00 holds 3, open.",w:"So far the same as the first tab. Now one node has a broken clock.",ev:[E(10),E(30),E(50)],wm:40,win:[W(3,"open"),W(0,"open"),W(0,"open")],board:"",side:"",log:"arrived 12:00:52: swap at 12:00:50",pc:[3,4,8]},
+ {t:"A swap from the future",b:"A swap arrives at 12:00:55 with an event time of 12:02:55. Its node's clock is two minutes fast. Suppose the bad-clock guard on line 2 is switched off. maxSeen becomes 12:02:55 and the watermark jumps to 12:02:45.",w:"Both lines leap right in one step. Window 12:00 fires with 3, and the grace line passes it, so its state is deleted at once.",ev:[E(10),E(30),E(50),E(175,"too")],wm:165,win:[W(3,"purged"),W(0,"open"),W(1,"open")],board:"12:00 = 3",side:"",log:"arrived 12:00:55: swap stamped 12:02:55, BAD CLOCK",pc:[3,4,11,12,13,14,15]},
+ {t:"Honest swaps are now too late",b:"A normal swap made at 12:00:58 arrives at 12:00:59. Window 12:00's grace ended in the watermark's view, so it goes to the side output.",w:"A swap that arrived one second after it happened is called too late. The board says 3 where the truth is 4.",ev:[E(10),E(30),E(50),E(58,"too"),E(175,"too")],wm:165,win:[W(3,"purged"),W(0,"open"),W(1,"open")],board:"12:00 = 3",side:"swap at 12:00:58",log:"arrived 12:00:59: swap at 12:00:58, TOO LATE",pc:[6,7]},
+ {t:"Windows fire half empty",b:"A swap made at 12:01:05 arrives. Window 12:01 is new, and the watermark is already past its end, so it fires at once with 1.",w:"Every minute from now on is reported early and wrong. One bad clock broke the whole stream.",ev:[E(10),E(30),E(50),E(58,"too"),E(65),E(175,"too")],wm:165,win:[W(3,"purged"),W(1,"fired"),W(1,"open")],board:"12:00 = 3 · 12:01 = 1",side:"swap at 12:00:58",log:"arrived 12:01:06: swap at 12:01:05, window fired with 1",pc:[12,13]},
+ {t:"The fix: guard the clock",b:"Switch line 2 back on. An event time more than 5 seconds ahead of its arrival is a bad clock. It goes to quarantine and never moves maxSeen. The watermark stays 12:00:55, and window 12:00 counts 4, open, as it should.",w:"Never let one event move the watermark by itself. Bound how far ahead an event time may be, and alert on the quarantine.",ev:[E(10),E(30),E(50),E(58),E(65)],wm:55,win:[W(4,"open"),W(1,"open"),W(0,"open")],board:"",side:"quarantine: swap stamped 12:02:55",log:"guard on: 12:02:55 quarantined, watermark 12:00:55",pc:[2]}
+],
+"batch":[
+ {t:"Store everything, compute nothing",b:"Batch keeps no windows open. Every swap is written to the day's partition as it arrives. No count exists yet.",w:"There is no watermark and no grace. The batch run itself is the moment of truth.",ev:[],wm:null,win:[W("?","waiting"),W("?","waiting"),W("?","waiting")],board:"",side:"",log:"",pc:[1]},
+ {t:"Swaps arrive all day",b:"The same swaps arrive, including the late one at 12:00:40 and the too-late one at 12:00:20.",w:"Late or not, each one simply lands in storage. Nothing was reported, so nothing is wrong.",ev:[E(10),E(20),E(30),E(40),E(50),E(75),E(80),E(100)],wm:null,win:[W("?","waiting"),W("?","waiting"),W("?","waiting")],board:"",side:"",log:"arrived 12:02:20: swap at 12:00:20, stored",pc:[1]},
+ {t:"Day end: run once",b:"At 00:05 the job reads the whole day partition and groups by the minute of the event time. Window 12:00 gets 5, window 12:01 gets 3.",w:"Every count is exact on the first try, because every swap was already there.",ev:[E(10),E(20),E(30),E(40),E(50),E(75),E(80),E(100)],wm:null,win:[W(5,"final"),W(3,"final"),W(0,"final")],board:"12:00 = 5 · 12:01 = 3",side:"",log:"00:05 batch run over 2026-09-24",pc:[2,3,4]},
+ {t:"The price is time",b:"A trader asks at 12:02 how many swaps happened at 12:01. The batch answer will exist tomorrow.",w:"Batch trades freshness for simplicity. Ask how stale the answer may be before choosing.",ev:[E(10),E(20),E(30),E(40),E(50),E(75),E(80),E(100)],wm:null,win:[W(5,"final"),W(3,"final"),W(0,"final")],board:"12:00 = 5 · 12:01 = 3",side:"",log:"question at 12:02: answer tomorrow",pc:[2]},
+ {t:"Rerun is safe",b:"A bug is fixed and the job runs again. It replaces the day partition instead of appending, so the counts stay the same and nothing doubles.",w:"Idempotent reruns are batch's quiet strength. It is also why the stream can hand its too-late swaps to this job.",ev:[E(10),E(20),E(30),E(40),E(50),E(75),E(80),E(100)],wm:null,win:[W(5,"final"),W(3,"final"),W(0,"final")],board:"12:00 = 5 · 12:01 = 3",side:"",log:"rerun: partition replaced, same counts",pc:[5]}
+]};
+const winFill={open:"var(--wait)",fired:"var(--ok)",updated:"var(--undo)",purged:"var(--line)",waiting:"var(--line)",final:"var(--ok)"};
+const winText={open:w=>`open: ${w.c}`,fired:w=>`fired ${w.c}, kept`,updated:w=>`updated ${w.c}, kept`,purged:w=>`deleted, final ${w.c}`,waiting:w=>"waiting",final:w=>`final: ${w.c}`};
+const dotCol={on:"var(--fg)",late:"var(--undo)",too:"var(--fail)"};
+let mode="stream",i=0,timer=null,view="pc";
+const $=id=>document.getElementById(id);
+const NS="http://www.w3.org/2000/svg";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode],s=steps[mode][i],lines=view==="pc"?c.pc:c.real;
+  let hl=new Set(s.pc);
+  if(view==="real"){hl=new Set();s.pc.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label;
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*|--.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("log").textContent=s.log;$("log").setAttribute("fill",/LATE|BAD/.test(s.log)?"var(--fail)":"var(--fg)");
+  $("board").textContent=s.board||"empty";$("side").textContent=s.side||"empty";
+  const c=$("chips");c.innerHTML="";
+  s.win.forEach((w,k)=>{const x=80+240*k;
+    c.innerHTML+=`<rect class="box" x="${x+35}" y="302" width="170" height="28" rx="14" fill="${winFill[w.s]}"/>
+      <text x="${x+120}" y="321" fill="${/waiting|purged/.test(w.s)?"var(--fg)":"#fff"}">${winText[w.s](w)}</text>`;});
+  const d=$("dots");d.innerHTML="";
+  s.ev.forEach((e,k)=>{
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const y=95+((k*37)%140);const col=dotCol[e.st];
+    el.innerHTML=`<circle cx="${X(e.et)}" cy="${y}" r="9" fill="${col}"/><text x="${e.et>150?X(e.et):X(e.et)+13}" y="${e.et>150?y-15:y+4}" text-anchor="${e.et>150?"middle":"start"}" fill="${col}" font-weight="700">${fmt(e.et)}</text>`;
+    d.appendChild(el);
+    const show=()=>el.classList.add("on");
+    matchMedia("(prefers-reduced-motion: reduce)").matches?show():setTimeout(show,90*k+30);
+  });
+  const wm=$("wm"),pg=$("pg");
+  if(s.wm===null){wm.style.display="none";pg.style.display="none";}
+  else{wm.style.display="";wm.setAttribute("transform",`translate(${X(s.wm)} 0)`);
+    $("wm-t").textContent="watermark "+fmt(s.wm);$("wm-t").setAttribute("x",s.wm>150?-150:6);
+    const g=s.wm-60;
+    if(g<0){pg.style.display="none";}
+    else{pg.style.display="";pg.setAttribute("transform",`translate(${X(g)} 0)`);
+      $("pg-t").textContent="grace line "+fmt(g);$("pg-t").setAttribute("x",g>150?-140:6);}}
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+  drawCode();
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},3200)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

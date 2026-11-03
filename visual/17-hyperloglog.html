@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HyperLogLog</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,opacity .35s}
+.hl{animation:pop .45s ease-out}
+@keyframes pop{from{opacity:.25}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.box{transition:none}.hl{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.codetabs{display:flex;gap:8px;flex-wrap:wrap}
+.codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>HyperLogLog</h1>
+  <p class="lede">How many distinct wallets traded today, out of billions of transfers? An exact set costs gigabytes. HyperLogLog keeps only the longest run of leading zeros seen in the address hashes, spread over registers. Hash bits here are short and made up, to show the idea.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="z">Leading zeros</button>
+    <button role="tab" aria-selected="false" data-mode="r">Registers and merge</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 280" aria-labelledby="stage-title">
+      <title id="stage-title">Hash bits with leading zeros, and registers that keep the longest run</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, with a run of this exact story, is in <code>handbook/code/17-hyperloglog/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs codetabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">a hash bit, or a register</span>
+    <span style="--c:var(--wait)">leading zeros counted now</span>
+    <span style="--c:var(--ok)">the estimate, or a merged register</span>
+    <span style="--c:var(--fail)">the failure</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet HyperLogLog</h2>
+      <p>Redis <code>PFADD</code> and <code>PFCOUNT</code>: distinct counts in 12 KB per key, about 0.81% error. <code>approx_count_distinct</code> in StarRocks, Presto and BigQuery, far lighter than <code>COUNT(DISTINCT ...)</code> on billions of rows.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Store one HLL per day and merge any range at query time. Use a Bloom filter for "is this one there?" and an exact set when you need the names. Avoid intersections by subtraction: the errors add up.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Exact set</th><th>Bloom filter</th><th>HyperLogLog</th></tr>
+      <tr><td>Answers</td><td>Count, members, membership</td><td>Is this one there? Maybe or no</td><td>How many distinct, about</td></tr>
+      <tr><td>Memory for 100 million</td><td>About 2 GB</td><td>About 120 MB at 1%</td><td>About 12 KB</td></tr>
+      <tr><td>Error</td><td>None</td><td>False positives</td><td>About 1% on the count</td></tr>
+      <tr><td>Merge two</td><td>Union, costly</td><td>OR the bits</td><td>Max per register</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"HyperLogLog counts distinct values by keeping, per register, the longest run of leading zeros in their hashes. About 12 KB gives about 1% error, registers merge by maximum, and it can never tell you who."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const Z=[["0x021d","10110010"],["0x0000","01011100"],["0x0068","00110101"],["0x002e","11100001"],["0x010a","00010110"],["0x000c","00000011"]];
+const lz=b=>b.indexOf("1")<0?b.length:b.indexOf("1");
+// register tab: first 3 bits pick register 0..7, rank = leading zeros in rest + 1
+const RH=[["0x00ed","011","00101"],["0x021d","101","10010"],["0x001d","011","00011"],["0x0124","000","01100"],["0x0030","110","00001"],["0x0018","101","01010"]];
+const rank=r=>lz(r)+1;
+function regs(n){const R=Array(8).fill(0);RH.slice(0,n).forEach(([,b,r])=>{const i=parseInt(b,2);R[i]=Math.max(R[i],rank(r));});return R;}
+const DAY2=[0,0,0,2,0,6,1,0];
+const steps={
+"z":[
+ {t:"Start",b:"Each wallet address goes through sha256 and the first 8 bits are kept, so the same address always gives the same bits. leading_zeros counts the 0s before the first 1. longest starts at 0.",w:"A hash starting with k zeros turns up about once in 2ᵏ distinct values, like k tails in a row.",n:0,pc:[1,2,3,4,5,6]},
+ {t:"Four addresses",b:"0x021d hashes to 10110010: 0 zeros, longest stays 0. 0x0000: 01011100, 1 zero, max(0, 1) = 1. 0x0068: 00110101, 2 zeros, max(1, 2) = 2. 0x002e: 11100001, 0 zeros, max(2, 0) stays 2.",w:"Keep only the biggest zero count. Nothing else is stored.",n:4,pc:[7,8,9]},
+ {t:"0x010a: three zeros",b:"0x010a hashes to 00010110: 3 zeros. max(2, 3) = 3. The estimate is 2³ = 8 distinct addresses. The real count is 5.",w:"Rough, but the right size. And the memory is one small number.",n:5,est:1,pc:[8,9,10]},
+ {t:"Same address again",b:"0x0068 trades again. Same key, so same hash: 00110101, 2 zeros. max(3, 2) stays 3. The estimate does not move.",w:"Repeats change nothing. That is why it counts distinct values, not events.",n:5,est:1,rep:1,pc:[8,9]},
+ {t:"The failure that matters",b:"0x000c happens to hash to 00000011: 6 zeros. max(3, 6) = 6. The estimate jumps to 2⁶ = 64 for 6 addresses.",w:"One lucky hash wrecks a single counter. The fix is many registers, averaged: the second tab.",n:6,est:1,bad:1,pc:[9,10]}
+],
+"r":[
+ {t:"Start: 8 registers",b:"p = 3, so m = 2³ = 8 registers, all 0. The first 3 bits of each hash pick a register. rank is the leading zeros in the remaining bits, plus 1. Each register keeps its biggest rank.",w:"Redis uses 16,384 registers. Each holds a number up to about 64, so 6 bits: 16,384 × 6 bits = 12 KB.",n:0,pc:[1,2,3,4]},
+ {t:"Three addresses",b:"0x00ed: 011 is register 3, 00101 has 2 zeros, rank 3, so reg[3] = 3. 0x021d: 101 is register 5, 10010 has 0 zeros, rank 1, so reg[5] = 1. 0x001d: 011 again, 00011 has 3 zeros, rank 4. max(3, 4) = 4.",w:"A lucky hash only raises one register out of many.",n:3,hot:3,pc:[2,3,4,5]},
+ {t:"Three more",b:"0x0124: register 0, 01100 has 1 zero, rank 2. 0x0030: register 6, 00001 has 4 zeros, rank 5. 0x0018: register 5, 01010 has 1 zero, rank 2. max(1, 2) = 2.",w:"Each register is a separate small sample of the stream. The registers are 2, 0, 0, 4, 0, 2, 5, 0.",n:6,hot:6,pc:[3,4,5]},
+ {t:"The estimate",b:"harmonic is the sum of 2^−r over all 8 registers. A big r adds almost nothing, so one lucky register cannot dominate. With 4 empty registers the count is small, so estimate uses m × ln(m / empty) = 8 × ln 2 = 5.5. The real count is 6.",w:"Error falls as registers grow: 1.04 / √m. The program runs 16,384 registers over 200,000 wallets: estimate 198,822, error 0.59%, expected about 0.81%.",n:6,est:1,pc:[6,7,8,9,10,11]},
+ {t:"Merge two days",b:"Day 2 has its own 8 registers: 0, 0, 0, 2, 0, 6, 1, 0. merge takes the maximum of each pair. Only register 5 changes: max(2, 6) = 6. The result is what one HLL over both days would hold.",w:"No address is re-read. A week is seven daily HLLs merged at query time. The program merges two overlapping 200,000-wallet days: 298,888 for a real 300,000.",n:6,merge:1,pc:[12,13]},
+ {t:"The failure that matters",b:"Ask which wallets those were, or whether 0x0124 was one of them. add threw the address away after it computed index and rank. The registers hold only small numbers.",w:"HyperLogLog counts. It cannot list, test membership or delete. Use a Bloom filter or an exact set for those.",n:6,bad:1,pc:[3,4,5]}
+]};
+function draw(s,m){let h="";
+ if(m==="z"){let mx=0;Z.slice(0,s.n).forEach(([a,b],i)=>{const y=24+i*40,z=lz(b);if(!(s.rep&&false))mx=Math.max(mx,z);
+   h+=T(40,y+24,a,{a:"start",s:15});[...b].forEach((c,k)=>h+=R(120+k*36,y+4,32,30,k<z?(s.bad&&i===5?"var(--fail)":"var(--wait)"):"var(--coord)",{rx:3,hl:k<z})+T(136+k*36,y+25,c,{c:"#fff",s:15}));
+   h+=T(430,y+24,`${z} zero${z===1?"":"s"}`,{a:"start",s:15,c:"var(--muted)"});});
+  if(s.rep)h+=T(40,24+5*40+24,"0x0068 again: same hash, nothing changes",{a:"start",s:15,c:"var(--muted)"});
+  h+=R(560,40,300,120,s.bad?"var(--fail)":s.est?"var(--ok)":"var(--panel)",{st:"var(--line)",hl:!!s.est})+T(710,80,`longest run: ${mx}`,{s:18,c:s.est?"#fff":"var(--fg)"});
+  if(s.est)h+=T(710,120,`estimate 2^${mx} = ${2**mx}`,{s:20,c:"#fff"})+T(710,146,`real: ${s.n} addresses`,{s:14,c:"#fff"});
+ }else{const R0=regs(s.n);
+  RH.slice(0,s.n).forEach(([a,b,r],i)=>{const y=20+i*30;h+=T(30,y+20,a,{a:"start",s:14})+`<text x="88" y="${y+20}" font-family="ui-monospace,monospace" font-size="15" fill="var(--fg)"><tspan fill="var(--coord)" font-weight="700">${b}</tspan> ${r}</text>`+T(204,y+20,`→ reg ${parseInt(b,2)}, rank ${rank(r)}`,{a:"start",s:13,c:"var(--muted)"});});
+  const show=s.merge?R0.map((v,i)=>Math.max(v,DAY2[i])):R0;
+  h+=T(600,24,s.merge?"merged: max of day 1 and day 2":"registers",{s:14,c:"var(--muted)"});
+  show.forEach((v,i)=>{const x=380+i*58;const f=s.bad?"var(--fail)":s.merge&&DAY2[i]>R0[i]?"var(--ok)":v?"var(--coord)":"var(--panel)";
+   h+=R(x,40,50,50,f,{st:"var(--line)",hl:f==="var(--ok)"})+T(x+25,72,v,{c:v||s.bad?"#fff":"var(--muted)",s:18})+T(x+25,106,i,{c:"var(--muted)",s:12});
+   if(s.merge)h+=T(x+25,128,"day 2: "+DAY2[i],{c:"var(--muted)",s:11});});
+  if(s.est)h+=R(380,150,460,60,"var(--ok)",{hl:1})+T(610,186,"estimate = correction × harmonic mean of 2^register",{c:"#fff",s:14});
+  if(s.bad)h+=T(610,186,"which wallets? the registers cannot say",{s:17,c:"var(--fail)"});
+ }
+ return h;}
+const code={"z": {"label": "Python","pc": ["hash_bits(key, bits):","  return the first bits of sha256(key)    # same key, same bits","leading_zeros(bits):","  return how many 0s come before the first 1","one_counter(keys):","  longest = 0","  for key in keys:","    zeros = leading_zeros(hash_bits(key, 8))","    longest = max(longest, zeros)         # keep only the biggest","    estimate = 2^longest                  # k zeros: about one hash in 2^k"],"real": ["import hashlib","import math","","","def hash_bits(key, bits):","    \"\"\"The first `bits` bits of sha256(key), as text like 10110010.\"\"\"","    digest = int.from_bytes(hashlib.sha256(key.encode()).digest(), \"big\")","    return format(digest >> (256 - bits), f\"0{bits}b\")","","","def leading_zeros(bits):","    return len(bits) - len(bits.lstrip(\"0\"))","","","def one_counter(keys):","    \"\"\"A single counter: the longest run of leading zeros seen so far.\"\"\"","    longest, rows = 0, []","    for key in keys:","        bits = hash_bits(key, 8)","        zeros = leading_zeros(bits)","        longest = max(longest, zeros)        # keep only the biggest","        rows.append((key, bits, zeros, longest, 2 ** longest))","    return rows"],"map": {"1": [5],"2": [7,8],"3": [11],"4": [12],"5": [15],"6": [17],"7": [18],"8": [19,20],"9": [21],"10": [22]}},"r": {"label": "Python","pc": ["add(key):","  bits = hash_bits(key, hash_size)","  index = the first p bits as a number    # picks a register","  rank = leading zeros in the rest + 1","  reg[index] = max(reg[index], rank)      # keep only the biggest","estimate():","  harmonic = sum of 2^-r over all registers   # damps one lucky register","  raw = alpha * m * m / harmonic","  if raw is small and some registers are empty:","    return m * ln(m / empty)              # few keys: count the empty ones","  return raw","merge(other):","  for each i: reg[i] = max(reg[i], other.reg[i])   # no key is re-read"],"real": ["class HyperLogLog:","    def __init__(self, p, hash_size):","        self.p, self.hash_size = p, hash_size","        self.m = 2 ** p                      # number of registers","        self.reg = [0] * self.m","","    def add(self, key):","        bits = hash_bits(key, self.hash_size)","        index = int(bits[:self.p], 2)        # the first p bits pick a register","        rank = leading_zeros(bits[self.p:]) + 1   # zeros in the rest, plus 1","        self.reg[index] = max(self.reg[index], rank)   # keep only the biggest","        return index, rank","","    def estimate(self):","        alpha = 0.7213 / (1 + 1.079 / self.m)","        harmonic = sum(2.0 ** -r for r in self.reg)    # damps one lucky register","        raw = alpha * self.m * self.m / harmonic","        empty = self.reg.count(0)","        if raw <= 2.5 * self.m and empty:    # few keys: count the empty registers","            return self.m * math.log(self.m / empty)","        return raw","","    def merge(self, other):","        for i, r in enumerate(other.reg):    # max of each pair: no key is re-read","            self.reg[i] = max(self.reg[i], r)"],"map": {"1": [7],"2": [8],"3": [9],"4": [10],"5": [11],"6": [14],"7": [16],"8": [15,17],"9": [18,19],"10": [20],"11": [21],"12": [23],"13": [24,25]}}};
+let view="pc";
+function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(key,pcs){
+  const c=code[key]||code[Object.keys(code)[0]],box=document.getElementById("codebox");if(!c||!box)return;
+  const lines=view==="pc"?c.pc:c.real;pcs=pcs||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Python";
+  box.innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));if(typeof redrawCode==="function")redrawCode();});
+function T(x,y,txt,o={}){return `<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" font-size="${o.s||15}" font-weight="${o.w||700}" fill="${o.c||"var(--fg)"}">${txt}</text>`}
+function R(x,y,w,h,fill,o={}){return `<rect class="box${o.hl?" hl":""}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??6}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?' stroke-dasharray="6 4"':""}/>`}
+function A(x1,y1,x2,y2,c="var(--fg)",lab="",o={}){return `<line class="${o.hl?"hl":""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${o.sw||2.5}"${o.dash?' stroke-dasharray="6 4"':""}${o.nohead?"":' marker-end="url(#arr)"'}/>`+(lab?T((x1+x2)/2+(o.dx||0),(y1+y2)/2+(o.dy??-8),lab,{c:o.lc||c,s:o.s||14}):"")}
+function C(x,y,r,fill,txt,o={}){return `<circle class="box${o.hl?" hl":""}" cx="${x}" cy="${y}" r="${r}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="3"`:""}/>`+T(x,y+6,txt,{c:o.fg||"#fff",s:o.s||17})}
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s,mode);
+  if(typeof code!=="undefined")drawCode(mode,s.pc);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+function redrawCode(){if(typeof code!=="undefined")drawCode(mode,steps[mode][i].pc);}
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

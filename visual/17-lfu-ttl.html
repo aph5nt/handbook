@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LFU and TTL</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.box{transition:fill .35s,opacity .35s}
+.hl{animation:pop .45s ease-out}
+@keyframes pop{from{opacity:.25}to{opacity:1}}
+@media (prefers-reduced-motion:reduce){.box{transition:none}.hl{animation:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+.codetabs{display:flex;gap:8px;flex-wrap:wrap}
+.codetabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.codetabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>LFU and TTL</h1>
+  <p class="lede">A decoded-ABI cache holds 3 contracts. A and B are hot. Then a batch job reads three one-off contracts X, Y and Z. LRU (least recently used) and LFU (least frequently used) face the same requests. TTL (time to live) is the third rule, about freshness.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="lru">LRU: evict the oldest use</button>
+    <button role="tab" aria-selected="false" data-mode="lfu">LFU: evict the fewest uses</button>
+    <button role="tab" aria-selected="false" data-mode="ttl">TTL: expire after a time</button>
+  </div>
+  <div class="stage">
+    <svg viewBox="0 0 900 285" aria-labelledby="stage-title">
+      <title id="stage-title">Three cache slots, an incoming request and an evicted entry</title>
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>
+      <g id="scene" font-family="Atkinson Hyperlegible,system-ui"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, with a run of this exact story, is in <code>handbook/code/17-lfu-ttl/main.py</code> (<code>python3 main.py</code>).</p>
+    <div class="tabs codetabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Python</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--coord)">in the cache</span>
+    <span style="--c:var(--ok)">hit, or kept</span>
+    <span style="--c:var(--wait)">just added</span>
+    <span style="--c:var(--fail)">evicted, missed or expired</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet these rules</h2>
+      <p>Redis <code>maxmemory-policy</code>: <code>allkeys-lru</code> or <code>allkeys-lfu</code>, plus a TTL per key. Caffeine, the Java cache, uses W-TinyLFU: a small LRU window in front of a frequency filter, so it resists scans and still adapts.</p>
+    </div>
+    <div class="card">
+      <h2>The choice you make</h2>
+      <p>Bound the size with LRU or LFU. Bound staleness with TTL. A token price cached for 60 seconds needs a TTL because the value goes stale, not because memory is short. Add jitter so keys set together do not expire together.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>LRU</th><th>LFU</th><th>TTL</th></tr>
+      <tr><td>Evicts</td><td>The entry used longest ago</td><td>The entry used fewest times</td><td>Any entry past its expiry</td></tr>
+      <tr><td>Loses to</td><td>A one-off scan</td><td>A change in what is hot</td><td>Many keys expiring at once</td></tr>
+      <tr><td>Fix</td><td>Scan-resistant window, or LFU</td><td>Decay the counts</td><td>Random jitter on the TTL</td></tr>
+      <tr><td>Interview line</td><td colspan="3">"LRU evicts the oldest use, LFU the fewest uses, and TTL the expired. LRU loses to a one-off scan, LFU forgets too slowly unless counts decay, and TTL needs jitter."</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+// slots: [key, sub, state] state: c in cache, n new, k kept/hit, x bad
+const steps={
+"lru":[
+ {t:"Start: A and B are hot",b:"run takes the requests A, B, A, B, C. A and B each miss once, then hit once, and every hit moves the key to the recent end. C misses and goes in last. Slots run from most recent on the left to least recent on the right.",w:"LRU keeps whatever was used last. It knows nothing about how often.",sl:[["C","last used 1st","c"],["B","2nd","c"],["A","3rd","c"]],pc:[1,2,3,4,5,6,7,10,11,12,13]},
+ {t:"X arrives: evict A",b:"get(X): X is not in items, so miss. put(X): is items full? 3 of 3, yes. The front key is the least recent: A. A is removed and X goes on the recent end.",w:"A was used twice, but not lately. The rule never looks at that.",sl:[["X","1st","n"],["C","2nd","c"],["B","3rd","c"]],req:["X","miss"],ev:"A",pc:[2,3,6,7,8,9,10,13]},
+ {t:"Y arrives: evict B",b:"Same path. get(Y) misses. The cache is full. The front key is now B, so B goes.",w:"Two one-off contracts have pushed out both hot ones.",sl:[["Y","1st","n"],["X","2nd","c"],["C","3rd","c"]],req:["Y","miss"],ev:"B",pc:[2,3,6,7,8,9,10,13]},
+ {t:"Z arrives: evict C",b:"get(Z) misses. The front key is C, so C goes. The cache now holds only X, Y and Z.",w:"A scan touched each key once and flushed everything useful.",sl:[["Z","1st","n"],["Y","2nd","c"],["X","3rd","c"]],req:["Z","miss"],ev:"C",pc:[2,3,6,7,8,9,10,13]},
+ {t:"The failure that matters",b:"Normal traffic returns and asks for A. Is A in items? No: miss. Then B: miss. The hot contracts must be decoded again.",w:"Cache pollution: one scan made LRU forget its hot set. A frequency count would have kept A and B.",sl:[["Z","1st","x"],["Y","2nd","x"],["X","3rd","x"]],req:["A","miss"],bad:1,pc:[2,3,13]}
+],
+"lfu":[
+ {t:"Start: counts",b:"The same requests A, B, A, B, C. put sets a count of 1, and each hit adds 1. A has 2, B has 2, C has 1.",w:"LFU evicts the lowest count. Ties go to the oldest.",sl:[["A","used 2","c"],["B","used 2","c"],["C","used 1","c"]],pc:[1,2,3,4,5,6,7,10]},
+ {t:"X arrives: evict C",b:"get(X) misses. The cache is full. The lowest count is 1, held only by C. C goes, and X comes in with 1.",w:"A and B are protected by their counts.",sl:[["A","used 2","k"],["B","used 2","k"],["X","used 1","n"]],req:["X","miss"],ev:"C",pc:[2,3,6,7,8,9,10]},
+ {t:"Y arrives: evict X",b:"get(Y) misses. The lowest count is X with 1, because 1 < 2. X goes, Y comes in with 1.",w:"One-off keys replace each other in the cold slot.",sl:[["A","used 2","k"],["B","used 2","k"],["Y","used 1","n"]],req:["Y","miss"],ev:"X",pc:[2,3,6,7,8,9,10]},
+ {t:"Z arrives: evict Y",b:"The same check again: Y has the lowest count, so Z takes its slot.",w:"The scan used one slot and left the hot set alone.",sl:[["A","used 2","k"],["B","used 2","k"],["Z","used 1","n"]],req:["Z","miss"],ev:"Y",pc:[2,3,6,7,8,9,10]},
+ {t:"A is asked for: hit",b:"Is A in counts? Yes. Its count goes from 2 to 3.",w:"LFU survives the scan that broke LRU.",sl:[["A","used 3","k"],["B","used 2","c"],["Z","used 1","c"]],req:["A","hit"],pc:[1,2,4,5]},
+ {t:"The failure that matters",b:"A week later the traffic moves to D and E. A and B hold 1,000 and 900. E arrives and evicts D, the lowest. D returns and evicts E. Four requests, four misses. Ten runs of decay halve the counts down to 0, and then A and B can go.",w:"LFU never forgets. Redis LFU and W-TinyLFU decay their counts for this reason.",sl:[["A","used 1,000, idle","x"],["B","used 900, idle","x"],["E","used 1","n"]],req:["E","miss"],ev:"D",bad:1,bt:"old counts squat: the new hot set cannot stay",pc:[2,3,7,8,9,10,11,12]}
+],
+"ttl":[
+ {t:"Start: a price cache",b:"TTL means time to live. put adds 60 seconds to the time now. ETH stored at 12:00:00 expires 12:01:00. BTC stored at 12:00:20 expires 12:01:20.",w:"Each entry carries its own expiry time.",sl:[["ETH","expires 12:01:00","c"],["BTC","expires 12:01:20","c"],["—","empty","e"]],clock:"12:00:20",pc:[9,10,13]},
+ {t:"Read ETH at 12:00:30",b:"The entry is there. Is 12:00:30 at or past 12:01:00? No, 30 seconds are left. The stored value goes back. Hit.",w:"Until it expires, the entry is served as is, even if the real price moved.",sl:[["ETH","expires 12:01:00","k"],["BTC","expires 12:01:20","c"],["—","empty","e"]],clock:"12:00:30",req:["ETH","hit"],pc:[1,2,3,5,8]},
+ {t:"Read ETH at 12:01:05",b:"Is 12:01:05 at or past 12:01:00? Yes. The entry is deleted, and the answer is a miss. The price is fetched and put again: 12:01:05 + 60 s = 12:02:05.",w:"TTL bounds how stale an answer can be: here, 60 seconds at most.",sl:[["ETH","expires 12:02:05","n"],["BTC","expires 12:01:20","c"],["—","empty","e"]],clock:"12:01:05",req:["ETH","miss"],pc:[1,2,3,5,6,7,9,10,13]},
+ {t:"Size and freshness together",b:"SOL arrives at 12:01:10 and expires 12:02:10. put also asks: is the cache full? Here 2 of 3, so nothing goes. If it were full, the least recent entry would go, expired or not.",w:"Real caches combine them: one rule for size, one for staleness.",sl:[["ETH","expires 12:02:05","c"],["BTC","expires 12:01:20","c"],["SOL","expires 12:02:10","n"]],clock:"12:01:10",pc:[9,10,11,13]},
+ {t:"The failure that matters",b:"A start-up job puts 1,000 prices at 12:00:00 with jitter 0, so random(0, 0) adds nothing. All 1,000 get the same expiry. expiry_peak counts 1,000 in the worst second, and every request goes to the price source at once.",w:"A cache stampede. Identical expiries are the cause, so the fix goes in put.",sl:[["key 1","expires 12:01:00","x"],["key 2","expires 12:01:00","x"],["… 998 more","expire 12:01:00","x"]],clock:"12:01:00",storm:1,bad:1,pc:[10,14,15,16]},
+ {t:"The fix: jitter",b:"With jitter 6, put adds 60 seconds plus a random whole number from -6 to 6. The same 1,000 keys now expire from 12:00:54 to 12:01:06. The worst second holds 92 misses, not 1,000.",w:"Spread the expiries, and the source sees a steady flow instead of a wave.",sl:[["key 1","expires 12:00:56","c"],["key 2","expires 12:01:03","c"],["… 998 more","spread over 12 s","c"]],clock:"12:01:00",pc:[10,14,15,16]}
+]};
+function draw(s,m){let h="";const col={c:"var(--coord)",n:"var(--wait)",k:"var(--ok)",x:"var(--fail)",e:"var(--line)"};
+ h+=T(470,30,m==="ttl"?"cache, a few entries shown":"cache, 3 slots",{c:"var(--muted)",s:14});
+ s.sl.forEach(([k,sub,st],i)=>{const x=240+i*160;h+=R(x,46,148,86,col[st],{hl:st!=="c"&&st!=="e"})+T(x+74,84,k,{c:st==="e"?"var(--muted)":"#fff",s:20})+T(x+74,112,sub,{c:st==="e"?"var(--muted)":"#fff",s:13});});
+ if(s.req){const[k,r]=s.req;h+=R(30,56,150,66,r==="hit"?"var(--ok)":"var(--fail)",{hl:1})+T(105,84,"get "+k,{c:"#fff",s:18})+T(105,108,r,{c:"#fff",s:14})+A(184,89,234,89,"var(--fg)");}
+ if(s.ev)h+=R(700,180,160,56,"none",{st:"var(--fail)",dash:1})+T(780,214,"evicted: "+s.ev,{c:"var(--fail)",s:16});
+ if(s.clock)h+=T(30,214,"clock "+s.clock,{a:"start",s:20});
+ if(s.storm)h+=R(380,180,240,56,"var(--fail)",{hl:1})+T(500,214,"1,000 misses at once",{c:"#fff",s:17})+A(500,136,500,176,"var(--fail)");
+ if(s.bad&&!s.storm)h+=T(450,270,s.bt||"hot set lost",{s:18,c:"var(--fail)"});
+ return h;}
+const code={"lru": {"label": "Python","pc": ["get(key):","  if key not in items:","    return miss","  move key to the recent end","  return hit","put(key):","  if items is full:","    evicted = the front key                 # the least recently used","    remove evicted","  add key at the recent end","run(requests):","  for key in requests:","    if get(key) is a miss: put(key)"],"real": ["class LRUCache:","    def __init__(self, capacity=3):","        self.capacity, self.items = capacity, OrderedDict()","","    def get(self, key):","        if key not in self.items:","            return \"miss\"","        self.items.move_to_end(key)              # now the most recent","        return \"hit\"","","    def put(self, key):","        evicted = None","        if len(self.items) == self.capacity:","            evicted = next(iter(self.items))     # the front is the least recent","            del self.items[evicted]","        self.items[key] = True                   # added at the recent end","        return evicted","","","def run(cache, requests):","    log = []","    for key in requests:","        answer = cache.get(key)","        evicted = cache.put(key) if answer == \"miss\" else None","        log.append((key, answer, evicted))","    return log"],"map": {"1": [5],"2": [6],"3": [7],"4": [8],"5": [9],"6": [11],"7": [13],"8": [14],"9": [15],"10": [16],"11": [20],"12": [22],"13": [23,24]}},"lfu": {"label": "Python","pc": ["get(key):","  if key not in counts:","    return miss","  counts[key] += 1                          # how often, not how lately","  return hit","put(key):","  if counts is full:","    evicted = key with the lowest count     # a tie goes to the oldest","    remove evicted","  counts[key] = 1","decay():","  halve every count                         # the fix: old counts fade"],"real": ["class LFUCache:","    def __init__(self, capacity=3):","        self.capacity, self.counts = capacity, {}","","    def get(self, key):","        if key not in self.counts:","            return \"miss\"","        self.counts[key] += 1                    # how often, not how lately","        return \"hit\"","","    def put(self, key):","        evicted = None","        if len(self.counts) == self.capacity:","            # min takes the first smallest, and a dict keeps insertion order: a tie goes to the oldest","            evicted = min(self.counts, key=self.counts.get)","            del self.counts[evicted]","        self.counts[key] = 1","        return evicted","","    def decay(self):","        for key in self.counts:                  # the fix: old counts fade","            self.counts[key] //= 2"],"map": {"1": [5],"2": [6],"3": [7],"4": [8],"5": [9],"6": [11],"7": [13],"8": [15,14],"9": [16],"10": [17],"11": [20],"12": [21,22]}},"ttl": {"label": "Python","pc": ["get(key, now):","  entry = items.get(key)","  if entry is missing:","    return miss","  if now >= entry.expires:","    delete entry","    return miss","  return entry.value                        # served as is, until it expires","put(key, value, now):","  expires = now + ttl + random(-jitter, jitter)","  if cache is full:","    drop the least recent   # size is still LRU's job","  items[key] = (value, expires)","expiry_peak(jitter):","  put 1,000 keys at the same moment","  return the most keys expiring in one second"],"real": ["class TTLCache:","    def __init__(self, ttl=60, jitter=0, capacity=3, rng=None):","        self.ttl, self.jitter, self.capacity = ttl, jitter, capacity","        self.items, self.rng = OrderedDict(), rng or random.Random(1)","","    def get(self, key, now):","        entry = self.items.get(key)","        if entry is None:","            return \"miss\"","        if now >= entry[1]:                      # past its expiry","            del self.items[key]","            return \"miss\"","        self.items.move_to_end(key)","        return entry[0]                          # served as is, even if the real price moved","","    def put(self, key, value, now):","        expires = now + self.ttl + self.rng.randint(-self.jitter, self.jitter)","        if key not in self.items and len(self.items) == self.capacity:","            self.items.popitem(last=False)       # size is still LRU's job","        self.items[key] = (value, expires)","        return expires","","","def expiry_peak(jitter, keys=1000):","    cache = TTLCache(jitter=jitter, capacity=keys)","    seconds = Counter(cache.put(f\"key {i}\", 1, 0) for i in range(1, keys + 1))","    return max(seconds.values()), min(seconds), max(seconds), cache  # the worst second, first, last"],"map": {"1": [6],"2": [7],"3": [8],"4": [9],"5": [10],"6": [11],"7": [12],"8": [14],"9": [16],"10": [17],"11": [18],"13": [20],"14": [24],"15": [25,26],"16": [27],"12": [19]}}};
+let view="pc";
+function esc(t){return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(key,pcs){
+  const c=code[key]||code[Object.keys(code)[0]],box=document.getElementById("codebox");if(!c||!box)return;
+  const lines=view==="pc"?c.pc:c.real;pcs=pcs||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  document.getElementById("realtab").textContent=c.label||"Python";
+  box.innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));if(typeof redrawCode==="function")redrawCode();});
+function T(x,y,txt,o={}){return `<text x="${x}" y="${y}" text-anchor="${o.a||"middle"}" font-size="${o.s||15}" font-weight="${o.w||700}" fill="${o.c||"var(--fg)"}">${txt}</text>`}
+function R(x,y,w,h,fill,o={}){return `<rect class="box${o.hl?" hl":""}" x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx??6}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="2.5"`:""}${o.dash?' stroke-dasharray="6 4"':""}/>`}
+function A(x1,y1,x2,y2,c="var(--fg)",lab="",o={}){return `<line class="${o.hl?"hl":""}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${c}" stroke-width="${o.sw||2.5}"${o.dash?' stroke-dasharray="6 4"':""}${o.nohead?"":' marker-end="url(#arr)"'}/>`+(lab?T((x1+x2)/2+(o.dx||0),(y1+y2)/2+(o.dy??-8),lab,{c:o.lc||c,s:o.s||14}):"")}
+function C(x,y,r,fill,txt,o={}){return `<circle class="box${o.hl?" hl":""}" cx="${x}" cy="${y}" r="${r}" fill="${fill}"${o.st?` stroke="${o.st}" stroke-width="3"`:""}/>`+T(x,y+6,txt,{c:o.fg||"#fff",s:o.s||17})}
+let mode=Object.keys(steps)[0],i=0,timer=null;
+const $=id=>document.getElementById(id);
+function render(){
+  const s=steps[mode][i];
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w;
+  $("counter").textContent=`Step ${i+1} of ${steps[mode].length}`;
+  $("scene").innerHTML=draw(s,mode);
+  if(typeof code!=="undefined")drawCode(mode,s.pc);
+  $("prev").disabled=i===0;$("next").disabled=i===steps[mode].length-1;
+}
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+function redrawCode(){if(typeof code!=="undefined")drawCode(mode,steps[mode][i].pc);}
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>

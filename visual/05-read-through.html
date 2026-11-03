@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Read-Through Cache</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one scene on top, a narration card under it, controls between. Everything else is quiet. */
+:root{
+  --bg:#f7f5ef; --fg:#1f2320; --muted:#6b7068; --panel:#ffffff; --line:#d9d6cc;
+  --coord:#2b6cb0; --svc:#3b8f5a; --ok:#2f9e68; --fail:#c8472f; --wait:#d6a21a; --undo:#8a5cc7;
+  --display:"Fraunces",Georgia,serif; --body:"Atkinson Hyperlegible",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#15181a;--fg:#ece9e0;--muted:#9aa09a;--panel:#1e2225;--line:#333a3e;--coord:#6aa6e6;--svc:#6cc48d;--ok:#5fc48f;--fail:#ef7b63;--wait:#e8c05a;--undo:#b494e6;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:24px}
+main{max-width:960px;margin:0 auto;display:grid;gap:20px}
+h1{font-family:var(--display);font-size:clamp(28px,5vw,42px);margin:0;text-wrap:balance;line-height:1.1}
+.lede{color:var(--muted);margin:0;max-width:65ch}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer}
+.tabs button[aria-selected="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto}
+svg{display:block;width:100%;height:auto;max-width:100%}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls button{font:inherit;font-weight:700;padding:8px 14px;border:1px solid var(--line);background:var(--panel);color:var(--fg);border-radius:6px;cursor:pointer;min-width:84px}
+.controls button:focus-visible,.tabs button:focus-visible{outline:2px solid var(--coord);outline-offset:2px}
+.step{font-variant-numeric:tabular-nums;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:grid;gap:8px;min-width:0}
+.card h2{font-family:var(--display);font-size:22px;margin:0}
+.card p{margin:0;max-width:70ch}
+.why{border-left:4px solid var(--wait);padding-left:12px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:15px}
+.legend span::before{content:"";display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:var(--c)}
+table{border-collapse:collapse;width:100%;font-size:16px}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:700}
+.msg{opacity:0;transition:opacity .35s}
+.msg.on{opacity:1}
+.box{transition:fill .35s,stroke .35s,width .5s}
+.mv{transition:transform .6s ease,fill .35s}
+@media (prefers-reduced-motion:reduce){.msg,.box,.mv{transition:none}}
+code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+:root{--hl:#fff1bf}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--hl:#3d3418}}
+:root[data-theme="dark"]{--hl:#3d3418}
+.tabs button[aria-pressed="true"]{border-color:var(--coord);box-shadow:inset 0 0 0 1px var(--coord)}
+.code pre{margin:0;overflow-x:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 0;line-height:1.5}
+.code .ln{display:block;padding:0 12px;white-space:pre;border-left:4px solid transparent;transition:background .3s}
+.code .ln i{display:inline-block;width:2.2em;color:var(--muted);font-style:normal;user-select:none}
+.code .ln.hl{background:var(--hl);border-left-color:var(--wait)}
+.code .ln .c{color:var(--muted)}
+.how{font-size:15px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.code .ln{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Read-through versus cache-aside</h1>
+  <p class="lede">An investigator screens an address for risk. Press <b>Next</b> and watch the risk service do the loading itself with cache-aside. Then switch tabs and hand the loading to the cache, and watch what happens when the load fails.</p>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-mode="aside">Cache-aside</button>
+    <button role="tab" aria-selected="false" data-mode="through">Read-through</button>
+  </div>
+
+  <div class="stage">
+    <svg viewBox="0 0 900 380" aria-labelledby="stage-title">
+      <title id="stage-title">A risk service, a cache and a graph database exchanging requests</title>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker>
+      </defs>
+      <g font-family="Atkinson Hyperlegible,system-ui">
+        <rect id="a-a" class="box" x="15" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-a" data-on="a-a" x="110" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Risk service</text>
+        <line x1="110" y1="68" x2="110" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-a" class="box" x="10.0" y="324" width="200" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-a" data-on="c-a" x="110.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-l" class="box" x="355" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-l" data-on="a-l" x="450" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Cache</text>
+        <line x1="450" y1="68" x2="450" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-l" class="box" x="350.0" y="324" width="200" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-l" data-on="c-l" x="450.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+        <rect id="a-g" class="box" x="695" y="16" width="190" height="52" rx="8" fill="var(--coord)"/><text id="n-g" data-on="a-g" x="790" y="48" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Graph database</text>
+        <line x1="790" y1="68" x2="790" y2="318" stroke="var(--line)" stroke-width="2" stroke-dasharray="4 6"/>
+        <rect id="c-g" class="box" x="690.0" y="324" width="200" height="34" rx="17.0" fill="var(--line)"/>
+        <text id="t-c-g" data-on="c-g" x="790.0" y="346.0" text-anchor="middle" font-size="14" font-weight="700" fill="var(--fg)"></text>
+      </g>
+      <g id="arrows" font-family="Atkinson Hyperlegible,system-ui" font-size="14" font-weight="700" stroke-width="2.5"></g>
+      <g id="banner" font-family="Atkinson Hyperlegible,system-ui" font-size="15" font-weight="700"></g>
+    </svg>
+  </div>
+
+  <div class="controls">
+    <button id="prev">Back</button>
+    <button id="next">Next</button>
+    <button id="play">Play</button>
+    <button id="reset">Reset</button>
+    <span class="step" id="counter"></span>
+  </div>
+
+  <div class="card">
+    <h2 id="n-title"></h2>
+    <p id="n-body"></p>
+    <p class="why" id="n-why"></p>
+  </div>
+
+  <div class="card code">
+    <h2>The code that runs this step</h2>
+    <p class="how">The lit lines are the ones the current step runs. Switch between pseudo code and the real thing. The full program, which replays this story and prints the numbers, is in <code>handbook/code/05-read-through/main.go</code> (<code>go run .</code>).</p>
+    <div class="tabs" id="codetabs">
+      <button data-v="pc" aria-pressed="true">Pseudo code</button>
+      <button data-v="real" aria-pressed="false" id="realtab">Go</button>
+    </div>
+    <pre id="codebox"></pre>
+  </div>
+
+  <div class="legend">
+    <span style="--c:var(--ok)">answer stored or returned</span>
+    <span style="--c:var(--coord)">loader registered in the cache</span>
+    <span style="--c:var(--wait)">duplicated code, or a slow source</span>
+    <span style="--c:var(--fail)">error stored and served</span>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Where you meet it</h2>
+      <p>Caffeine and Guava <code>LoadingCache</code> in Java, ristretto and groupcache in Go, and most ORM second-level caches. The library owns the loader and usually coalesces loads per key.</p>
+    </div>
+    <div class="card">
+      <h2>The practical choice</h2>
+      <p>Use read-through when many places read the same data and should load it the same way. Use cache-aside when each caller loads differently. Either way, never store a failed load for the full TTL.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Side by side</h2>
+    <div style="overflow-x:auto"><table>
+      <tr><th></th><th>Cache-aside</th><th>Read-through</th></tr>
+      <tr><td>Who loads on a miss</td><td>The app</td><td>The cache library, through a loader</td></tr>
+      <tr><td>Loading code</td><td>In every caller</td><td>In one place</td></tr>
+      <tr><td>Concurrent misses</td><td>Each caller loads unless you add coalescing</td><td>Usually one load per key</td></tr>
+      <tr><td>Trap</td><td>Copies of the logic drift</td><td>A failed load cached for the TTL</td></tr>
+      <tr><td>Interview line</td><td colspan="2">&quot;Read-through is cache-aside with the loader moved inside the cache, so callers only call Get, and I make sure a failed load is never cached for the full TTL.&quot;</td></tr>
+    </table></div>
+  </div>
+</main>
+
+<script>
+/* step guard: a delayed highlight is dropped once a button or key moves the lesson on */(function(){var st=window.setTimeout,gen=0;window.setTimeout=function(fn,ms){var g=gen,a=[].slice.call(arguments,2);return st(function(){if(g===gen)fn.apply(null,a)},ms)};document.addEventListener('click',function(e){if(e.target.closest&&e.target.closest('button,[role=tab]'))gen++},true);document.addEventListener('keydown',function(){gen++},true);})();
+
+const OK="var(--ok)",WAIT="var(--wait)",FAIL="var(--fail)",LINE="var(--line)",COORD="var(--coord)",SVC="var(--svc)",UNDO="var(--undo)",PANEL="var(--panel)",FG="var(--fg)",MUTED="var(--muted)";
+const F=(ids,c)=>Object.fromEntries(ids.map(k=>[k,c]));
+const R=(p,a,b)=>Array.from({length:b-a+1},(_,k)=>p+(a+k));
+const BAN=[160,290,580];
+const A=110,L=450,G=790;
+const steps={
+"aside":[
+ {pc:[2],t:"Cache-aside: the app asks the cache",b:"An investigator screens 0x77..30ff. The risk service asks the cache for the risk answer. The cache has nothing.",w2:"In cache-aside the cache is passive. It only stores and returns what the app gives it.",
+  text:{"t-c-a":"loading code here","t-c-l":"empty","t-c-g":"risk data"},fill:{"c-g":SVC},a:[[A,100,L-2,100,"get risk:0x77..30ff"],[L,130,A+2,130,"miss"]]},
+ {pc:[4],t:"The app queries the graph itself",b:"On the miss, the risk service runs the risk query against the graph database and gets high risk.",w2:"The app owns the loading logic, here and in every other place that reads this answer.",a:[[A,170,G-2,170,"run the risk query"],[G,200,A+2,200,"high risk",OK]]},
+ {pc:[5],t:"The app fills the cache",b:"The risk service stores the answer in the cache with a TTL of 60 seconds.",w2:"Three steps for every read: get, load, set.",fill:{"c-l":OK},text:{"t-c-l":"0x77: high, 60 s"},a:[[A,240,L-2,240,"set, TTL 60 s"]]},
+ {pc:[8, 9],t:"The same code in three places",b:"The screening API, the report job and the alert checker all read risk answers. Each has its own copy of get, load and set.",w2:"Three copies drift apart: one forgets the TTL, one uses another key. That is the case for read-through.",fill:{"c-a":WAIT},text:{"t-c-a":"same code, 3 copies"}},
+ {pc:[2, 3],t:"The next read hits",b:"Another investigator asks for 0x77..30ff. The cache returns high risk. The graph is not asked.",w2:"Cache-aside works, and it is the default. Its cost is that every caller must do it right.",fill:{"c-a":LINE},text:{"t-c-a":"loading code here"},a:[[A,100,L-2,100,"get risk:0x77..30ff"],[L,130,A+2,130,"hit: high risk",OK]]}
+],
+"through":[
+ {pc:[1, 14],t:"Read-through: register one loader",b:"At startup the risk service gives the cache library one loader: a function from address to risk answer.",w2:"The loading rule now lives in one place, inside the cache.",
+  fill:{"c-l":COORD,"c-g":SVC},text:{"t-c-a":"calls Get only","t-c-l":"loader: risk query","t-c-g":"risk data"},a:[[A,100,L-2,100,"register loader"]]},
+ {pc:[3, 7, 8, 9, 10, 11, 12],t:"Get on a miss runs the loader",b:"The service calls Get for 0x77..30ff. The check on line 3: is the key there and fresh? No. Is a load running? No. So the library runs the loader against the graph, stores the answer for 60 seconds, and returns it.",w2:"The service never talks to the graph. It only calls Get.",
+  fill:{"c-l":OK},text:{"t-c-l":"0x77: high, 60 s"},a:[[A,100,L-2,100,"Get 0x77..30ff"],[L,140,G-2,140,"loader runs the query"],[G,180,L+2,180,"high risk",OK],[L,220,A+2,220,"high risk",OK]]},
+ {pc:[3, 4],t:"The next Get hits",b:"A caller asks for 0x77..30ff 20 seconds later. The check on line 3: is the key there, and is now before its expiry at 60 seconds? Yes. So the stored answer comes back, and the loader does not run.",w2:"Same result as cache-aside, with one copy of the logic.",a:[[A,100,L-2,100,"Get 0x77..30ff"],[L,130,A+2,130,"hit: high risk",OK]]},
+ {pc:[5, 6, 8],t:"Many callers, one load",b:"The key expires. Three callers ask at once. The first finds no fresh key and marks it as loading. The other two hit the check on line 5: a load is running, so they wait for it. One graph query serves all three.",w2:"Caffeine and groupcache coalesce loads per key, which also stops a stampede.",
+  a:[[A,100,L-2,100,"Get"],[A,120,L-2,120,"Get"],[A,140,L-2,140,"Get"],[L,180,G-2,180,"one loader call"],[G,210,L+2,210,"high risk",OK],[L,250,A+2,250,"same answer to all 3",OK]]},
+ {pc:[8, 10, 11],t:"The failure that matters: the error is cached",b:"The graph is slow, and the loader times out. Suppose line 10 is missing: the library stores the error under the key for the full 60 seconds. Every caller now gets the error, though the graph recovered after two seconds.",
+  w2:"A cached failure turns a two-second blip into a minute-long outage for that key.",fill:{"c-l":FAIL,"c-g":WAIT},text:{"t-c-l":"0x77: ERROR, 60 s","t-c-g":"slow for 2 s"},
+  a:[[L,140,G-2,140,"loader runs the query"],[G,180,L+2,180,"timeout",FAIL],[A,230,L-2,230,"Get"],[L,260,A+2,260,"ERROR",FAIL]],ban:["one slow query, a minute of errors",290]},
+ {pc:[10],t:"Fix: never cache a failed load",b:"Line 10 asks: did the load fail? Yes, so the library stores nothing. The next Get runs the loader again. Give the loader a timeout, and cache not found for a few seconds only.",
+  w2:"Cache answers, not failures.",fill:{"c-l":LINE,"c-g":SVC},text:{"t-c-l":"error not stored","t-c-g":"risk data"},a:[[A,100,L-2,100,"Get"],[L,130,G-2,130,"loader, timeout 2 s"],[G,160,L+2,160,"high risk",OK],[L,190,A+2,190,"high risk",OK]]}
+]};
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+const RM=matchMedia("(prefers-reduced-motion: reduce)").matches;
+const LIGHT=/--(line|panel|bg)\)/;
+const T={fill:new Set(),text:new Set(),w:new Set(),move:new Set()};
+for(const list of Object.values(steps))for(const s of list)for(const k of Object.keys(T))for(const id of Object.keys(s[k]||{}))T[k].add(id);
+const orig={};
+for(const k of Object.keys(T))T[k].forEach(id=>{const e=$(id);if(!e)throw new Error("missing element "+id);
+  orig[id]=orig[id]||{};orig[id].fill=e.getAttribute("fill");orig[id].w=e.getAttribute("width");orig[id].tf=e.style.transform;if(k==="text")orig[id].txt=e.textContent;});
+const dep={},depOrig=new Map();
+document.querySelectorAll("[data-on]").forEach(e=>{(dep[e.dataset.on]=dep[e.dataset.on]||[]).push(e);depOrig.set(e,e.getAttribute("fill"));});
+let mode=Object.keys(steps)[0],i=0,timer=null,gen=0;
+function apply(s,shown){
+  for(const[id,v]of Object.entries(s.fill||{})){$(id).setAttribute("fill",v);(dep[id]||[]).forEach(t=>t.setAttribute("fill",LIGHT.test(v)?FG:"#fff"));}
+  for(const[id,v]of Object.entries(s.text||{}))$(id).textContent=v;
+  for(const[id,v]of Object.entries(s.w||{}))$(id).setAttribute("width",v);
+  for(const[id,v]of Object.entries(s.move||{}))$(id).style.transform=`translate(${v[0]}px,${v[1]}px)`;
+  (s.on||[]).forEach(id=>shown.add(id));(s.off||[]).forEach(id=>shown.delete(id));
+}
+function later(el,k,g){const show=()=>{if(g===gen)el.classList.add("on")};RM?show():setTimeout(show,120*k+30);}
+function render(){
+  const list=steps[mode],s=list[i],g=++gen,shown=new Set();
+  for(const id of Object.keys(orig)){const e=$(id),o=orig[id];
+    if(T.fill.has(id)&&o.fill!==null)e.setAttribute("fill",o.fill);
+    if(T.w.has(id)&&o.w!==null)e.setAttribute("width",o.w);
+    if(T.move.has(id))e.style.transform=o.tf;
+    if(T.text.has(id))e.textContent=o.txt;}
+  depOrig.forEach((f,e)=>{if(f!==null)e.setAttribute("fill",f)});
+  for(let k=0;k<=i;k++)apply(list[k],shown);
+  $("n-title").textContent=s.t;$("n-body").textContent=s.b;$("n-why").textContent=s.w2;
+  $("counter").textContent=`Step ${i+1} of ${list.length}`;
+  document.querySelectorAll("svg .msg").forEach(e=>{if(e.parentNode.id!=="arrows")e.classList.toggle("on",shown.has(e.id))});
+  const ag=$("arrows");ag.innerHTML="";
+  (s.a||[]).forEach((m,k)=>{const[x1,y1,x2,y2,txt,col=FG,dash,off]=m;
+    const el=document.createElementNS(NS,"g");el.setAttribute("class","msg");
+    const vert=Math.abs(x2-x1)<Math.abs(y2-y1);
+    let lx=vert?(x1+x2)/2+8:(x1+x2)/2,ly=vert?(y1+y2)/2+5:(y1+y2)/2-8;if(off){lx+=off[0];ly+=off[1];}
+    el.innerHTML=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${col}"${dash?' stroke-dasharray="6 5"':''} marker-end="url(#arr)"/>`+
+      (txt?`<text x="${lx}" y="${ly}" text-anchor="${vert?"start":"middle"}" fill="${col}" stroke="var(--panel)" stroke-width="4" paint-order="stroke">${txt}</text>`:"");
+    ag.appendChild(el);later(el,k,g);});
+  const b=s.ban?(Array.isArray(s.ban)?s.ban:[s.ban,BAN[1]]):null;
+  $("banner").innerHTML=b?`<rect x="${BAN[0]}" y="${b[1]}" width="${BAN[2]}" height="26" rx="4" fill="var(--panel)" stroke="var(--fail)" stroke-dasharray="6 4"/><text x="${BAN[0]+BAN[2]/2}" y="${b[1]+18}" text-anchor="middle" fill="var(--fail)">${b[0]}</text>`:"";
+  $("prev").disabled=i===0;$("next").disabled=i===list.length-1;
+  drawCode();
+}
+const code={
+"aside": {
+"label": "Go",
+"pc": [
+"function screen(addr):",
+"  v = cache.get(\"risk:\" + addr)",
+"  if v found: return v                   # hit",
+"  v = graph.runRiskQuery(addr)           # miss: the app loads",
+"  cache.set(\"risk:\" + addr, v, ttl 60s)  # the app fills",
+"  return v",
+"",
+"the same lines are copied into:",
+"  the screening API, the report job, the alert checker"
+],
+"real": [
+"type item struct {",
+"\tval     string",
+"\texpires time.Time",
+"}",
+"",
+"screen := func(addr string) string {",
+"\tif it, ok := cache[addr]; ok && now.Before(it.expires) {",
+"\t\treturn it.val // hit",
+"\t}",
+"\tv, _ := runRiskQuery(addr) // the app queries the graph itself",
+"\tcache[addr] = item{val: v, expires: now.Add(60 * time.Second)}",
+"\treturn v // the app filled the cache",
+"}",
+"",
+"// screeningAPI, reportJob and alertChecker each hold a copy",
+"// of screen(), and the copies drift: one forgets the TTL."
+],
+"map": {
+"1": [
+6
+],
+"2": [
+7
+],
+"3": [
+7,
+8
+],
+"4": [
+10
+],
+"5": [
+11
+],
+"6": [
+12
+],
+"8": [
+6,
+7,
+10,
+11,
+12
+],
+"9": [
+15,
+16
+]
+}
+},
+"through": {
+"label": "Go",
+"pc": [
+"cache = ReadThrough(ttl 60s, loader = graph.runRiskQuery)",
+"function Get(key):",
+"  if key in items and now < expires:    # hit and still fresh",
+"    return items[key]",
+"  if a load for key is running:         # coalesce",
+"    wait for it, return its result",
+"  mark key as loading",
+"  v, err = loader(key)                  # miss: one load per key",
+"  unmark key",
+"  if err is none:                       # never store a failure",
+"    items[key] = v, expires now + 60s",
+"  return v, err",
+"",
+"callers only call cache.Get(addr)"
+],
+"real": [
+"func (c *ReadThrough) Get(key string) (string, error) {",
+"\tc.mu.Lock()",
+"\tif it, ok := c.items[key]; ok && now.Before(it.expires) {",
+"\t\tc.mu.Unlock()",
+"\t\treturn it.val, it.err // hit and still fresh",
+"\t}",
+"\tif cl, ok := c.inflight[key]; ok { // a load is running",
+"\t\tc.mu.Unlock()",
+"\t\tcl.wg.Wait() // join it",
+"\t\treturn cl.val, cl.err",
+"\t}",
+"\tcl := &call{}",
+"\tcl.wg.Add(1)",
+"\tc.inflight[key] = cl",
+"\tc.mu.Unlock()",
+"",
+"\tcl.val, cl.err = c.load(key) // miss: the loader runs once",
+"",
+"\tc.mu.Lock()",
+"\tdelete(c.inflight, key)",
+"\tif cl.err == nil || c.cacheErrors { // the fix: errors are not stored",
+"\t\tc.items[key] = item{cl.val, cl.err, now.Add(c.ttl)}",
+"\t}",
+"\tc.mu.Unlock()",
+"\tcl.wg.Done()",
+"\treturn cl.val, cl.err",
+"}",
+"",
+"rt := &ReadThrough{ttl: 60 * time.Second, load: runRiskQuery, items: map[string]item{}, inflight: map[string]*call{}}",
+"v, _ := rt.Get(addr) // callers only call Get"
+],
+"map": {
+"1": [
+29
+],
+"2": [
+1
+],
+"3": [
+2,
+3
+],
+"4": [
+4,
+5
+],
+"5": [
+7
+],
+"6": [
+8,
+9,
+10
+],
+"7": [
+12,
+13,
+14,
+15
+],
+"8": [
+17
+],
+"9": [
+19,
+20
+],
+"10": [
+21
+],
+"11": [
+22
+],
+"12": [
+26
+],
+"14": [
+30
+]
+}
+}
+};
+let view="pc";
+function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;")}
+function drawCode(){
+  const c=code[mode]||code[Object.keys(code)[0]],s=steps[mode][i],lines=view==="pc"?c.pc:c.real,pcs=s.pc||[];
+  let hl=new Set(pcs);
+  if(view==="real"){hl=new Set();pcs.forEach(n=>(c.map[n]||[]).forEach(m=>hl.add(m)));}
+  $("realtab").textContent=c.label||"Go";
+  $("codebox").innerHTML=lines.map((l,k)=>{let t=esc(l.replace(/\t/g,"    "));
+    t=t.replace(/(#.*|\/\/.*)$/,'<span class="c">$1</span>');
+    return `<span class="ln${hl.has(k+1)?" hl":""}"><i>${k+1}</i>${t}</span>`}).join("");
+}
+document.querySelectorAll('#codetabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute("aria-pressed",x===b));drawCode()});
+function go(n){i=Math.max(0,Math.min(steps[mode].length-1,n));render();}
+$("next").onclick=()=>go(i+1);$("prev").onclick=()=>go(i-1);$("reset").onclick=()=>{stop();go(0)};
+function stop(){if(timer){clearInterval(timer);timer=null;$("play").textContent="Play";}}
+$("play").onclick=()=>{if(timer)return stop();$("play").textContent="Pause";timer=setInterval(()=>{if(i>=steps[mode].length-1)return stop();go(i+1)},2600)};
+document.querySelectorAll('[role=tab]').forEach(b=>b.onclick=()=>{stop();mode=b.dataset.mode;document.querySelectorAll('[role=tab]').forEach(x=>x.setAttribute("aria-selected",x===b));go(0)});
+go(0);
+
+
+;/* label ink v3: a label on a coloured box takes dark or white ink, whichever reads; coloured text on the page moves toward the text colour until it reads; both themes */
+(function(){
+ function lum(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;
+  var v=m.slice(0,3).map(function(x){x/=255;return x<=0.03928?x/12.92:Math.pow((x+0.055)/1.055,2.4)});return .2126*v[0]+.7152*v[1]+.0722*v[2];}
+ function rgb(c){var m=(c||'').match(/[\d.]+/g);if(!m||m.length<3)return null;if(m.length>3&&+m[3]<0.5)return null;return m.slice(0,3).map(Number);}
+ function lumA(a){return lum('rgb('+a.join(',')+')');}
+ function ratio(a,b){return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);}
+ function shown(e){for(var x=e;x&&x.nodeType===1;x=x.parentNode){var cs=getComputedStyle(x);if(cs.display==='none'||cs.visibility==='hidden'||+cs.opacity<0.3)return false;}return true;}
+ var DARK=lum('rgb(21,24,26)'),WHITE=1,mute=false;
+ function fix(){mute=true;
+  var sh=[].slice.call(document.querySelectorAll('svg rect,svg circle,svg ellipse,svg path,svg polygon')).map(function(s){return {s:s,f:lum(getComputedStyle(s).fill)};}).filter(function(o){return o.f!==null;});
+  sh.forEach(function(o){o.b=o.s.getBoundingClientRect();o.v=o.b.width>0&&shown(o.s);});
+  document.querySelectorAll('svg text').forEach(function(t){
+   if(t.dataset.ink){t.style.removeProperty('fill');delete t.dataset.ink;}
+   if(!t.textContent.trim())return;var tb=t.getBoundingClientRect();if(!tb.width)return;
+   var cx=tb.x+tb.width/2,cy=tb.y+tb.height/2,u=null;
+   for(var i=0;i<sh.length;i++){var o=sh[i];if(!o.v)continue;if(!(o.s.compareDocumentPosition(t)&4))continue;
+    if(cx>=o.b.x&&cx<=o.b.x+o.b.width&&cy>=o.b.y&&cy<=o.b.y+o.b.height)u=o;}
+   if(!u){var c0=rgb(getComputedStyle(t).fill),bgc=rgb(getComputedStyle(document.body).backgroundColor),tc=rgb(getComputedStyle(document.body).color);
+    if(!c0||!bgc||!tc)return;var bl=lumA(bgc);if(ratio(lumA(c0),bl)>=3)return;
+    for(var k=1;k<=10;k++){var m=c0.map(function(x,j){return Math.round(x+(tc[j]-x)*k/10);});if(ratio(lumA(m),bl)>=3||k===10){t.style.fill='rgb('+m.join(',')+')';t.dataset.ink='1';break;}}
+    return;}
+   var fg=lum(getComputedStyle(t).fill);if(fg===null||ratio(fg,u.f)>=3)return;
+   t.style.fill=ratio(WHITE,u.f)>=ratio(DARK,u.f)?'#fff':'#15181a';t.dataset.ink='1';});
+  setTimeout(function(){mute=false;},0);}
+ var q=0;function soon(){if(q)return;q=1;requestAnimationFrame(function(){q=0;fix();});var n=0;(function late(){if(++n>40)return;requestAnimationFrame(n===40?soon2:late);})();}
+ function soon2(){requestAnimationFrame(fix);}
+ function start(){fix();soon();window.addEventListener('load',soon);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(soon);setTimeout(soon,300);setTimeout(soon,1000);new MutationObserver(function(rs){if(mute)return;for(var i=0;i<rs.length;i++){var r=rs[i];if(r.attributeName==='data-ink')continue;if(r.target.tagName==='text'&&r.attributeName==='style')continue;soon();return;}}).observe(document.body,{subtree:true,attributes:true,childList:true,characterData:true});
+  if(window.matchMedia)matchMedia('(prefers-color-scheme: dark)').addEventListener('change',soon);}
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start);else start();
+})();
+</script>
+</body>
+</html>
